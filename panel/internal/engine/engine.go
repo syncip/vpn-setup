@@ -40,7 +40,7 @@ func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
 
 var settingDefaults = map[string]string{
 	"server_host":         "sys1.1337733.xyz",
-	"panel_host":          "panel.1337733.xyz",
+	"panel_host":          "", // leer = Webinterface nur direkt per IP:Port
 	"sub_host":            "sub.1337733.xyz",
 	"out_interface":       "eth0",
 	"xray_api":            "127.0.0.1:10085",

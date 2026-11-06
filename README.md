@@ -10,21 +10,27 @@ curl -fsSLO https://raw.githubusercontent.com/syncip/vpn-setup/main/vpn-setup.sh
 bash vpn-setup.sh
 ```
 
-Das Script lädt das Panel-Programm aus dem neuesten Release. Danach gibt es das Webinterface
-unter der eingestellten Panel-Domain und den Befehl `vpn help`.
+Das Script lädt das Panel-Programm aus dem neuesten Release. Danach läuft das Webinterface
+auf **https://<IP>:9443** (`PANEL_DIRECT` im Script), dazu der Befehl `vpn help`.
 
 ## Zugang zum Webinterface
 
-- Über die Panel-Domain (Cloudflare → nginx auf 443 → Panel)
-- Direkt per IP auf Port **9443** (`PANEL_DIRECT` im Script). Der Port ist nur im Container offen.
-  Von außen am sichersten per SSH-Tunnel über den Proxmox-Host:
+Das Panel lauscht im Container auf Port 9443 (HTTPS). Hinter Proxmox-NAT muss der Host den Port
+an den Container weiterleiten, genau wie 443 und 51820. Auf dem Host (Beispiel Container 10.10.10.3):
 
-  ```bash
-  ssh -L 9443:10.10.10.3:9443 root@<host>
-  ```
+```bash
+iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --to-destination 10.10.10.3:9443
+```
 
-  Dann im Browser `https://localhost:9443` öffnen. Die Zertifikatswarnung ist normal
-  (das Cloudflare-Origin-Zertifikat kennt der Browser nicht).
+Dauerhaft in `/etc/network/interfaces` beim Block von `vmbr1` neben den anderen Weiterleitungen:
+
+```
+post-up   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --to-destination 10.10.10.3:9443
+post-down iptables -t nat -D PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --to-destination 10.10.10.3:9443
+```
+
+Die Zertifikatswarnung im Browser ist normal (Origin- bzw. selbstsigniertes Zertifikat).
+Optional geht das Panel zusätzlich über eine Domain auf Port 443 (Einstellung „Panel-Domain“).
 
 ## Entwicklung
 

@@ -109,7 +109,7 @@
 
   const generalFields = [
     { key: 'server_host', label: 'Server-Domain', help: 'Wird in WireGuard-Konfigurationen und VLESS-Links verwendet (A + AAAA auf den Server).' },
-    { key: 'panel_host', label: 'Panel-Domain', help: 'Unter dieser Domain ist das Webinterface erreichbar (über Cloudflare-Proxy).' },
+    { key: 'panel_host', label: 'Panel-Domain', help: 'Optional. Leer = Webinterface nur direkt per IP:Port. Mit Domain zusätzlich über nginx auf Port 443 (z. B. hinter Cloudflare).' },
     { key: 'sub_host', label: 'Abo-Domain', help: 'Für Abo-Links (https://<abo-domain>/<token>). Leer = über die Panel-Domain unter /sub/.' },
     { key: 'profile_title', label: 'Name in der App', help: 'Titel des Abos in v2RayTun & Co.' },
   ];

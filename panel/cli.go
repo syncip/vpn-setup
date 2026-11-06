@@ -188,7 +188,10 @@ func subURL(e *engine.Engine, u *store.User) string {
 	if h := e.Setting("sub_host"); h != "" {
 		return "https://" + h + "/" + u.SubToken
 	}
-	return "https://" + e.Setting("panel_host") + "/sub/" + u.SubToken
+	if h := e.Setting("panel_host"); h != "" {
+		return "https://" + h + "/sub/" + u.SubToken
+	}
+	return "/sub/" + u.SubToken
 }
 
 func cmdShow(e *engine.Engine, u *store.User) {
