@@ -247,7 +247,10 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 	type lim struct{ down, up float64 }
 	limited := map[int64]lim{}
 	var rules []map[string]any
-	outbounds := []map[string]any{{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}}
+	// Ziele selbst auflösen und IPv6 bevorzugen: Ohne das sortiert das System nach RFC 6724,
+	// und weil der Container für IPv6 nur eine ULA-Adresse (NAT66) hat, gewinnt sonst immer IPv4.
+	freedom := map[string]any{"domainStrategy": "UseIPv6v4"}
+	outbounds := []map[string]any{{"protocol": "freedom", "tag": "direct", "settings": freedom}, {"protocol": "blackhole", "tag": "block"}}
 	byUser := map[int64][]string{}
 
 	var inbounds []map[string]any
@@ -287,7 +290,7 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
 	for _, id := range uids {
 		tag := fmt.Sprintf("lim-%d", id)
-		outbounds = append(outbounds, map[string]any{"protocol": "freedom", "tag": tag,
+		outbounds = append(outbounds, map[string]any{"protocol": "freedom", "tag": tag, "settings": freedom,
 			"streamSettings": map[string]any{"sockopt": map[string]any{"mark": markBase + id}}})
 		rules = append(rules, map[string]any{"type": "field", "user": byUser[id], "outboundTag": tag})
 	}

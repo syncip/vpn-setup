@@ -135,6 +135,10 @@ XR_SID="0123456789abcdef"
 	if len(links) != 3 || !strings.Contains(links[0], "sid=0123456789abcdef") || !strings.Contains(links[0], "@sys1.1337733.xyz:443") {
 		t.Errorf("Links falsch: %v", links)
 	}
+	xc, _ := os.ReadFile(filepath.Join(dry.Root, "usr/local/etc/xray/config.json"))
+	if !strings.Contains(string(xc), `"domainStrategy": "UseIPv6v4"`) {
+		t.Errorf("Xray bevorzugt IPv6 nicht:\n%s", xc)
+	}
 	conf, _ := os.ReadFile(filepath.Join(dry.Root, "etc/wireguard/wg0.conf"))
 	if !strings.Contains(string(conf), "AllowedIPs = 10.8.0.10/32, fd42:42:42::10/128") || !strings.Contains(string(conf), "ListenPort = 51820") {
 		t.Errorf("wg0.conf falsch:\n%s", conf)
