@@ -41,7 +41,7 @@ func env(k, def string) string {
 }
 
 type opts struct {
-	db, dataDir, listen, cert, key, legacy string
+	db, dataDir, listen, direct, cert, key, legacy string
 	proxy, dev, demo                       bool
 }
 
@@ -51,6 +51,7 @@ func parseOpts(args []string) (*opts, []string) {
 	fs.StringVar(&o.dataDir, "data", env("VPNPANEL_DATA", "/etc/vpn"), "Datenverzeichnis")
 	fs.StringVar(&o.db, "db", env("VPNPANEL_DB", ""), "Datenbank (Standard: <data>/panel.db)")
 	fs.StringVar(&o.listen, "listen", env("VPNPANEL_LISTEN", "127.0.0.1:8480"), "Adresse des Webservers")
+	fs.StringVar(&o.direct, "direct", env("VPNPANEL_DIRECT", ""), "zusätzlicher direkter Zugang ohne nginx, z. B. 0.0.0.0:9443 (leer = aus)")
 	fs.StringVar(&o.cert, "tls-cert", env("VPNPANEL_CERT", ""), "TLS-Zertifikat (z. B. Cloudflare-Origin)")
 	fs.StringVar(&o.key, "tls-key", env("VPNPANEL_KEY", ""), "TLS-Schlüssel")
 	fs.BoolVar(&o.proxy, "proxy-protocol", env("VPNPANEL_PROXY", "1") == "1", "PROXY-Protocol von nginx erwarten")
@@ -152,6 +153,35 @@ func serve(args []string) {
 		}
 	}()
 
+	// Direkter Zugang (IP:Port) ohne nginx und ohne PROXY-Protocol. Hier kommt nichts über
+	// Cloudflare, also darf CF-Connecting-IP nicht geglaubt werden (sonst umgehbare Login-Sperre).
+	var dsrv *http.Server
+	if o.direct != "" {
+		h := a.Handler()
+		dsrv = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Header.Del("CF-Connecting-IP")
+			h.ServeHTTP(w, r)
+		}), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
+		dln, err := net.Listen("tcp", o.direct)
+		if err != nil {
+			log.Fatalf("Direkter Zugang %s: %v", o.direct, err)
+		}
+		go func() {
+			var err error
+			if o.cert != "" {
+				dsrv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+				log.Printf("Direkter Zugang auf https://%s", o.direct)
+				err = dsrv.ServeTLS(dln, o.cert, o.key)
+			} else {
+				log.Printf("Direkter Zugang auf http://%s (ohne TLS!)", o.direct)
+				err = dsrv.Serve(dln)
+			}
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal(err)
+			}
+		}()
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
@@ -159,6 +189,9 @@ func serve(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	if dsrv != nil {
+		_ = dsrv.Shutdown(ctx)
+	}
 	close(stop)
 	<-done
 }

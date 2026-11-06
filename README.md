@@ -13,6 +13,19 @@ bash vpn-setup.sh
 Das Script lädt das Panel-Programm aus dem neuesten Release. Danach gibt es das Webinterface
 unter der eingestellten Panel-Domain und den Befehl `vpn help`.
 
+## Zugang zum Webinterface
+
+- Über die Panel-Domain (Cloudflare → nginx auf 443 → Panel)
+- Direkt per IP auf Port **9443** (`PANEL_DIRECT` im Script). Der Port ist nur im Container offen.
+  Von außen am sichersten per SSH-Tunnel über den Proxmox-Host:
+
+  ```bash
+  ssh -L 9443:10.10.10.3:9443 root@<host>
+  ```
+
+  Dann im Browser `https://localhost:9443` öffnen. Die Zertifikatswarnung ist normal
+  (das Cloudflare-Origin-Zertifikat kennt der Browser nicht).
+
 ## Entwicklung
 
 - `panel/` – Go-Backend (`internal/…`) und Svelte-Oberfläche (`panel/web`)

@@ -18,6 +18,7 @@ OUT_IF="eth0"
 CERT="/etc/vpn/sub-cert.pem"     # Cloudflare-Origin-Zertifikat (deckt panel. und sub. ab)
 KEY="/etc/vpn/sub-key.pem"
 PANEL_LISTEN="127.0.0.1:8480"    # intern, nginx verteilt per SNI von Port 443
+PANEL_DIRECT="0.0.0.0:9443"      # direkter Zugang per https://IP:9443 (leer = aus)
 ### ------------------------------------------------------------------
 
 [[ $EUID -eq 0 ]] || { echo "Bitte als root ausführen."; exit 1; }
@@ -89,6 +90,7 @@ VPNPANEL_LISTEN=${PANEL_LISTEN}
 VPNPANEL_CERT=${CERT}
 VPNPANEL_KEY=${KEY}
 VPNPANEL_PROXY=1
+VPNPANEL_DIRECT=${PANEL_DIRECT}
 EOF
 chmod 600 /etc/vpn/panel.env
 
@@ -138,6 +140,8 @@ cat <<'EOF'
 
 Fertig. Webinterface:  https://<panel_host>  (Einstellung im Panel, Vorgabe panel.1337733.xyz)
 Befehle:               vpn help
+Direkter Zugang:       https://10.10.10.3:9443 (Container-IP; von außen per SSH-Tunnel
+                       oder Portweiterleitung auf dem Host, siehe README)
 
 Für Geschwindigkeitslimits auf dem Proxmox-Host (nicht im Container) einmalig:
   printf '%s\n' ifb act_connmark act_mirred sch_htb sch_ingress cls_fw cls_u32 cls_matchall \
