@@ -10,6 +10,11 @@
   let cc = $state(null);
   let err = $state('');
   let qrFor = $state(null);
+  let qrLabel = $state('');
+  const show = (text, label) => {
+    qrFor = text;
+    qrLabel = label;
+  };
 
   $effect(() => {
     cc = null;
@@ -17,7 +22,10 @@
     get(`/peers/${peerId}/config`).then((r) => {
       cc = r;
       const f = r.files?.find((x) => x.qr);
-      qrFor = f ? f.content : r.links?.[0]?.url || null;
+      if (r.sub_url) show(r.sub_url, 'Abo-Link – in v2RayTun & Co. als Abo hinzufügen');
+      else if (f) show(f.content, 'Konfiguration – in der WireGuard-App scannen');
+      else if (r.links?.[0]) show(r.links[0].url, r.links[0].label);
+      else show(null, '');
     }).catch((e) => (err = e.message));
   });
 
@@ -41,8 +49,20 @@
 
     {#if qrFor}
       <div class="qr-wrap">
-        <QR text={qrFor} size={230} />
-        <div class="muted small">Mit der App scannen</div>
+        <QR text={qrFor} size={240} />
+        <div class="muted small" style="text-align:center">{qrLabel || 'Mit der App scannen'} · zum Vergrößern antippen</div>
+      </div>
+    {/if}
+
+    {#if cc.sub_url}
+      <div class="stack-sm">
+        <span class="label">Abo-Link (alle Server, aktualisiert sich selbst)</span>
+        <div class="link">
+          <span class="badge accent">Abo</span>
+          <code class="grow ellipsis">{cc.sub_url}</code>
+          <button class="btn sm icon" title="QR-Code" onclick={() => show(cc.sub_url, 'Abo-Link')}><Icon name="qr" size={15} /></button>
+          <button class="btn sm icon" title="Kopieren" onclick={() => cp(cc.sub_url)}><Icon name="copy" size={15} /></button>
+        </div>
       </div>
     {/if}
 
@@ -51,7 +71,7 @@
         <div class="spread">
           <span class="strong mono">{f.name}</span>
           <div class="row">
-            <button class="btn sm" onclick={() => (qrFor = f.content)}><Icon name="qr" size={15} /> QR</button>
+            <button class="btn sm" onclick={() => show(f.content, f.name)}><Icon name="qr" size={15} /> QR</button>
             <button class="btn sm" onclick={() => cp(f.content)}><Icon name="copy" size={15} /> Kopieren</button>
             <button class="btn sm" onclick={() => download(f.name, f.content)}><Icon name="download" size={15} /> Datei</button>
           </div>
@@ -67,7 +87,7 @@
           <div class="link">
             <span class="badge accent">{l.label}</span>
             <code class="grow ellipsis">{l.url}</code>
-            <button class="btn sm icon" title="QR-Code" onclick={() => (qrFor = l.url)}><Icon name="qr" size={15} /></button>
+            <button class="btn sm icon" title="QR-Code" onclick={() => show(l.url, 'Einzel-Link ' + l.label)}><Icon name="qr" size={15} /></button>
             <button class="btn sm icon" title="Kopieren" onclick={() => cp(l.url)}><Icon name="copy" size={15} /></button>
           </div>
         {/each}

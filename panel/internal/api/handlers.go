@@ -369,17 +369,17 @@ func (a *API) getUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].ID < peers[j].ID })
-	writeJSON(w, map[string]any{"user": row, "peers": orEmptyT(peers), "sub_url": a.subURL(u), "custom": u.Limits != nil})
+	writeJSON(w, map[string]any{"user": row, "peers": orEmptyT(peers), "sub_url": a.subURL(r, u), "custom": u.Limits != nil})
 }
 
-func (a *API) subURL(u *store.User) string {
+func (a *API) subURL(r *http.Request, u *store.User) string {
 	if h := a.E.Setting("sub_host"); h != "" {
 		return "https://" + h + "/" + u.SubToken
 	}
 	if h := a.E.Setting("panel_host"); h != "" {
 		return "https://" + h + "/sub/" + u.SubToken
 	}
-	return "/sub/" + u.SubToken
+	return "https://" + r.Host + "/sub/" + u.SubToken // z. B. direkter Zugang per IP:Port
 }
 
 func (a *API) updateUser(w http.ResponseWriter, r *http.Request) {
@@ -468,7 +468,7 @@ func (a *API) newToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.E.Log("info", "Nutzer "+u.Name+": neuer Abo-Link")
-	writeJSON(w, map[string]string{"sub_url": a.subURL(u)})
+	writeJSON(w, map[string]string{"sub_url": a.subURL(r, u)})
 }
 
 func rangeParams(r *http.Request) (since, bucket int64) {
@@ -669,12 +669,25 @@ func (a *API) deletePeer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) peerConfig(w http.ResponseWriter, r *http.Request) {
-	cc, err := a.E.ClientConfig(pathID(r))
+	id := pathID(r)
+	cc, err := a.E.ClientConfig(id)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, cc)
+	// Protokolle mit Links (VLESS …) kommen auch ins Abo – den Abo-Link mitliefern.
+	resp := struct {
+		*proto.ClientConfig
+		SubURL string `json:"sub_url,omitempty"`
+	}{ClientConfig: cc}
+	if len(cc.Links) > 0 {
+		if p, err := a.St.Peer(id); err == nil {
+			if u, err := a.St.User(p.UserID); err == nil {
+				resp.SubURL = a.subURL(r, u)
+			}
+		}
+	}
+	writeJSON(w, resp)
 }
 
 // ---------- Server ----------
