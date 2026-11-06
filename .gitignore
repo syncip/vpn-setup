@@ -1,0 +1,8 @@
+panel/devdata/
+panel/dist/
+panel/web/node_modules/
+*.db
+*.db-wal
+*.db-shm
+panel-admin.txt
+CLAUDE.md
