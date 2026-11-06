@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/curve25519"
 
+	"vpnpanel/internal/proto/shaping"
 	"vpnpanel/internal/store"
 	"vpnpanel/internal/system"
 )
@@ -61,6 +62,7 @@ type Global struct {
 	OutIf      string
 	XrayAPI    string
 	DataDir    string
+	HookURL    string // interner HTTP-Endpunkt des Panels (z. B. Hysteria2-Anmeldung), ohne Schrägstrich am Ende
 }
 
 type Env struct {
@@ -70,6 +72,8 @@ type Env struct {
 	// Persist speichert interne Zustände (z. B. tc-Prüfsummen) dauerhaft.
 	GetState func(key string) string
 	SetState func(key, value string)
+	// Shape sammelt Begrenzungen auf der Internet-Schnittstelle (eth0) aller Protokolle.
+	Shape *shaping.Plan
 }
 
 // PeerBundle: ein Zugang mit Nutzer und aktuell wirksamen Limits.
@@ -149,6 +153,12 @@ type Driver interface {
 	ShareLinks(env *Env, sb *ServerBundle, pb *PeerBundle) []string
 	Ports(srv *store.Server) []Port
 	Status(env *Env, srv *store.Server) Status
+}
+
+// Hooker wird von Treibern implementiert, deren Dienst das Panel per HTTP fragt
+// (z. B. Hysteria2-Anmeldung). reshape = Begrenzungen neu einspielen.
+type Hooker interface {
+	Hook(env *Env, sb *ServerBundle, body []byte) (resp any, reshape bool, err error)
 }
 
 // SNIRouter wird von Treibern implementiert, die über den gemeinsamen TCP-Port laufen.

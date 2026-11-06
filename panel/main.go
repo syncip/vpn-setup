@@ -24,6 +24,7 @@ import (
 
 	"vpnpanel/internal/api"
 	"vpnpanel/internal/engine"
+	_ "vpnpanel/internal/proto/hysteria2"
 	_ "vpnpanel/internal/proto/vless"
 	_ "vpnpanel/internal/proto/wireguard"
 	"vpnpanel/internal/store"
@@ -41,7 +42,7 @@ func env(k, def string) string {
 }
 
 type opts struct {
-	db, dataDir, listen, direct, cert, key, legacy string
+	db, dataDir, listen, direct, hook, cert, key, legacy string
 	proxy, dev, demo                       bool
 }
 
@@ -52,6 +53,7 @@ func parseOpts(args []string) (*opts, []string) {
 	fs.StringVar(&o.db, "db", env("VPNPANEL_DB", ""), "Datenbank (Standard: <data>/panel.db)")
 	fs.StringVar(&o.listen, "listen", env("VPNPANEL_LISTEN", "127.0.0.1:8480"), "Adresse des Webservers")
 	fs.StringVar(&o.direct, "direct", env("VPNPANEL_DIRECT", ""), "zusätzlicher direkter Zugang ohne nginx, z. B. 0.0.0.0:9443 (leer = aus)")
+	fs.StringVar(&o.hook, "hook", env("VPNPANEL_HOOK", "127.0.0.1:8479"), "interner HTTP-Endpunkt für Dienste (Hysteria2-Anmeldung), nur lokal")
 	fs.StringVar(&o.cert, "tls-cert", env("VPNPANEL_CERT", ""), "TLS-Zertifikat (z. B. Cloudflare-Origin)")
 	fs.StringVar(&o.key, "tls-key", env("VPNPANEL_KEY", ""), "TLS-Schlüssel")
 	fs.BoolVar(&o.proxy, "proxy-protocol", env("VPNPANEL_PROXY", "1") == "1", "PROXY-Protocol von nginx erwarten")
@@ -79,7 +81,7 @@ func open(o *opts) (*engine.Engine, error) {
 		sys = &system.Dry{Root: filepath.Join(o.dataDir, "dryroot")}
 		lock = ""
 	}
-	return engine.New(st, sys, engine.Config{PanelBackend: o.listen, DataDir: o.dataDir, LockPath: lock}), nil
+	return engine.New(st, sys, engine.Config{PanelBackend: o.listen, DataDir: o.dataDir, LockPath: lock, HookAddr: o.hook}), nil
 }
 
 func main() {
@@ -153,6 +155,21 @@ func serve(args []string) {
 		}
 	}()
 
+	// Interner Endpunkt für Dienste (Hysteria2 fragt hier bei jeder Anmeldung nach)
+	var hsrv *http.Server
+	if o.hook != "" {
+		hln, err := net.Listen("tcp", o.hook)
+		if err != nil {
+			log.Fatalf("Interner Endpunkt %s: %v", o.hook, err)
+		}
+		hsrv = &http.Server{Handler: a.HookHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
+		go func() {
+			if err := hsrv.Serve(hln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal(err)
+			}
+		}()
+	}
+
 	// Direkter Zugang (IP:Port) ohne nginx und ohne PROXY-Protocol. Hier kommt nichts über
 	// Cloudflare, also darf CF-Connecting-IP nicht geglaubt werden (sonst umgehbare Login-Sperre).
 	var dsrv *http.Server
@@ -191,6 +208,9 @@ func serve(args []string) {
 	_ = srv.Shutdown(ctx)
 	if dsrv != nil {
 		_ = dsrv.Shutdown(ctx)
+	}
+	if hsrv != nil {
+		_ = hsrv.Shutdown(ctx)
 	}
 	close(stop)
 	<-done

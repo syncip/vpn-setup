@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -205,3 +206,28 @@ func (a *API) clientIP(r *http.Request) string {
 }
 
 func nowUnix() int64 { return time.Now().Unix() }
+
+// HookHandler: interner Endpunkt (nur 127.0.0.1) für Dienste wie Hysteria2.
+// POST /hook/<server-id>/<geheimnis>
+func (a *API) HookHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /hook/{id}/{secret}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+		if err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		resp, err := a.E.Hook(id, r.PathValue("secret"), body)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, resp)
+	})
+	return mux
+}

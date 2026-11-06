@@ -1047,7 +1047,7 @@ func (a *API) system(w http.ResponseWriter, r *http.Request) {
 		Detail string `json:"detail"`
 	}
 	var checks []check
-	for _, bin := range []struct{ name, label string }{{"wg", "WireGuard-Werkzeuge"}, {"xray", "Xray"}, {"nginx", "nginx"}, {"tc", "tc (Geschwindigkeitsbegrenzung)"}, {"iptables", "iptables"}, {"ip6tables", "ip6tables"}} {
+	for _, bin := range []struct{ name, label string }{{"wg", "WireGuard-Werkzeuge"}, {"xray", "Xray"}, {"hysteria", "Hysteria2"}, {"nginx", "nginx"}, {"tc", "tc (Geschwindigkeitsbegrenzung)"}, {"iptables", "iptables"}, {"ip6tables", "ip6tables"}} {
 		_, err := exec.LookPath(bin.name)
 		ok := err == nil || a.E.Sys.DryRun()
 		d := "vorhanden"

@@ -3,9 +3,7 @@
 package vless
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -16,6 +14,7 @@ import (
 	"time"
 
 	"vpnpanel/internal/proto"
+	"vpnpanel/internal/proto/shaping"
 	"vpnpanel/internal/store"
 )
 
@@ -23,7 +22,6 @@ const (
 	xrayCfg     = "/usr/local/etc/xray/config.json"
 	xrayNew     = "/usr/local/etc/xray/config.new.json" // Xray erkennt das Format an der Endung
 	backendBase = 8443
-	ifbDev      = "ifbvl"
 	markBase    = 0x5600 // Markierung = markBase + Nutzer-ID
 )
 
@@ -242,7 +240,6 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		if sys.Exists(xrayCfg) {
 			_, _ = sys.Run("systemctl", "disable", "--now", "xray")
 		}
-		_ = applyShaping(env, nil)
 		return nil
 	}
 
@@ -331,12 +328,8 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		}
 	}
 
-	var shaped []shapeUser
 	for _, id := range uids {
-		shaped = append(shaped, shapeUser{id, limited[id].down, limited[id].up})
-	}
-	if err := applyShaping(env, shaped); err != nil {
-		env.Log("warn", "VLESS-Geschwindigkeitsbegrenzung: "+err.Error())
+		env.Shape.Add(shaping.Rule{Key: fmt.Sprintf("vl-u%d", id), Egress: limited[id].up, Ingress: limited[id].down, Mark: uint32(markBase + id)})
 	}
 	return nil
 }
@@ -356,122 +349,6 @@ func orEmpty(r []map[string]any) []map[string]any {
 	}
 	return r
 }
-
-type shapeUser struct {
-	id       int64
-	down, up float64
-}
-
-// applyShaping: Upload = markierte Pakete, die Xray ins Internet schickt (eth0 ausgehend);
-// Download = Antworten aus dem Internet (eth0 eingehend, per connmark auf ifb umgeleitet).
-func applyShaping(env *proto.Env, users []shapeUser) error {
-	sys := env.Sys
-	dev := env.Global.OutIf
-	if dev == "" {
-		dev = "eth0"
-	}
-	var sig strings.Builder
-	for _, u := range users {
-		fmt.Fprintf(&sig, "%d %.2f %.2f\n", u.id, u.down, u.up)
-	}
-	h := ""
-	if len(users) > 0 {
-		s := sha256.Sum256([]byte(dev + sig.String()))
-		h = hex.EncodeToString(s[:8])
-	}
-	if env.GetState("tc:vless") == h {
-		return nil
-	}
-	clear := func() {
-		_, _ = sys.Run("tc", "qdisc", "del", "dev", dev, "root")
-		_, _ = sys.Run("tc", "qdisc", "del", "dev", dev, "ingress")
-		_, _ = sys.Run("tc", "qdisc", "del", "dev", ifbDev, "root")
-	}
-	clear()
-	if len(users) == 0 {
-		_, _ = sys.Run("ip", "link", "del", ifbDev)
-		for _, bin := range []string{"iptables", "ip6tables"} {
-			_, _ = sys.Run(bin, "-t", "mangle", "-D", "OUTPUT", "-j", "VPNVL")
-		}
-		env.SetState("tc:vless", "")
-		return nil
-	}
-	// Markierung der Verbindung merken, damit Antworten zugeordnet werden können
-	for _, bin := range []string{"iptables", "ip6tables"} {
-		rules := "*mangle\n:VPNVL - [0:0]\n-F VPNVL\n-A VPNVL -m mark ! --mark 0 -j CONNMARK --save-mark\nCOMMIT\n"
-		if _, err := sys.RunInput(rules, bin+"-restore", "-n"); err != nil {
-			return err
-		}
-		if _, err := sys.Run(bin, "-t", "mangle", "-C", "OUTPUT", "-j", "VPNVL"); err != nil {
-			if _, err := sys.Run(bin, "-t", "mangle", "-A", "OUTPUT", "-j", "VPNVL"); err != nil {
-				return err
-			}
-		}
-	}
-	run := func(args ...string) error { _, err := sys.Run("tc", args...); return err }
-	fail := func(err error) error { clear(); env.SetState("tc:vless", ""); return err }
-
-	if err := run("qdisc", "add", "dev", dev, "root", "handle", "1:", "htb", "default", "1"); err != nil {
-		return fail(err)
-	}
-	if err := run("class", "add", "dev", dev, "parent", "1:", "classid", "1:1", "htb", "rate", "10gbit"); err != nil {
-		return fail(err)
-	}
-	for _, u := range users {
-		if u.up <= 0 {
-			continue
-		}
-		cls := fmt.Sprintf("1:%x", u.id+0x10)
-		r := mbit(u.up)
-		if err := run("class", "add", "dev", dev, "parent", "1:", "classid", cls, "htb", "rate", r, "ceil", r); err != nil {
-			return fail(err)
-		}
-		if err := run("filter", "add", "dev", dev, "parent", "1:", "protocol", "all", "prio", "1", "handle", strconv.FormatInt(markBase+u.id, 10), "fw", "flowid", cls); err != nil {
-			return fail(err)
-		}
-	}
-	anyDown := false
-	for _, u := range users {
-		anyDown = anyDown || u.down > 0
-	}
-	if anyDown {
-		_, _ = sys.Run("ip", "link", "add", ifbDev, "type", "ifb")
-		if _, err := sys.Run("ip", "link", "set", ifbDev, "up"); err != nil {
-			env.SetState("tc:vless", h)
-			return fmt.Errorf("ifb-Gerät nicht verfügbar (Modul ifb auf dem Host laden): %v – nur Upload wird begrenzt", err)
-		}
-		steps := [][]string{
-			{"qdisc", "add", "dev", ifbDev, "root", "handle", "1:", "htb", "default", "1"},
-			{"class", "add", "dev", ifbDev, "parent", "1:", "classid", "1:1", "htb", "rate", "10gbit"},
-		}
-		for _, u := range users {
-			if u.down <= 0 {
-				continue
-			}
-			cls := fmt.Sprintf("1:%x", u.id+0x10)
-			r := mbit(u.down)
-			steps = append(steps,
-				[]string{"class", "add", "dev", ifbDev, "parent", "1:", "classid", cls, "htb", "rate", r, "ceil", r},
-				[]string{"filter", "add", "dev", ifbDev, "parent", "1:", "protocol", "all", "prio", "1", "handle", strconv.FormatInt(markBase+u.id, 10), "fw", "flowid", cls})
-		}
-		steps = append(steps,
-			[]string{"qdisc", "add", "dev", dev, "handle", "ffff:", "ingress"},
-			[]string{"filter", "add", "dev", dev, "parent", "ffff:", "protocol", "all", "prio", "1", "u32", "match", "u32", "0", "0",
-				"action", "connmark", "action", "mirred", "egress", "redirect", "dev", ifbDev})
-		for _, s := range steps {
-			if err := run(s...); err != nil {
-				_, _ = sys.Run("tc", "qdisc", "del", "dev", dev, "ingress")
-				_, _ = sys.Run("tc", "qdisc", "del", "dev", ifbDev, "root")
-				env.SetState("tc:vless", h)
-				return fmt.Errorf("Download-Begrenzung nicht möglich (Module act_connmark/act_mirred auf dem Host laden?): %v – nur Upload wird begrenzt", err)
-			}
-		}
-	}
-	env.SetState("tc:vless", h)
-	return nil
-}
-
-func mbit(v float64) string { return strconv.FormatFloat(v*1000, 'f', 0, 64) + "kbit" }
 
 func (Driver) Collect(env *proto.Env, servers []*proto.ServerBundle) (map[int64]proto.Usage, error) {
 	if len(layout(servers)) == 0 {

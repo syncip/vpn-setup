@@ -1,6 +1,6 @@
 # vpn-setup
 
-WireGuard-Netze (Stern, Geräte mit Netzen dahinter) und VLESS/Reality mit Webinterface:
+WireGuard-Netze (Stern, Geräte mit Netzen dahinter), VLESS/Reality und Hysteria2 mit Webinterface:
 Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
 
 ## Installation
@@ -31,6 +31,19 @@ post-down iptables -t nat -D PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --t
 
 Die Zertifikatswarnung im Browser ist normal (Origin- bzw. selbstsigniertes Zertifikat).
 Optional geht das Panel zusätzlich über eine Domain auf Port 443 (Einstellung „Panel-Domain“).
+
+## Hysteria2
+
+Jeder Hysteria2-Server läuft als eigene Instanz (`vpn-hysteria@hy<ID>`), Vorgabe UDP 443.
+Auf dem Proxmox-Host den UDP-Port weiterleiten und größere UDP-Puffer setzen:
+
+```bash
+iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 443 -j DNAT --to-destination 10.10.10.3:443
+printf '%s\n' net.core.rmem_max=16777216 net.core.wmem_max=16777216 > /etc/sysctl.d/90-hysteria.conf && sysctl --system
+```
+
+Die Anmeldung läuft über das Panel (interner Endpunkt `127.0.0.1:8479`). So werden gesperrte
+Nutzer sofort abgewiesen, und gedrosselte Nutzer werden über ihre Client-Adresse begrenzt.
 
 ## Entwicklung
 

@@ -59,6 +59,12 @@ mkdir -p /etc/wireguard && chmod 700 /etc/wireguard
 echo ">> Xray installieren/aktualisieren"
 bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
+echo ">> Hysteria2 installieren/aktualisieren"
+# offizielles Installationsscript; die Instanzen startet das Panel selbst (vpn-hysteria@<name>)
+bash -c "$(curl -fsSL https://get.hy2.sh/)"
+systemctl disable --now hysteria-server.service 2>/dev/null || true
+mkdir -p /etc/hysteria
+
 echo ">> Altes Bash-Setup abbauen (Daten bleiben für die Übernahme liegen)"
 systemctl disable --now vpn-collect.timer vpn-collect-shutdown.service 2>/dev/null || true
 rm -f /etc/systemd/system/vpn-collect.service /etc/systemd/system/vpn-collect.timer \
@@ -146,4 +152,11 @@ Für Geschwindigkeitslimits auf dem Proxmox-Host (nicht im Container) einmalig:
   printf '%s\n' ifb act_connmark act_mirred sch_htb sch_ingress cls_fw cls_u32 cls_matchall \
     > /etc/modules-load.d/vpn-shaping.conf
   systemctl restart systemd-modules-load
+
+Für Hysteria2 auf dem Proxmox-Host:
+  - UDP-Port (Vorgabe 443) an den Container weiterleiten, wie 51820:
+      iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 443 -j DNAT --to-destination 10.10.10.3:443
+  - größere UDP-Puffer (im Container nicht einstellbar):
+      printf '%s\n' net.core.rmem_max=16777216 net.core.wmem_max=16777216 > /etc/sysctl.d/90-hysteria.conf
+      sysctl --system
 EOF

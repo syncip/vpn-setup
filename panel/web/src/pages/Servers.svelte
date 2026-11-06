@@ -68,7 +68,7 @@
     if (!(await confirmDialog({ title: 'Neue Server-Schlüssel?', text: 'Alle Geräte und Links dieses Servers funktionieren danach nicht mehr und müssen neu eingerichtet werden.', ok: 'Neu erzeugen', danger: true }))) return;
     if (await run(() => put(`/servers/${s.id}`, { regenerate_keys: true }), 'Neue Schlüssel erzeugt')) load();
   }
-  const protoIcon = { wireguard: 'network', vless: 'shield' };
+  const protoIcon = { wireguard: 'network', vless: 'shield', hysteria2: 'zap' };
 </script>
 
 <PageHead title="Server" subtitle="VPN-Instanzen auf diesem System – mehrere pro Protokoll möglich">
@@ -100,6 +100,8 @@
             <dt>Internet</dt><dd>{s.settings.internet ? 'über diesen Server' : 'nein (nur Netzwerk)'}</dd>
           {:else if s.protocol === 'vless'}
             <dt>Tarnziele</dt><dd>{(s.settings.targets || []).flatMap((t) => t.server_names).join(', ')}</dd>
+          {:else if s.protocol === 'hysteria2'}
+            <dt>Tarnung</dt><dd>{s.settings.masquerade || 'keine'}{s.settings.obfs ? ' · Salamander' : ''}</dd>
           {/if}
           {#if s.public_key}
             <dt>Public Key</dt>

@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"vpnpanel/internal/proto"
+	"vpnpanel/internal/proto/shaping"
 	"vpnpanel/internal/store"
 	"vpnpanel/internal/system"
 )
@@ -19,6 +21,7 @@ type Config struct {
 	PanelBackend string // interne Adresse des Panels für nginx (z. B. 127.0.0.1:8480)
 	DataDir      string
 	LockPath     string
+	HookAddr     string // interner HTTP-Listener für Dienste (z. B. 127.0.0.1:8479)
 }
 
 type Engine struct {
@@ -79,7 +82,12 @@ func SettingKeys() []string {
 }
 
 func (e *Engine) Global() proto.Global {
-	return proto.Global{ServerHost: e.Setting("server_host"), OutIf: e.Setting("out_interface"), XrayAPI: e.Setting("xray_api"), DataDir: e.Cfg.DataDir}
+	hook := ""
+	if e.Cfg.HookAddr != "" {
+		hook = "http://" + e.Cfg.HookAddr + "/hook"
+	}
+	return proto.Global{ServerHost: e.Setting("server_host"), OutIf: e.Setting("out_interface"), XrayAPI: e.Setting("xray_api"),
+		DataDir: e.Cfg.DataDir, HookURL: hook}
 }
 
 func (e *Engine) Env() *proto.Env {
@@ -89,6 +97,7 @@ func (e *Engine) Env() *proto.Env {
 		Log:      e.Log,
 		GetState: func(k string) string { return e.St.GetSetting("state:"+k, "") },
 		SetState: func(k, v string) { _ = e.St.SetSetting("state:"+k, v) },
+		Shape:    &shaping.Plan{},
 	}
 }
 
@@ -197,6 +206,12 @@ func (e *Engine) applyLocked() error {
 		} else {
 			e.setErr(id, "")
 		}
+	}
+	if err := shaping.Apply(e.Sys, env.Global.OutIf, env.Shape, env.GetState, env.SetState, e.Log); err != nil {
+		e.Log("warn", "Geschwindigkeitsbegrenzung: "+err.Error())
+		e.setErr("shaping", err.Error())
+	} else {
+		e.setErr("shaping", "")
 	}
 	if err := e.applyNginx(snap); err != nil {
 		errs = append(errs, "nginx: "+err.Error())
@@ -523,6 +538,34 @@ func (e *Engine) SubLinks(userID int64) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// Hook beantwortet interne Anfragen eines Dienstes (z. B. Hysteria2-Anmeldung).
+func (e *Engine) Hook(serverID int64, secret string, body []byte) (any, error) {
+	snap, err := e.Snapshot()
+	if err != nil {
+		return nil, err
+	}
+	for _, sb := range snap.Servers {
+		if sb.Server.ID != serverID {
+			continue
+		}
+		want := proto.Str(sb.Server.State, "hook_secret")
+		if want == "" || subtle.ConstantTimeCompare([]byte(want), []byte(secret)) != 1 {
+			return nil, store.ErrNotFound
+		}
+		d, ok := proto.Get(sb.Server.Protocol)
+		h, ok2 := d.(proto.Hooker)
+		if !ok || !ok2 {
+			return nil, store.ErrNotFound
+		}
+		resp, reshape, err := h.Hook(e.Env(), sb, body)
+		if reshape {
+			e.RequestApply()
+		}
+		return resp, err
+	}
+	return nil, store.ErrNotFound
 }
 
 // InitServer setzt Vorgaben über den Treiber.

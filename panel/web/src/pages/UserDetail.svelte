@@ -175,7 +175,7 @@
     </div>
   {:else if tab === 'peers'}
     <div class="spread" style="margin-bottom:12px">
-      <div class="muted small">Jeder Zugang ist ein Gerät (WireGuard) bzw. eine Kennung (VLESS). Limits gelten für den Nutzer.</div>
+      <div class="muted small">Jeder Zugang ist ein Gerät (WireGuard) bzw. eine Kennung (VLESS, Hysteria2). Limits gelten für den Nutzer.</div>
       <button class="btn primary" onclick={addPeer}><Icon name="plus" size={16} /> Zugang hinzufügen</button>
     </div>
     <div class="stack">
