@@ -15,11 +15,14 @@
   import { bytes, ago, date, rate, isOnline, limitsSummary, toDateInput, fromDateInput, copy, PERIODS, clone } from '../lib/format.js';
   import { go, protocol, toast } from '../lib/state.svelte.js';
 
-  let { id } = $props();
+  let { id, tab: tabParam = 'overview' } = $props();
   let d = $state(null);
   let plans = $state([]);
   let servers = $state([]);
-  let tab = $state('overview');
+  // Tab steht in der Adresse (#/users/<id>/<tab>) – Neuladen bleibt auf der Ansicht
+  const TABS = ['overview', 'peers', 'limits', 'sub', 'settings'];
+  const tab = $derived(TABS.includes(tabParam) ? tabParam : 'overview');
+  const setTab = (t) => go(t === 'overview' ? `/users/${id}` : `/users/${id}/${t}`);
   let liveOn = $state(0);
 
   async function load() {
@@ -117,6 +120,18 @@
     return Object.entries(n).map(([k, c]) => `${c}× ${protocol(k)?.label || k}`).join(' · ');
   });
 
+  // sing-box-Profil: Hysteria2 + WireGuard „Handy / Laptop“ mit vollem Tunnel (kein VLESS)
+  const sbSummary = $derived.by(() => {
+    const n = {};
+    for (const p of d?.peers || []) {
+      if (!p.enabled || !p.active) continue;
+      if (p.protocol === 'hysteria2' || (p.protocol === 'wireguard' && p.kind === 'client' && (p.settings?.tunnel || 'full') === 'full')) n[p.protocol] = (n[p.protocol] || 0) + 1;
+    }
+    return Object.entries(n).map(([k, c]) => `${c}× ${protocol(k)?.label || k}`).join(' · ');
+  });
+  let sideQR = $state('sub');
+  const sideText = $derived(sideQR === 'singbox' && d?.singbox_url ? d.singbox_url : d?.sub_url);
+
   const kindIcon = { client: 'phone', server: 'server', site: 'network', access: 'key' };
   const kindLabel = (proto, kind) => protocol(proto)?.kinds?.find((k) => k.id === kind)?.label || kind;
 </script>
@@ -140,11 +155,11 @@
   </div>
 
   <div class="tabs">
-    <button class:active={tab === 'overview'} onclick={() => (tab = 'overview')}><Icon name="activity" size={16} /> Übersicht</button>
-    <button class:active={tab === 'peers'} onclick={() => (tab = 'peers')}><Icon name="phone" size={16} /> Zugänge <span class="badge">{d.peers.length}</span></button>
-    <button class:active={tab === 'limits'} onclick={() => (tab = 'limits')}><Icon name="gauge" size={16} /> Limits</button>
-    <button class:active={tab === 'sub'} onclick={() => (tab = 'sub')}><Icon name="link" size={16} /> Abo-Link</button>
-    <button class:active={tab === 'settings'} onclick={() => (tab = 'settings')}><Icon name="settings" size={16} /> Einstellungen</button>
+    <button class:active={tab === 'overview'} onclick={() => setTab('overview')}><Icon name="activity" size={16} /> Übersicht</button>
+    <button class:active={tab === 'peers'} onclick={() => setTab('peers')}><Icon name="phone" size={16} /> Zugänge <span class="badge">{d.peers.length}</span></button>
+    <button class:active={tab === 'limits'} onclick={() => setTab('limits')}><Icon name="gauge" size={16} /> Limits</button>
+    <button class:active={tab === 'sub'} onclick={() => setTab('sub')}><Icon name="link" size={16} /> Abo-Link</button>
+    <button class:active={tab === 'settings'} onclick={() => setTab('settings')}><Icon name="settings" size={16} /> Einstellungen</button>
   </div>
 
   {#if tab === 'overview'}
@@ -177,18 +192,26 @@
    </div>
    <aside class="ud-side">
     <div class="card">
-      <div class="card-head"><h3>Abo-Link</h3><button class="btn sm ghost" onclick={() => (tab = 'sub')}>Mehr</button></div>
+      <div class="card-head"><h3>Abo-Link</h3><button class="btn sm ghost" onclick={() => setTab('sub')}>Mehr</button></div>
       <div class="card-pad stack-sm side-sub">
-        <QR text={d.sub_url} size={168} />
-        <div class="muted tiny" style="text-align:center">{subSummary || 'Noch keine Zugänge im Abo'}</div>
+        {#if sbSummary && d.singbox_url}
+          <div class="segmented sm">
+            <button class:active={sideQR === 'sub'} onclick={() => (sideQR = 'sub')}>Abo</button>
+            <button class:active={sideQR === 'singbox'} onclick={() => (sideQR = 'singbox')}>sing-box-App</button>
+          </div>
+        {/if}
+        <QR text={sideText} size={168} />
+        <div class="muted tiny" style="text-align:center">
+          {#if sideQR === 'singbox'}In der sing-box-App scannen · {sbSummary}{:else}{subSummary || 'Noch keine Zugänge im Abo'}{/if}
+        </div>
         <div class="row">
-          <button class="btn sm grow" onclick={() => copy(d.sub_url).then(() => toast('Abo-Link kopiert'))}><Icon name="copy" size={15} /> Kopieren</button>
+          <button class="btn sm grow" onclick={() => copy(sideText).then(() => toast(sideQR === 'singbox' ? 'sing-box-Import-Link kopiert' : 'Abo-Link kopiert'))}><Icon name="copy" size={15} /> Kopieren</button>
           <button class="btn sm danger" title="Neuen Abo-Link erzeugen (alter Link wird ungültig)" onclick={newToken}><Icon name="refresh" size={15} /> Neu</button>
         </div>
       </div>
     </div>
     <div class="card">
-      <div class="card-head"><h3>Zugänge</h3><button class="btn sm ghost" onclick={() => (tab = 'peers')}>Verwalten</button></div>
+      <div class="card-head"><h3>Zugänge</h3><button class="btn sm ghost" onclick={() => setTab('peers')}>Verwalten</button></div>
       <div class="side-list">
         {#each d.peers as p}
           <button class="side-peer" onclick={() => showCfg(p)} title="Konfiguration anzeigen">
@@ -294,13 +317,25 @@
       <div class="stack grow">
         <div>
           <h2>Abo-Link</h2>
-          <p class="muted small">Enthält alle aktiven Zugänge dieses Nutzers{subSummary ? ` (${subSummary})` : ''}: VLESS, Hysteria2 und WireGuard-Geräte „Handy / Laptop“. In Hiddify, v2rayNG, v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an.</p>
+          <p class="muted small">Enthält alle aktiven Zugänge dieses Nutzers{subSummary ? ` (${subSummary})` : ''}: VLESS, Hysteria2 und WireGuard-Geräte „Handy / Laptop“. In Hiddify, v2rayNG, v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an. Hinweis: Hiddify (sing-box) kann VLESS mit aktuellem Xray nicht nutzen – dort Hysteria2 oder WireGuard wählen.</p>
         </div>
         <div class="input-group">
           <input class="input mono" readonly value={d.sub_url} />
           <button class="btn" style="border-radius:0 8px 8px 0" onclick={() => copy(d.sub_url).then(() => toast('Kopiert'))}><Icon name="copy" size={15} /></button>
         </div>
         <div class="row"><button class="btn danger" onclick={newToken}><Icon name="refresh" size={15} /> Neuen Link erzeugen</button></div>
+        {#if d.singbox_url}
+          <div class="sb-box">
+            {#if sbSummary}<QR text={d.singbox_url} size={150} />{/if}
+            <div class="stack-sm grow">
+              <span class="strong">Offizielle sing-box-App</span>
+              <span class="muted small">Die sing-box-App liest keine Abo-Links, sondern ein fertiges Profil. Diesen QR-Code in der App scannen (Profile → „+“ → QR-Code) – das Profil aktualisiert sich dann selbst.
+                {#if sbSummary}Enthält {sbSummary}, automatische Wahl des schnellsten Servers.{:else}<strong>Keine passenden Zugänge</strong> – nötig sind Hysteria2 oder WireGuard „Handy / Laptop“ mit vollem Tunnel.{/if}
+                VLESS fehlt bewusst: Xray ab 26.9.9 lehnt sing-box (auch Hiddify) ab.</span>
+              {#if sbSummary}<div><button class="btn sm" onclick={() => copy(d.singbox_url).then(() => toast('Kopiert'))}><Icon name="copy" size={15} /> Import-Link kopieren</button></div>{/if}
+            </div>
+          </div>
+        {/if}
         <div class="help">Wurde der Link weitergegeben oder ist er bekannt geworden: „Neuen Link erzeugen“. Der alte Link funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen. Apps, die WireGuard nicht aus dem Abo übernehmen (z. B. v2RayTun), richtest du über „Zugänge“ → „Konfiguration“ ein.</div>
       </div>
     </div>
@@ -371,6 +406,20 @@
     font-size: 20px;
     font-weight: 700;
     margin: 4px 0 2px;
+  }
+  .sb-box {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+  }
+  .segmented.sm button {
+    font-size: 12px;
+    padding: 4px 10px;
   }
   .ud {
     display: grid;

@@ -92,6 +92,14 @@
           <button class="btn sm icon" class:primary={qrFor === cc.sub_url} title="QR-Code" onclick={() => show(cc.sub_url, 'Abo-Link – alle Zugänge dieses Nutzers')}><Icon name="qr" size={15} /></button>
           <button class="btn sm icon" title="Kopieren" onclick={() => cp(cc.sub_url)}><Icon name="copy" size={15} /></button>
         </div>
+        {#if cc.singbox_url && !cc.links?.some((l) => l.url.startsWith('vless://'))}
+          <div class="link">
+            <span class="badge accent">sing-box-App</span>
+            <code class="grow ellipsis">Profil mit allen Hysteria2-/WireGuard-Zugängen</code>
+            <button class="btn sm icon" class:primary={qrFor === cc.singbox_url} title="QR-Code für die sing-box-App" onclick={() => show(cc.singbox_url, 'sing-box-App – Profile → „+“ → QR-Code scannen')}><Icon name="qr" size={15} /></button>
+            <button class="btn sm icon" title="Kopieren" onclick={() => cp(cc.singbox_url)}><Icon name="copy" size={15} /></button>
+          </div>
+        {/if}
       </div>
     {/if}
 

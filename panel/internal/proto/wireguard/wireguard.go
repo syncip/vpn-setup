@@ -929,7 +929,19 @@ func endpointHost(env *proto.Env, sc serverCfg) string {
 	return h
 }
 
-func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (*proto.ClientConfig, error) {
+// clientParams: gemeinsame Werte für Config-Datei, Link und sing-box-Profil eines Geräts.
+type clientParams struct {
+	sc             serverCfg
+	all            []*node
+	me             *node
+	c              peerCfg
+	addrs, allowed []string
+	reach          []*node
+	dns            string
+	mtu, ka        int
+}
+
+func params(sb *proto.ServerBundle, pb *proto.PeerBundle) (*clientParams, error) {
 	sc := load(sb.Server)
 	all := nodes(sb, false)
 	var me *node
@@ -984,6 +996,15 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	if ka == 0 {
 		ka = sc.Keepalive
 	}
+	return &clientParams{sc: sc, all: all, me: me, c: c, addrs: addrs, allowed: allowed, reach: reach, dns: dns, mtu: mtu, ka: ka}, nil
+}
+
+func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (*proto.ClientConfig, error) {
+	cp, err := params(sb, pb)
+	if err != nil {
+		return nil, err
+	}
+	sc, all, me, c, addrs, allowed, reach, dns, mtu, ka := cp.sc, cp.all, cp.me, cp.c, cp.addrs, cp.allowed, cp.reach, cp.dns, cp.mtu, cp.ka
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Interface]\n# %s – %s (%s)\nPrivateKey = %s\nAddress = %s\n", oneLine(sb.Server.Name), oneLine(pb.Peer.Name), oneLine(pb.User.Name),
@@ -1138,6 +1159,36 @@ func shareLink(env *proto.Env, sc serverCfg, sb *proto.ServerBundle, pb *proto.P
 	// exportiert – url.User ließe „+“ und „=“ stehen, was manche Apps falsch lesen.
 	key := url.QueryEscape(proto.Str(pb.Peer.Secrets, "private_key"))
 	return "wireguard://" + key + "@" + strings.TrimPrefix(u.String(), "wireguard://")
+}
+
+// SingBox: WireGuard-Endpunkt für das sing-box-Profil. Nur Geräte „Handy / Laptop“ mit vollem
+// Tunnel – das Profil schickt den gesamten Verkehr über den gewählten Server.
+func (Driver) SingBox(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (map[string]any, map[string]any) {
+	if pb.Peer.Kind != "client" || !pb.Active {
+		return nil, nil
+	}
+	cp, err := params(sb, pb)
+	if err != nil || cp.c.Tunnel != "full" {
+		return nil, nil
+	}
+	mtu := cp.mtu
+	if mtu == 0 {
+		mtu = 1280
+	}
+	peer := map[string]any{
+		"address":     strings.Trim(endpointHost(env, cp.sc), "[]"),
+		"port":        cp.sc.Port,
+		"public_key":  proto.Str(sb.Server.State, "public_key"),
+		"allowed_ips": []string{"0.0.0.0/0", "::/0"},
+	}
+	if psk := proto.Str(pb.Peer.Secrets, "psk"); psk != "" {
+		peer["pre_shared_key"] = psk
+	}
+	if cp.ka > 0 {
+		peer["persistent_keepalive_interval"] = cp.ka
+	}
+	return nil, map[string]any{"type": "wireguard", "mtu": mtu, "address": cp.addrs,
+		"private_key": proto.Str(pb.Peer.Secrets, "private_key"), "peers": []any{peer}}
 }
 
 func (Driver) Ports(srv *store.Server) []proto.Port {

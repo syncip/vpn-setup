@@ -104,11 +104,11 @@
       {#if section === '/'}
         <Overview />
       {:else if section === '/users' && parts[1]}
-        {#key parts[1]}<UserDetail id={Number(parts[1])} />{/key}
+        {#key parts[1]}<UserDetail id={Number(parts[1])} tab={parts[2] || 'overview'} />{/key}
       {:else if section === '/users'}
         <Users />
       {:else if section === '/network'}
-        <Network id={Number(parts[1]) || 0} />
+        <Network id={Number(parts[1]) || 0} view={parts[2] || 'map'} />
       {:else if section === '/servers'}
         <Servers />
       {:else if section === '/plans'}

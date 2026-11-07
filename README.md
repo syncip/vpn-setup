@@ -63,6 +63,15 @@ Das Abo eines Nutzers enthält alle aktiven Zugänge: VLESS (ein Eintrag je Tarn
 WireGuard-Geräte vom Typ „Handy / Laptop“ als `wireguard://`-Link. Einträge heißen „Server - Gerät“.
 Denselben WireGuard-Zugang nicht gleichzeitig in Hiddify und in der WireGuard-App nutzen.
 
+**sing-box-App:** Die offizielle sing-box-App liest keine Link-Listen. `<Abo-Link>?format=singbox` liefert
+stattdessen ein fertiges Profil (Hysteria2 mit eingebettetem Zertifikat, WireGuard „Handy / Laptop“ mit
+vollem Tunnel, automatische Serverwahl). Den passenden QR-Code (`sing-box://import-remote-profile?…`)
+zeigt die Nutzerseite.
+
+**VLESS und sing-box/Hiddify:** Xray ab v26.9.9 nimmt bei Reality nur noch Client Hellos mit
+`X25519MLKEM768` an; sing-box (und damit Hiddify) wird abgelehnt (`reality verification failed`).
+VLESS deshalb mit Xray-basierten Apps nutzen (v2RayTun, v2rayNG).
+
 Die Anmeldung läuft über das Panel (interner Endpunkt `127.0.0.1:8479`). So werden gesperrte
 Nutzer sofort abgewiesen, und gedrosselte Nutzer werden über ihre Client-Adresse begrenzt.
 

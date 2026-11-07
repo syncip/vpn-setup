@@ -388,7 +388,8 @@ func (a *API) getUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].ID < peers[j].ID })
-	writeJSON(w, map[string]any{"user": row, "peers": orEmptyT(peers), "sub_url": a.subURL(r, u), "custom": u.Limits != nil})
+	sub := a.subURL(r, u)
+	writeJSON(w, map[string]any{"user": row, "peers": orEmptyT(peers), "sub_url": sub, "singbox_url": singBoxImport(sub, a.profileName(u)), "custom": u.Limits != nil})
 }
 
 func (a *API) subURL(r *http.Request, u *store.User) string {
@@ -473,6 +474,15 @@ func (a *API) resetUser(w http.ResponseWriter, r *http.Request) {
 	a.E.Log("info", fmt.Sprintf("Nutzer %s: %s zurückgesetzt", u.Name, msg))
 	a.E.RequestApply()
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// profileName: Name des Profils in den Apps („VPN – Martin“).
+func (a *API) profileName(u *store.User) string {
+	t := a.E.Setting("profile_title")
+	if t == "" {
+		t = "VPN"
+	}
+	return t + " – " + u.Name
 }
 
 func (a *API) newToken(w http.ResponseWriter, r *http.Request) {
@@ -722,12 +732,14 @@ func (a *API) peerConfig(w http.ResponseWriter, r *http.Request) {
 	// Protokolle mit Links (VLESS …) kommen auch ins Abo – den Abo-Link mitliefern.
 	resp := struct {
 		*proto.ClientConfig
-		SubURL string `json:"sub_url,omitempty"`
+		SubURL     string `json:"sub_url,omitempty"`
+		SingBoxURL string `json:"singbox_url,omitempty"`
 	}{ClientConfig: cc}
 	if len(cc.Links) > 0 {
 		if p, err := a.St.Peer(id); err == nil {
 			if u, err := a.St.User(p.UserID); err == nil {
 				resp.SubURL = a.subURL(r, u)
+				resp.SingBoxURL = singBoxImport(resp.SubURL, a.profileName(u))
 			}
 		}
 	}

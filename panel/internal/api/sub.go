@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -26,6 +28,11 @@ func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 	u, err := a.St.UserByToken(tok)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	// Offizielle sing-box-Apps: fertiges JSON-Profil statt Link-Liste („Remote Profile“)
+	if f := r.URL.Query().Get("format"); f == "singbox" || f == "sing-box" {
+		a.singBoxProfile(w, u.ID)
 		return
 	}
 	// Hiddify & andere sing-box-Apps lesen manche Angaben anders (z. B. Port-Hopping)
@@ -56,6 +63,31 @@ func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 	h.Set("content-disposition", `attachment; filename="`+asciiName(title)+`"`)
 	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
 	_, _ = w.Write([]byte(body))
+}
+
+func (a *API) singBoxProfile(w http.ResponseWriter, userID int64) {
+	b, err := a.E.SingBoxProfile(userID)
+	if errors.Is(err, engine.ErrNoSingBox) {
+		http.Error(w, "Keine Zugänge für sing-box (Hysteria2 oder WireGuard „Handy / Laptop“ mit vollem Tunnel)", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Fehler", http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	_, _ = w.Write(b)
+}
+
+// singBoxImport: Link für den QR-Code der sing-box-App (legt das Profil als „Remote Profile“ an,
+// die App aktualisiert es dann selbst).
+func singBoxImport(subURL, name string) string {
+	if subURL == "" {
+		return ""
+	}
+	return "sing-box://import-remote-profile?url=" + url.QueryEscape(subURL+"?format=singbox") + "#" + url.PathEscape(name)
 }
 
 // asciiName: Dateiname für den Header (nur einfache Zeichen).

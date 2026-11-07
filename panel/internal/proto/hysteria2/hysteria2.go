@@ -712,6 +712,40 @@ func (Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerB
 	return []string{link(env, sb, pb, env.Global.Client == "singbox")}
 }
 
+// SingBox: hysteria2-Ausgang für das sing-box-Profil. Das selbst erzeugte Zertifikat wird
+// mitgeliefert und damit richtig geprüft (kein „insecure“ nötig).
+func (Driver) SingBox(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (map[string]any, map[string]any) {
+	if !pb.Active {
+		return nil, nil
+	}
+	c := load(sb.Server)
+	t := map[string]any{"enabled": true, "server_name": sniOf(env, c)}
+	if c.CertFile == "" {
+		pem := proto.Str(sb.Server.State, "cert_pem")
+		if pem == "" {
+			return nil, nil
+		}
+		t["certificate"] = strings.TrimSpace(pem)
+	}
+	o := map[string]any{"type": "hysteria2", "server": strings.Trim(linkHost(env, c), "[]"),
+		"password": proto.Str(pb.Peer.Secrets, "password"), "tls": t}
+	if f, to, err := hopRange(c.HopPorts); err == nil && f > 0 {
+		// server_ports ersetzt server_port: Hauptport plus Hopping-Bereich
+		iv := c.HopInterval
+		if iv <= 0 {
+			iv = 30
+		}
+		o["server_ports"] = []string{fmt.Sprintf("%d:%d", c.Port, c.Port), fmt.Sprintf("%d:%d", f, to)}
+		o["hop_interval"] = fmt.Sprintf("%ds", iv)
+	} else {
+		o["server_port"] = c.Port
+	}
+	if c.Obfs {
+		o["obfs"] = map[string]any{"type": "salamander", "password": proto.Str(sb.Server.State, "obfs_password")}
+	}
+	return o, nil
+}
+
 func (Driver) Ports(srv *store.Server) []proto.Port {
 	c := load(srv)
 	out := []proto.Port{{Port: c.Port, Proto: "udp", Note: "Hysteria2 " + srv.Name}}

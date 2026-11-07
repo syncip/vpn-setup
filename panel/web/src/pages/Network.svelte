@@ -9,12 +9,13 @@
   import { ago, bytes } from '../lib/format.js';
   import { go, protocol } from '../lib/state.svelte.js';
 
-  let { id = 0 } = $props();
+  let { id = 0, view: viewParam = 'map' } = $props();
   let servers = $state([]);
   let users = $state([]);
   let net = $state(null);
   let sel = $state(0);
-  let view = $state('map');
+  // Ansicht steht in der Adresse (#/network/<id>/matrix)
+  const view = $derived(viewParam === 'matrix' ? 'matrix' : 'map');
 
   const mesh = $derived(servers.filter((s) => protocol(s.protocol)?.mesh));
   const sid = $derived(id || mesh[0]?.id || 0);
@@ -95,7 +96,7 @@
   {#if mesh.length > 1}
     <div class="tabs">
       {#each mesh as s}
-        <button class:active={s.id === sid} onclick={() => go(`/network/${s.id}`)}><span class="dot" class:on={s.status?.running}></span> {s.name}</button>
+        <button class:active={s.id === sid} onclick={() => go(`/network/${s.id}${view === 'matrix' ? '/matrix' : ''}`)}><span class="dot" class:on={s.status?.running}></span> {s.name}</button>
       {/each}
     </div>
   {/if}
@@ -114,8 +115,8 @@
         <div class="row">
           {#if selNode}<span class="small muted">Ausgewählt: <b>{selNode.name}</b> · erreicht {reachSet.size}, erreichbar von {reachedBy.size}</span><button class="btn sm ghost" onclick={() => (sel = 0)}>Auswahl aufheben</button>{/if}
           <div class="segmented">
-            <button class:active={view === 'map'} onclick={() => (view = 'map')}>Karte</button>
-            <button class:active={view === 'matrix'} onclick={() => (view = 'matrix')}>Matrix</button>
+            <button class:active={view === 'map'} onclick={() => go(`/network/${sid}`)}>Karte</button>
+            <button class:active={view === 'matrix'} onclick={() => go(`/network/${sid}/matrix`)}>Matrix</button>
           </div>
         </div>
       </div>

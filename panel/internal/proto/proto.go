@@ -255,6 +255,13 @@ type LiveSample struct {
 	Endpoint string // öffentliche Adresse, wenn bekannt
 }
 
+// SingBoxer: optional – Ausgang (outbound) bzw. Endpunkt (endpoint) eines Zugangs für das
+// sing-box-Profil (offizielle sing-box-Apps lesen keine Link-Listen, nur fertige JSON-Konfigurationen).
+// Beide nil = Zugang gehört nicht ins Profil. Das Feld "tag" setzt die Engine.
+type SingBoxer interface {
+	SingBox(env *Env, sb *ServerBundle, pb *PeerBundle) (outbound, endpoint map[string]any)
+}
+
 // LiveReader: optional – schnelle Zählerabfrage ohne Zurücksetzen (für die Live-Anzeige).
 type LiveReader interface {
 	Live(env *Env, servers []*ServerBundle) (map[int64]LiveSample, error)
