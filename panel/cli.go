@@ -26,6 +26,9 @@ const usage = `vpn – Verwaltung (gleiche Daten wie das Webinterface)
   vpn sub <name>           Abo-Link mit QR-Code (v2RayTun)
   vpn reset <name>         Verbrauch im aktuellen Zeitraum zurücksetzen
   vpn sync                 Konfigurationen neu schreiben und anwenden
+  vpn config               Einstellungen anzeigen (Domains, Schnittstelle …)
+  vpn config <schlüssel>   Einen Wert ausgeben
+  vpn config k=v [k=v …]   Werte setzen und anwenden (-n: nur speichern)
   vpn collect              Statistik einsammeln
   vpn admin passwd <name>  Passwort eines Administrators neu setzen
   vpn admin 2fa-off <name> 2FA eines Administrators abschalten
@@ -108,6 +111,8 @@ func cli(args []string) {
 		_ = e.St.SaveUser(u)
 		apply(e)
 		fmt.Printf("Verbrauch von '%s' zurückgesetzt.\n", u.Name)
+	case "config":
+		cmdConfig(e, rest[1:])
 	case "sync":
 		apply(e)
 		fmt.Println("Konfiguration neu erzeugt.")
@@ -335,4 +340,53 @@ func cmdAdmin(e *engine.Engine, action, name string) {
 	default:
 		fmt.Print(usage)
 	}
+}
+
+// cmdConfig: Einstellungen lesen und setzen (nutzt auch vpn-setup.sh).
+func cmdConfig(e *engine.Engine, args []string) {
+	if len(args) == 0 {
+		set := e.Settings()
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for _, k := range engine.SettingKeys() {
+			fmt.Fprintf(w, "%s\t%s\n", k, set[k])
+		}
+		_ = w.Flush()
+		return
+	}
+	if len(args) == 1 && !strings.Contains(args[0], "=") {
+		if _, err := engine.ValidateSetting(args[0], e.Setting(args[0])); err != nil && strings.HasPrefix(err.Error(), "unbekannte") {
+			fatal("%v", err)
+		}
+		fmt.Println(e.Setting(args[0]))
+		return
+	}
+	noApply := false
+	vals := map[string]string{}
+	for _, a := range args {
+		if a == "-n" {
+			noApply = true
+			continue
+		}
+		k, v, ok := strings.Cut(a, "=")
+		if !ok {
+			fatal("Format: schlüssel=wert (%s)", a)
+		}
+		v, err := engine.ValidateSetting(k, v)
+		if err != nil {
+			fatal("%v", err)
+		}
+		vals[k] = v
+	}
+	for k, v := range vals {
+		if err := e.St.SetSetting(k, v); err != nil {
+			fatal("%v", err)
+		}
+	}
+	e.Log("info", "Einstellungen geändert (Kommandozeile)")
+	if noApply {
+		fmt.Println("Gespeichert.")
+		return
+	}
+	apply(e)
+	fmt.Println("Gespeichert und angewendet.")
 }

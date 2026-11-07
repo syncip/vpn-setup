@@ -5,37 +5,59 @@ Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
 
 ## Installation
 
+Läuft auf jedem Server mit **Debian 13**: VPS, eigene Hardware oder Container (z. B. Proxmox-LXC).
+
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/syncip/vpn-setup/main/vpn-setup.sh
 bash vpn-setup.sh
 ```
 
-Das Script lädt das Panel-Programm aus dem neuesten Release. Danach läuft das Webinterface
-auf **https://<IP>:9443** (`PANEL_DIRECT` im Script), dazu der Befehl `vpn help`.
+Beim ersten Start fragt das Script nach:
 
-## Zugang zum Webinterface
+- **Server-Adresse** – Domain mit A-/AAAA-Eintrag auf den Server (ohne Cloudflare-Proxy) oder die
+  öffentliche IP. Sie steht in allen Links und Konfigurationen.
+- **Abo-Domain** (optional) – z. B. `sub.example.org` über Cloudflare-Proxy. Leer = Abo-Links über die
+  Panel-Domain bzw. direkt über `https://<IP>:9443/sub/…`.
+- **Panel-Domain** (optional) – z. B. `panel.example.org` über Cloudflare-Proxy.
 
-Das Panel lauscht im Container auf Port 9443 (HTTPS). Hinter Proxmox-NAT muss der Host den Port
-an den Container weiterleiten, genau wie 443 und 51820. Auf dem Host (Beispiel Container 10.10.10.3):
+Die ausgehende Netzwerkschnittstelle erkennt das Script selbst. Das Panel-Programm kommt aus dem
+neuesten Release. Erneut ausführen aktualisiert alles; Daten und Einstellungen bleiben.
+
+```bash
+bash vpn-setup.sh --neu                                   # Domains neu abfragen
+SERVER_HOST=vpn.example.org SUB_HOST=sub.example.org bash vpn-setup.sh   # ohne Rückfragen
+vpn config                                                # Einstellungen anzeigen
+vpn config server_host=vpn.example.org                    # ändern und anwenden
+```
+
+Danach läuft das Webinterface auf **https://<IP>:9443**, dazu der Befehl `vpn help`.
+Die erste Anmeldung steht in `/etc/vpn/panel-admin.txt`.
+
+**Offene Ports:** TCP 443 und 9443, UDP 51820 (WireGuard), UDP 443 (Hysteria2, bei Port-Hopping
+zusätzlich der UDP-Bereich).
+
+**Cloudflare (optional):** Für Abo- und Panel-Domain hinter Cloudflare das Origin-Zertifikat als
+`/etc/vpn/sub-cert.pem` und `/etc/vpn/sub-key.pem` ablegen (muss beide Domains abdecken) und
+SSL auf „Vollständig (streng)“ stellen. Ohne Zertifikat nutzt das Panel ein selbstsigniertes.
+
+## Server hinter NAT (z. B. Proxmox-Container)
+
+Erkennt das Script einen Container, zeigt es am Ende die nötigen Befehle für den Host an. Der Host muss
+die Ports an den Container weiterleiten (Beispiel Container 10.10.10.3):
 
 ```bash
 iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --to-destination 10.10.10.3:9443
 ```
 
-Dauerhaft in `/etc/network/interfaces` beim Block von `vmbr1` neben den anderen Weiterleitungen:
-
-```
-post-up   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --to-destination 10.10.10.3:9443
-post-down iptables -t nat -D PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --to-destination 10.10.10.3:9443
-```
-
-Die Zertifikatswarnung im Browser ist normal (Origin- bzw. selbstsigniertes Zertifikat).
-Optional geht das Panel zusätzlich über eine Domain auf Port 443 (Einstellung „Panel-Domain“).
+Genauso TCP 443, UDP 443 und UDP 51820. Dauerhaft z. B. als `post-up`/`post-down` in
+`/etc/network/interfaces`. Außerdem lädt der Host die Kernelmodule (WireGuard, Drosselung) und setzt
+größere UDP-Puffer für Hysteria2 – beides geht im unprivilegierten Container nicht.
 
 ## Hysteria2
 
 Jeder Hysteria2-Server läuft als eigene Instanz (`vpn-hysteria@hy<ID>`), Vorgabe UDP 443.
-Auf dem Proxmox-Host den UDP-Port weiterleiten und größere UDP-Puffer setzen:
+Im Container: auf dem Host den UDP-Port weiterleiten und größere UDP-Puffer setzen
+(auf normalen Servern erledigt das Script):
 
 ```bash
 iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 443 -j DNAT --to-destination 10.10.10.3:443
@@ -46,8 +68,8 @@ printf '%s\n' net.core.rmem_max=16777216 net.core.wmem_max=16777216 > /etc/sysct
 
 Unter Server → Hysteria2 → Erweitert einen UDP-Bereich eintragen, z. B. `20000-50000`. Der Client
 wechselt dann regelmäßig den Zielport (hilft, wenn Anbieter einzelne UDP-Verbindungen drosseln).
-Das Panel leitet den Bereich im Container auf den Hysteria-Port um; auf dem Proxmox-Host muss der
-Bereich an den Container gehen:
+Das Panel leitet den Bereich auf den Hysteria-Port um. Läuft es in einem Container, muss der Host
+den Bereich an den Container weiterleiten:
 
 ```bash
 iptables  -t nat -A PREROUTING -i vmbr0 -p udp --dport 20000:50000 -j DNAT --to-destination 10.10.10.3

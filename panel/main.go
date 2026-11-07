@@ -82,7 +82,9 @@ func open(o *opts) (*engine.Engine, error) {
 		sys = &system.Dry{Root: filepath.Join(o.dataDir, "dryroot")}
 		lock = ""
 	}
-	return engine.New(st, sys, engine.Config{PanelBackend: o.listen, DataDir: o.dataDir, LockPath: lock, HookAddr: o.hook}), nil
+	e := engine.New(st, sys, engine.Config{PanelBackend: o.listen, DataDir: o.dataDir, LockPath: lock, HookAddr: o.hook})
+	e.PinOldDefaults()
+	return e, nil
 }
 
 func main() {

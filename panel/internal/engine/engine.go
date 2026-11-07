@@ -46,9 +46,9 @@ func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
 // ---------- Einstellungen ----------
 
 var settingDefaults = map[string]string{
-	"server_host":         "sys1.1337733.xyz",
+	"server_host":         "", // Domain oder IP, die in allen Links und Configs steht (fragt vpn-setup.sh ab)
 	"panel_host":          "", // leer = Webinterface nur direkt per IP:Port
-	"sub_host":            "sub.1337733.xyz",
+	"sub_host":            "", // leer = Abo-Links über die Panel-Domain bzw. direkt per IP:Port
 	"out_interface":       "eth0",
 	"xray_api":            "127.0.0.1:10085",
 	"collect_interval":    "60",

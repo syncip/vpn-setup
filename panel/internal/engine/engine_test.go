@@ -26,6 +26,8 @@ func newTest(t *testing.T) (*Engine, *system.Dry) {
 	}
 	t.Cleanup(func() { st.Close() })
 	dry := &system.Dry{Root: filepath.Join(dir, "root")}
+	_ = st.SetSetting("server_host", "sys1.1337733.xyz")
+	_ = st.SetSetting("sub_host", "sub.1337733.xyz")
 	return New(st, dry, Config{PanelBackend: "127.0.0.1:8480", DataDir: dir}), dry
 }
 
@@ -278,5 +280,32 @@ func TestMeshFirewall(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Route für 192.168.1.0/24 fehlt")
+	}
+}
+
+// Ältere Installationen ohne gespeicherte Domains behalten die früheren Vorgaben, neue bekommen keine.
+func TestPinOldDefaults(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	e := New(st, &system.Dry{Root: filepath.Join(dir, "root")}, Config{DataDir: dir})
+	e.PinOldDefaults()
+	if h := e.Setting("server_host"); h != "" {
+		t.Errorf("neue Installation hat Vorgabe-Domain %q", h)
+	}
+	_ = st.SaveServer(&store.Server{Name: "wg", Protocol: "wireguard", Enabled: true, Settings: store.M{}})
+	_ = st.SetSetting("sub_host", "abo.example.org")
+	e.PinOldDefaults()
+	if e.Setting("server_host") != "sys1.1337733.xyz" || e.Setting("sub_host") != "abo.example.org" {
+		t.Errorf("alte Installation: %q / %q", e.Setting("server_host"), e.Setting("sub_host"))
+	}
+	if _, err := ValidateSetting("server_host", "vpn.Example.org."); err != nil {
+		t.Error(err)
+	}
+	if _, err := ValidateSetting("server_host", "a b"); err == nil {
+		t.Error("ungültiger Host angenommen")
 	}
 }

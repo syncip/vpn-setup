@@ -280,6 +280,17 @@ func (e *Engine) demoSamples(snap *Snapshot) map[int64]proto.LiveSample {
 	return out
 }
 
+// PeerLiveSince: verbunden seit (Unix-Zeit) laut Live-Messung, 0 = nicht verbunden oder unbekannt.
+// Zählt ab dem ersten Messpunkt, an dem der Zugang aktiv war (spätestens seit dem Panel-Start).
+func (e *Engine) PeerLiveSince(id int64) int64 {
+	e.live.mu.Lock()
+	defer e.live.mu.Unlock()
+	if p := e.live.cur[id]; p != nil && p.Online {
+		return p.Since
+	}
+	return 0
+}
+
 // PeerLiveOnline: laut Live-Messung gerade verbunden (ohne die Messung zu beschleunigen).
 func (e *Engine) PeerLiveOnline(id int64) bool {
 	e.live.mu.Lock()

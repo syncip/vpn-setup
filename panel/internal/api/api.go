@@ -29,6 +29,7 @@ type API struct {
 
 func New(e *engine.Engine, static fs.FS, secure bool, version string) *API {
 	liveOnline = e.PeerLiveOnline
+	liveSince = e.PeerLiveSince
 	return &API{E: e, St: e.St, Static: static, Secure: secure, Version: version, limiter: newLimiter()}
 }
 

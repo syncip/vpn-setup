@@ -7,7 +7,13 @@
   import StatusBadge from '../components/StatusBadge.svelte';
   import LimitsForm from '../components/LimitsForm.svelte';
   import { get, post, run } from '../lib/api.js';
-  import { ago, isOnline, rate, fromDateInput, limitsSummary } from '../lib/format.js';
+  import { ago, isOnline, onlineFor, sinceClock, rate, fromDateInput, limitsSummary } from '../lib/format.js';
+  // Uhr für die Online-Dauer
+  let now = $state(Date.now() / 1000);
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now() / 1000), 15000);
+    return () => clearInterval(t);
+  });
   import { go, protocol, toast } from '../lib/state.svelte.js';
 
   let users = $state([]);
@@ -141,7 +147,7 @@
                 <span class="muted small">{u.devices}</span>
               </div>
             </td>
-            <td class="small nowrap"><span class="row"><span class="dot" class:on={isOnline(u.last_seen)}></span>{ago(u.last_seen)}</span></td>
+            <td class="small nowrap" title={u.online && u.online_since ? sinceClock(u.online_since) : ''}><span class="row"><span class="dot" class:on={u.online || isOnline(u.last_seen)}></span>{u.online ? onlineFor(u.online_since, now) : ago(u.last_seen)}</span></td>
           </tr>
         {/each}
       </tbody>

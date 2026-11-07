@@ -129,6 +129,18 @@ export function speed(bps) {
   return b.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d }) + ' ' + u[i];
 }
 
+// onlineFor: „online · 1 Std. 5 Min.“ (since = verbunden seit, Unix; 0 = unbekannt)
+export function onlineFor(since, now = Date.now() / 1000) {
+  return since ? `online · ${duration(now - since)}` : 'online';
+}
+
+// sinceClock: Uhrzeit (heute) bzw. Datum + Uhrzeit, seit wann verbunden
+export function sinceClock(since) {
+  const d = new Date(since * 1000);
+  const t = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? `seit ${t} Uhr` : `seit ${d.toLocaleDateString('de-DE')} ${t} Uhr`;
+}
+
 // duration: Sekunden → „2 Std. 5 Min.“
 export function duration(s) {
   s = Math.max(0, Math.floor(s));

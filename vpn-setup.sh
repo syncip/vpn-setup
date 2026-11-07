@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  VPN-Panel: WireGuard-Netze + Xray (VLESS/Reality) mit Webinterface
-#  Für Debian 13 im LXC-Container hinter Proxmox-NAT (vmbr1)
+#  VPN-Panel: WireGuard, VLESS/Reality und Hysteria2 mit Webinterface
+#  Für Debian 13 (Server, VPS oder Container)
 #
-#  Aufruf:  bash vpn-setup.sh   (mehrfach ausführbar, Daten bleiben)
+#  Aufruf:  bash vpn-setup.sh          (mehrfach ausführbar, Daten bleiben)
+#           bash vpn-setup.sh --neu    Domains erneut abfragen
+#  Ohne Rückfragen:  SERVER_HOST=vpn.example.org SUB_HOST=sub.example.org #                    PANEL_HOST=panel.example.org bash vpn-setup.sh
+#  Beim ersten Start fragt das Script nach den Domains; die ausgehende
+#  Schnittstelle erkennt es selbst (überschreiben mit OUT_IF=…).
 #           Das Panel-Programm wird genommen, wenn es daneben liegt
 #           (./vpnpanel oder ./panel/dist/vpnpanel-linux-amd64, bauen mit
 #           bash panel/build.sh), sonst aus dem neuesten GitHub-Release geladen.
@@ -14,7 +18,6 @@
 set -euo pipefail
 
 ### ---------- ANPASSEN ----------------------------------------------
-OUT_IF="eth0"
 CERT="/etc/vpn/sub-cert.pem"     # Cloudflare-Origin-Zertifikat (deckt panel. und sub. ab)
 KEY="/etc/vpn/sub-key.pem"
 PANEL_DIRECT="0.0.0.0:9443"      # Webinterface: https://<IP>:9443
@@ -22,6 +25,14 @@ PANEL_LISTEN="127.0.0.1:8480"    # intern für nginx (Abo-Links über sub.-Domai
 ### ------------------------------------------------------------------
 
 [[ $EUID -eq 0 ]] || { echo "Bitte als root ausführen."; exit 1; }
+RECONF=0
+for a in "$@"; do
+  case $a in
+    --neu|--config|--reconfigure) RECONF=1 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    *) echo "Unbekannte Option: $a"; exit 1 ;;
+  esac
+done
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BIN=""
 for f in "$HERE/vpnpanel" "$HERE/vpnpanel-linux-amd64" "$HERE/panel/dist/vpnpanel-linux-amd64"; do
@@ -34,6 +45,86 @@ if [[ -z $BIN ]]; then
   curl -fL --retry 3 -o "$BIN" "${PANEL_URL:-https://github.com/syncip/vpn-setup/releases/latest/download/vpnpanel-linux-${ARCH}}" \
     || { echo "Download fehlgeschlagen (oder vpnpanel neben das Script legen)."; exit 1; }
 fi
+chmod 755 "$BIN"
+
+### ---------- Domains und Schnittstelle --------------------------------
+host_ok() { [[ $1 =~ ^[A-Za-z0-9.-]*$ ]]; }
+ask() { # ask <variable> <frage> <vorgabe>
+  local ans=""
+  while :; do
+    read -r -p "$2${3:+ [$3]}: " ans </dev/tty || ans=""
+    ans=${ans:-$3}
+    [[ $ans == "-" ]] && ans=""      # „-“ = Feld leeren
+    host_ok "$ans" && break
+    echo "   Nur Buchstaben, Ziffern, Punkt und Bindestrich (ohne https://)."
+  done
+  printf -v "$1" '%s' "$ans"
+}
+legacy_env() { [[ -f /etc/vpn/vpn.env ]] && sed -n "s/^$1=[\"']\{0,1\}\([^\"']*\).*/\1/p" /etc/vpn/vpn.env | head -1 || true; }
+
+FIRST=1
+CUR_SERVER=""; CUR_SUB=""; CUR_PANEL=""; CUR_IF=""
+if [[ -s /etc/vpn/panel.db ]]; then
+  FIRST=0
+  CUR_SERVER=$("$BIN" config server_host 2>/dev/null || true)
+  CUR_SUB=$("$BIN" config sub_host 2>/dev/null || true)
+  CUR_PANEL=$("$BIN" config panel_host 2>/dev/null || true)
+  CUR_IF=$("$BIN" config out_interface 2>/dev/null || true)
+elif [[ -f /etc/vpn/users.json ]]; then   # altes Bash-Setup, wird beim ersten Start übernommen
+  FIRST=0
+  CUR_SERVER=$(legacy_env SERVER_HOST); CUR_SUB=$(legacy_env SUB_HOST); CUR_IF=$(legacy_env OUT_IF)
+fi
+
+# Ältere Panel-Versionen kennen „config“ nicht und geben dann den Hilfetext aus → verwerfen
+host_ok "$CUR_SERVER" || CUR_SERVER=""; host_ok "$CUR_SUB" || CUR_SUB=""; host_ok "$CUR_PANEL" || CUR_PANEL=""
+[[ $CUR_IF =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || CUR_IF=""
+
+DETECTED_IF=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}')
+OUT_IF=${OUT_IF:-${CUR_IF:-${DETECTED_IF:-eth0}}}
+ip link show "$OUT_IF" >/dev/null 2>&1 || { echo "Schnittstelle $OUT_IF gibt es nicht (OUT_IF=… setzen)."; exit 1; }
+
+SERVER_HOST=${SERVER_HOST-$CUR_SERVER}
+SUB_HOST=${SUB_HOST-$CUR_SUB}
+PANEL_HOST=${PANEL_HOST-$CUR_PANEL}
+
+if (( RECONF || FIRST )) || [[ -z $SERVER_HOST ]]; then
+  if ! { : </dev/tty; } 2>/dev/null; then
+    [[ -n $SERVER_HOST ]] || { echo "Keine Eingabe möglich: SERVER_HOST=<domain oder IP> bash vpn-setup.sh"; exit 1; }
+  else
+    PUBIP=$(curl -4 -fsS --max-time 5 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | sed -n 's/^ip=//p' || true)
+    cat <<EOF
+
+==================== Einrichtung ====================
+Server-Adresse: Domain mit A-/AAAA-Eintrag auf diesen Server (OHNE Cloudflare-Proxy,
+                graue Wolke) oder die öffentliche IP. Steht in allen Links und Configs.
+Abo-Domain:     optional, z. B. sub.example.org über Cloudflare-Proxy (orange Wolke).
+                Leer = Abo-Links über die Panel-Domain bzw. https://<IP>:9443/sub/…
+Panel-Domain:   optional, z. B. panel.example.org über Cloudflare-Proxy.
+                Leer = Webinterface nur über https://<IP>:9443
+Ausgehende Schnittstelle: ${OUT_IF} (erkannt)
+„-“ leert ein Feld.
+
+EOF
+    while :; do
+      ask SERVER_HOST "Server-Adresse" "${SERVER_HOST:-$PUBIP}"
+      [[ -n $SERVER_HOST ]] || { echo "   Die Server-Adresse wird gebraucht."; continue; }
+      ask SUB_HOST "Abo-Domain (optional)" "$SUB_HOST"
+      ask PANEL_HOST "Panel-Domain (optional)" "$PANEL_HOST"
+      printf '
+  Server-Adresse: %s
+  Abo-Domain:     %s
+  Panel-Domain:   %s
+  Schnittstelle:  %s
+'         "$SERVER_HOST" "${SUB_HOST:-–}" "${PANEL_HOST:-–}" "$OUT_IF"
+      read -r -p "Passt das? [J/n] " ok </dev/tty || ok=""
+      [[ ${ok,,} == n* ]] || break
+    done
+  fi
+fi
+for h in "$SERVER_HOST" "$SUB_HOST" "$PANEL_HOST"; do
+  host_ok "$h" || { echo "Ungültiger Hostname: $h"; exit 1; }
+done
+### ------------------------------------------------------------------
 
 mkdir -p /etc/vpn && chmod 700 /etc/vpn
 
@@ -141,6 +232,9 @@ nginx -t
 systemctl enable nginx
 systemctl restart nginx
 
+echo ">> Einstellungen speichern"
+/usr/local/bin/vpn config -n "server_host=${SERVER_HOST}" "sub_host=${SUB_HOST}"   "panel_host=${PANEL_HOST}" "out_interface=${OUT_IF}" >/dev/null
+
 echo ">> Panel starten"
 systemctl daemon-reload
 systemctl enable vpnpanel
@@ -155,21 +249,32 @@ if [[ -f /etc/vpn/panel-admin.txt ]]; then
   echo "Erste Anmeldung: Zugangsdaten stehen in /etc/vpn/panel-admin.txt"
   echo "(nach dem Anmelden Passwort ändern, 2FA einrichten und die Datei löschen)"
 fi
-cat <<'EOF'
+IP4=$(ip -o -4 addr show dev "$OUT_IF" 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1)
+echo
+echo "Fertig. Webinterface:  https://${PANEL_HOST:-${SERVER_HOST}:9443}"
+[[ -n $PANEL_HOST ]] && echo "                       https://${SERVER_HOST}:9443 (direkt)"
+echo "Befehle:               vpn help   (Domains ändern: vpn config, oder bash vpn-setup.sh --neu)"
+cat <<EOF
 
-Fertig. Webinterface:  https://<Container-IP>:9443  (von außen: Port 9443 auf dem Host
-                       an den Container weiterleiten, siehe README)
-Befehle:               vpn help
+Nach außen offen sein müssen: TCP 443 und 9443, UDP 51820 (WireGuard) und UDP 443
+(Hysteria2, bei Port-Hopping zusätzlich der eingestellte UDP-Bereich).
+EOF
+if systemd-detect-virt -c -q 2>/dev/null; then
+cat <<EOF
 
-Für Geschwindigkeitslimits auf dem Proxmox-Host (nicht im Container) einmalig:
-  printf '%s\n' ifb act_connmark act_mirred sch_htb sch_ingress cls_fw cls_u32 cls_matchall \
-    > /etc/modules-load.d/vpn-shaping.conf
-  systemctl restart systemd-modules-load
-
-Für Hysteria2 auf dem Proxmox-Host:
-  - UDP-Port (Vorgabe 443) an den Container weiterleiten, wie 51820:
-      iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 443 -j DNAT --to-destination 10.10.10.3:443
-  - größere UDP-Puffer (im Container nicht einstellbar):
+Container erkannt (interne Adresse ${IP4:-?}). Auf dem Host (z. B. Proxmox) einmalig:
+  - Ports per DNAT an ${IP4:-den Container} weiterleiten, z. B.:
+      iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 443 -j DNAT --to-destination ${IP4:-<container-ip>}:443
+    (genauso TCP 443, TCP 9443, UDP 51820)
+  - Kernelmodule für WireGuard und Geschwindigkeitslimits:
+      printf '%s\n' wireguard ifb act_connmark act_mirred sch_htb sch_ingress cls_fw cls_u32 cls_matchall \
+        > /etc/modules-load.d/vpn.conf
+      systemctl restart systemd-modules-load
+  - größere UDP-Puffer für Hysteria2 (im Container nicht einstellbar):
       printf '%s\n' net.core.rmem_max=16777216 net.core.wmem_max=16777216 > /etc/sysctl.d/90-hysteria.conf
       sysctl --system
 EOF
+else
+  printf '%s\n' net.core.rmem_max=16777216 net.core.wmem_max=16777216 > /etc/sysctl.d/90-hysteria.conf
+  sysctl --system >/dev/null 2>&1 || true
+fi

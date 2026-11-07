@@ -12,7 +12,7 @@
   import QR from '../components/QR.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
-  import { bytes, ago, date, rate, isOnline, limitsSummary, toDateInput, fromDateInput, copy, PERIODS, clone } from '../lib/format.js';
+  import { bytes, ago, date, rate, duration, isOnline, onlineFor, sinceClock, limitsSummary, toDateInput, fromDateInput, copy, PERIODS, clone } from '../lib/format.js';
   import { go, protocol, toast } from '../lib/state.svelte.js';
 
   let { id, tab: tabParam = 'overview' } = $props();
@@ -24,6 +24,11 @@
   const tab = $derived(TABS.includes(tabParam) ? tabParam : 'overview');
   const setTab = (t) => go(t === 'overview' ? `/users/${id}` : `/users/${id}/${t}`);
   let liveOn = $state(0);
+  let now = $state(Date.now() / 1000);
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now() / 1000), 15000);
+    return () => clearInterval(t);
+  });
 
   async function load() {
     [d, plans, servers] = await Promise.all([get(`/users/${id}`), get('/plans'), get('/servers')]);
@@ -182,9 +187,9 @@
         <div class="muted tiny">↓ {bytes(u.total_down)} · ↑ {bytes(u.total_up)}</div>
       </div>
       <div class="card card-pad">
-        <div class="muted small">Zuletzt da</div>
-        <div class="big row"><span class="dot" class:on={liveOn > 0 || isOnline(u.last_seen)}></span>{liveOn > 0 ? 'online' : ago(u.last_seen)}</div>
-        <div class="muted tiny">{u.devices} Zugänge</div>
+        <div class="muted small">{liveOn > 0 || u.online ? 'Online' : 'Zuletzt da'}</div>
+        <div class="big row"><span class="dot" class:on={liveOn > 0 || u.online || isOnline(u.last_seen)}></span>{liveOn > 0 || u.online ? (u.online_since ? duration(now - u.online_since) : 'online') : ago(u.last_seen)}</div>
+        <div class="muted tiny">{(liveOn > 0 || u.online) && u.online_since ? `${sinceClock(u.online_since)} · ` : ''}{u.devices} Zugänge</div>
       </div>
     </div>
     <div style="margin-top:16px"><LivePanel user={id} compact bind:connected={liveOn} /></div>
@@ -220,7 +225,7 @@
               <div class="strong ellipsis">{p.name}</div>
               <div class="muted tiny ellipsis">{p.server_name}{p.settings?.address4 ? ` · ${p.settings.address4}` : ''}</div>
             </div>
-            {#if !p.enabled}<span class="badge muted">aus</span>{:else if !p.active}<span class="badge bad">gesperrt</span>{:else}<span class="dot" class:on={p.online} title={p.online ? 'verbunden' : ago(p.last_seen)}></span>{/if}
+            {#if !p.enabled}<span class="badge muted">aus</span>{:else if !p.active}<span class="badge bad">gesperrt</span>{:else}<span class="dot" class:on={p.online} title={p.online ? onlineFor(p.online_since, now) : ago(p.last_seen)}></span>{/if}
             <Icon name="qr" size={15} />
           </button>
         {:else}
@@ -263,7 +268,7 @@
                       <div class="muted tiny">{kindLabel(p.protocol, p.kind)}{p.settings?.address4 ? ` · ${p.settings.address4}` : ''}{p.settings?.routes?.length ? ` · Netze: ${p.settings.routes.join(', ')}` : ''}</div>
                     </td>
                     <td class="small nowrap">↓ {bytes(p.total_down)} · ↑ {bytes(p.total_up)}</td>
-                    <td class="small nowrap"><span class="row"><span class="dot" class:on={p.online}></span>{ago(p.last_seen)}</span>{#if p.endpoint}<div class="muted tiny mono">{p.endpoint}</div>{/if}</td>
+                    <td class="small nowrap" title={p.online && p.online_since ? sinceClock(p.online_since) : ''}><span class="row"><span class="dot" class:on={p.online}></span>{p.online ? onlineFor(p.online_since, now) : ago(p.last_seen)}</span>{#if p.endpoint}<div class="muted tiny mono">{p.endpoint}</div>{/if}</td>
                     <td class="right nowrap">
                       <button class="btn sm" onclick={() => showCfg(p)}><Icon name="qr" size={15} /> Konfiguration</button>
                       <button class="btn sm icon" title="Bearbeiten" onclick={() => editP(p)}><Icon name="edit" size={15} /></button>

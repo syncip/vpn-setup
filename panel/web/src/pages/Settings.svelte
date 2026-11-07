@@ -108,13 +108,13 @@
   });
 
   const generalFields = [
-    { key: 'server_host', label: 'Server-Domain', help: 'Wird in WireGuard-Konfigurationen und VLESS-Links verwendet (A + AAAA auf den Server).' },
+    { key: 'server_host', label: 'Server-Adresse', help: 'Domain (A/AAAA auf den Server, ohne Cloudflare-Proxy) oder öffentliche IP. Steht in allen Links und Konfigurationen.' },
     { key: 'panel_host', label: 'Panel-Domain', help: 'Optional. Leer = Webinterface nur direkt per IP:Port. Mit Domain zusätzlich über nginx auf Port 443 (z. B. hinter Cloudflare).' },
-    { key: 'sub_host', label: 'Abo-Domain', help: 'Für Abo-Links (https://<abo-domain>/<token>). Leer = über die Panel-Domain unter /sub/.' },
+    { key: 'sub_host', label: 'Abo-Domain', help: 'Für Abo-Links (https://<abo-domain>/<token>). Leer = über die Panel-Domain unter /sub/ bzw. direkt per IP:Port.' },
     { key: 'profile_title', label: 'Name in der App', help: 'Titel des Abos in v2RayTun & Co.' },
   ];
   const advFields = [
-    { key: 'out_interface', label: 'Ausgehende Schnittstelle', help: 'Schnittstelle des Containers ins Internet (meist eth0).' },
+    { key: 'out_interface', label: 'Ausgehende Schnittstelle', help: 'Schnittstelle des Servers ins Internet (z. B. eth0, ens3). Das Setup-Script erkennt sie selbst.' },
     { key: 'public_port', label: 'Öffentlicher TCP-Port', help: 'Port des nginx-SNI-Verteilers (Panel, Abo, VLESS).', num: true },
     { key: 'xray_api', label: 'Xray-API', help: 'Interne Adresse der Xray-Statistik.' },
     { key: 'collect_interval', label: 'Statistik-Intervall (Sekunden)', num: true },

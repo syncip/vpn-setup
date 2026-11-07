@@ -41,6 +41,9 @@ func online(ts int64) bool { return ts > 0 && nowUnix()-ts < onlineWindow }
 // liveOnline: Live-Messung der Engine (in New gesetzt).
 var liveOnline = func(int64) bool { return false }
 
+// liveSince: verbunden seit (Unix) laut Live-Messung, 0 = unbekannt (in New gesetzt).
+var liveSince = func(int64) int64 { return 0 }
+
 // peerOn: verbunden laut letzter Statistik oder Live-Messung.
 func peerOn(p *store.Peer) bool { return online(p.LastSeen) || liveOnline(p.ID) }
 
@@ -61,8 +64,10 @@ type userRow struct {
 	Effective *store.Limits `json:"effective"`
 	Devices   int           `json:"devices"`
 	Online    bool          `json:"online"`
-	NextReset int64         `json:"next_reset"`
-	Protocols []string      `json:"protocols"`
+	// OnlineSince: seit wann (Unix) mindestens ein Zugang ununterbrochen verbunden ist, 0 = unbekannt
+	OnlineSince int64    `json:"online_since,omitempty"`
+	NextReset   int64    `json:"next_reset"`
+	Protocols   []string `json:"protocols"`
 }
 
 func (a *API) userRows(snap *engine.Snapshot) []*userRow {
@@ -89,6 +94,9 @@ func (a *API) userRows(snap *engine.Snapshot) []*userRow {
 			row.Devices++
 			if peerOn(pb.Peer) {
 				row.Online = true
+				if s := liveSince(pb.Peer.ID); s > 0 && (row.OnlineSince == 0 || s < row.OnlineSince) {
+					row.OnlineSince = s
+				}
 			}
 			if pr := proto2[pb.Peer.ServerID]; !seen[pr] {
 				seen[pr] = true
@@ -340,16 +348,20 @@ func (a *API) planMap() map[int64]*store.Plan {
 
 type peerRow struct {
 	*store.Peer
-	ServerName string `json:"server_name"`
-	Protocol   string `json:"protocol"`
-	Online     bool   `json:"online"`
-	Active     bool   `json:"active"`
-	UserName   string `json:"user_name"`
-	PublicKey  string `json:"public_key,omitempty"`
+	ServerName  string `json:"server_name"`
+	Protocol    string `json:"protocol"`
+	Online      bool   `json:"online"`
+	OnlineSince int64  `json:"online_since,omitempty"`
+	Active      bool   `json:"active"`
+	UserName    string `json:"user_name"`
+	PublicKey   string `json:"public_key,omitempty"`
 }
 
 func peerRowOf(pb *proto.PeerBundle, sv *store.Server) *peerRow {
 	pr := &peerRow{Peer: pb.Peer, Online: peerOn(pb.Peer), Active: pb.Active, UserName: pb.User.Name}
+	if pr.Online {
+		pr.OnlineSince = liveSince(pb.Peer.ID)
+	}
 	if sv != nil {
 		pr.ServerName, pr.Protocol = sv.Name, sv.Protocol
 	}
@@ -1042,8 +1054,6 @@ func (a *API) deletePlan(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Einstellungen & System ----------
 
-var hostSettingRe = regexp.MustCompile(`^[a-zA-Z0-9.-]*$`)
-
 func (a *API) getSettings(w http.ResponseWriter, r *http.Request) { writeJSON(w, a.E.Settings()) }
 
 func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -1052,36 +1062,11 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	allowed := map[string]bool{}
-	for _, k := range engine.SettingKeys() {
-		allowed[k] = true
-	}
 	for k, v := range in {
-		if !allowed[k] {
-			errJSON(w, http.StatusBadRequest, "unbekannte Einstellung "+k)
+		v, err := engine.ValidateSetting(k, v)
+		if err != nil {
+			errJSON(w, http.StatusBadRequest, err.Error())
 			return
-		}
-		v = strings.TrimSpace(v)
-		switch k {
-		case "server_host", "panel_host", "sub_host":
-			if !hostSettingRe.MatchString(v) {
-				errJSON(w, http.StatusBadRequest, k+": ungültiger Hostname")
-				return
-			}
-		case "collect_interval", "sub_update_interval", "traffic_retention", "public_port", "session_hours":
-			if n, err := strconv.Atoi(v); err != nil || n <= 0 {
-				errJSON(w, http.StatusBadRequest, k+": bitte eine positive Zahl")
-				return
-			}
-		case "out_interface":
-			if !regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,15}$`).MatchString(v) {
-				errJSON(w, http.StatusBadRequest, "Schnittstelle ungültig")
-				return
-			}
-		case "trust_cloudflare":
-			if v != "0" && v != "1" {
-				v = "0"
-			}
 		}
 		in[k] = v
 	}
@@ -1103,6 +1088,11 @@ func (a *API) system(w http.ResponseWriter, r *http.Request) {
 		Detail string `json:"detail"`
 	}
 	var checks []check
+	if h := a.E.Setting("server_host"); h == "" {
+		checks = append(checks, check{"Server-Adresse", false, "fehlt – unter Einstellungen eintragen (steht in allen Links und Configs)"})
+	} else {
+		checks = append(checks, check{"Server-Adresse", true, h})
+	}
 	for _, bin := range []struct{ name, label string }{{"wg", "WireGuard-Werkzeuge"}, {"xray", "Xray"}, {"hysteria", "Hysteria2"}, {"nginx", "nginx"}, {"tc", "tc (Geschwindigkeitsbegrenzung)"}, {"iptables", "iptables"}, {"ip6tables", "ip6tables"}} {
 		_, err := exec.LookPath(bin.name)
 		ok := err == nil || a.E.Sys.DryRun()
