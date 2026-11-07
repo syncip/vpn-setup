@@ -54,8 +54,14 @@ iptables  -t nat -A PREROUTING -i vmbr0 -p udp --dport 20000:50000 -j DNAT --to-
 ip6tables -t nat -A PREROUTING -i vmbr0 -d 2001:41d0:203:4a76::10 -p udp --dport 20000:50000 -j DNAT --to-destination fd10:10:10::3
 ```
 
-Links bekommen `mport=20000-50000` (Hiddify, NekoBox, v2rayN). Apps ohne Unterstützung nutzen
-weiter den normalen Port.
+Links bekommen `mport=20000-50000` (NekoBox, v2rayN); Hiddify erhält im Abo automatisch die
+Form `host:443,20000-50000`. Apps ohne Unterstützung nutzen weiter den normalen Port.
+
+## Abo (Hiddify, v2rayN, NekoBox)
+
+Das Abo eines Nutzers enthält alle aktiven Zugänge: VLESS (ein Eintrag je Tarnziel), Hysteria2 und
+WireGuard-Geräte vom Typ „Handy / Laptop“ als `wireguard://`-Link. Einträge heißen „Server - Gerät“.
+Denselben WireGuard-Zugang nicht gleichzeitig in Hiddify und in der WireGuard-App nutzen.
 
 Die Anmeldung läuft über das Panel (interner Endpunkt `127.0.0.1:8479`). So werden gesperrte
 Nutzer sofort abgewiesen, und gedrosselte Nutzer werden über ihre Client-Adresse begrenzt.
