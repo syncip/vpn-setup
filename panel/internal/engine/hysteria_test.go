@@ -9,6 +9,7 @@ import (
 
 	"vpnpanel/internal/proto"
 	_ "vpnpanel/internal/proto/hysteria2"
+	"vpnpanel/internal/proto/shaping"
 	"vpnpanel/internal/store"
 )
 
@@ -101,6 +102,34 @@ func TestHysteria2(t *testing.T) {
 	}
 	if strings.Contains(log, "198.51.100.7") {
 		t.Errorf("ungedrosselter Nutzer wird begrenzt")
+	}
+	if !strings.Contains(log, "fq_codel") {
+		t.Errorf("gedrosselte Klassen ohne fq_codel")
+	}
+	if !strings.Contains(string(cfg), `"maxIdleTimeout": "60s"`) {
+		t.Errorf("Leerlauf-Timeout fehlt:\n%s", cfg)
+	}
+
+	// Neue Adresse eines gedrosselten Nutzers: Regeln anpassen, ohne die qdisc zu löschen
+	// (sonst verlieren alle anderen Verbindungen kurz Pakete)
+	_, _ = dry.Run("MARKE")
+	auth(peers[1], "203.0.113.20:5000")
+	if err := e.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	after := strings.Join(dry.Log(), "\n")
+	after = after[strings.LastIndex(after, "MARKE"):]
+	if strings.Contains(after, "qdisc del dev eth0 root") || !strings.Contains(after, "match ip dst 203.0.113.20/32") {
+		t.Errorf("Anpassung statt Neuaufbau erwartet:\n%s", after)
+	}
+	// Nach einem Neustart des Panels (Reset) wird komplett neu aufgebaut
+	shaping.Reset(e.Env().SetState)
+	_, _ = dry.Run("MARKE2")
+	_ = e.Apply()
+	after = strings.Join(dry.Log(), "\n")
+	after = after[strings.LastIndex(after, "MARKE2"):]
+	if !strings.Contains(after, "qdisc add dev eth0 root handle 1: htb") {
+		t.Errorf("Neuaufbau nach Reset fehlt:\n%s", after)
 	}
 
 	// Abo-Link

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type API struct {
 	Secure  bool // Cookies nur über HTTPS
 	Version string
 	limiter *limiter
+	codes   usedCodes
 }
 
 func New(e *engine.Engine, static fs.FS, secure bool, version string) *API {
@@ -94,8 +96,13 @@ func (a *API) Handler() http.Handler {
 		secHeaders(w)
 		host := hostOnly(r.Host)
 		// Abo: https://sub.domain/<token> oder https://panel.domain/sub/<token>
-		if sub := a.E.Setting("sub_host"); sub != "" && strings.EqualFold(host, sub) && !strings.HasPrefix(r.URL.Path, "/api/") {
-			a.subscription(w, r, strings.TrimPrefix(r.URL.Path, "/"))
+		// Auf der Abo-Domain gibt es nur die Abo-Links – keine Oberfläche, keine API.
+		if sub := a.E.Setting("sub_host"); sub != "" && strings.EqualFold(host, sub) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
+			a.subscription(w, r, strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/sub/"), "/"))
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/sub/") {
@@ -193,16 +200,46 @@ func hostOnly(h string) string {
 }
 
 func (a *API) clientIP(r *http.Request) string {
-	if a.E.Setting("trust_cloudflare") == "1" {
-		if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
-			return ip
-		}
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	// CF-Connecting-IP nur glauben, wenn die Verbindung wirklich von Cloudflare kommt –
+	// sonst könnte jeder die Login-Sperre mit einem erfundenen Header umgehen.
+	if a.E.Setting("trust_cloudflare") == "1" {
+		if ip := r.Header.Get("CF-Connecting-IP"); ip != "" && fromCloudflare(host) {
+			if p, err := netip.ParseAddr(strings.TrimSpace(ip)); err == nil {
+				return p.String()
+			}
+		}
 	}
 	return host
+}
+
+// Cloudflare-Netze (https://www.cloudflare.com/ips/)
+var cfNets = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range strings.Fields(`173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18
+		108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13
+		104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32
+		2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32`) {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
+func fromCloudflare(host string) bool {
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	for _, n := range cfNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func nowUnix() int64 { return time.Now().Unix() }

@@ -131,6 +131,42 @@ func loadPeer(p *store.Peer) peerCfg {
 
 var ifaceRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,15}$`)
 
+var (
+	hostRe     = regexp.MustCompile(`^([A-Za-z0-9.-]{1,253}|\[?[0-9A-Fa-f:.]{2,45}\]?)$`)
+	hostPortRe = regexp.MustCompile(`^([A-Za-z0-9.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\]):[0-9]{1,5}$`)
+	dnsItemRe  = regexp.MustCompile(`^[A-Za-z0-9.:-]{1,253}$`)
+)
+
+// checkDNS: Liste von DNS-Servern (IPs) bzw. Suchdomains, oder „none“.
+func checkDNS(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "none" {
+		return v, nil
+	}
+	var out []string
+	for _, it := range strings.Split(v, ",") {
+		it = strings.TrimSpace(it)
+		if it == "" {
+			continue
+		}
+		if !dnsItemRe.MatchString(it) {
+			return "", fmt.Errorf("DNS-Eintrag %q ungültig", it)
+		}
+		out = append(out, it)
+	}
+	return strings.Join(out, ", "), nil
+}
+
+// oneLine: Text für Kommentare in Konfigurationsdateien (keine Zeilenumbrüche).
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == 0x2028 || r == 0x2029 {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
 func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server) error {
 	c := serverCfg{Port: 0, Internet: true, DefaultAccess: "all", Keepalive: 25, DNS: "1.1.1.1, 2606:4700:4700::1111", Net6: "\x00"}
 	_ = proto.Decode(srv.Settings, &c)
@@ -217,6 +253,16 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 	}
 	if c.OutInterface != "" && !ifaceRe.MatchString(c.OutInterface) {
 		return fmt.Errorf("Schnittstellenname %q ungültig", c.OutInterface)
+	}
+	c.Endpoint = strings.TrimSpace(c.Endpoint)
+	if c.Endpoint != "" && !hostRe.MatchString(c.Endpoint) {
+		return fmt.Errorf("Adresse %q ungültig (Hostname oder IP ohne Port)", c.Endpoint)
+	}
+	if c.DNS, err = checkDNS(c.DNS); err != nil {
+		return err
+	}
+	if c.Keepalive < 0 || c.Keepalive > 3600 {
+		return fmt.Errorf("Keepalive %d ungültig (0–3600)", c.Keepalive)
 	}
 	srv.Settings = proto.Encode(c)
 
@@ -378,6 +424,17 @@ func (Driver) InitPeer(env *proto.Env, srv *store.Server, p *store.Peer, others 
 	if c.MTU != 0 && (c.MTU < 1280 || c.MTU > 9000) {
 		return fmt.Errorf("MTU %d ungültig", c.MTU)
 	}
+	c.Endpoint = strings.TrimSpace(c.Endpoint)
+	if c.Endpoint != "" && !hostPortRe.MatchString(c.Endpoint) {
+		return fmt.Errorf("Endpunkt %q ungültig (Host:Port, IPv6 in [ ])", c.Endpoint)
+	}
+	var err2 error
+	if c.DNS, err2 = checkDNS(c.DNS); err2 != nil {
+		return err2
+	}
+	if c.Keepalive < 0 || c.Keepalive > 3600 {
+		return fmt.Errorf("Keepalive %d ungültig (0–3600)", c.Keepalive)
+	}
 	p.Settings = proto.Encode(c)
 
 	if proto.Str(p.Secrets, "private_key") == "" {
@@ -504,7 +561,7 @@ func ifaceConf(sb *proto.ServerBundle, sc serverCfg) (head, full string) {
 	head = b.String()
 	for _, n := range nodes(sb, true) {
 		fmt.Fprintf(&b, "\n[Peer]\n# %s / %s\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s\n",
-			n.pb.User.Name, n.pb.Peer.Name, proto.Str(n.pb.Peer.Secrets, "public_key"), proto.Str(n.pb.Peer.Secrets, "psk"), joinPrefixes(n.all()))
+			oneLine(n.pb.User.Name), oneLine(n.pb.Peer.Name), proto.Str(n.pb.Peer.Secrets, "public_key"), proto.Str(n.pb.Peer.Secrets, "psk"), joinPrefixes(n.all()))
 		if n.cfg.Endpoint != "" {
 			fmt.Fprintf(&b, "Endpoint = %s\n", n.cfg.Endpoint)
 			ka := n.cfg.Keepalive
@@ -928,7 +985,7 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Interface]\n# %s – %s (%s)\nPrivateKey = %s\nAddress = %s\n", sb.Server.Name, pb.Peer.Name, pb.User.Name,
+	fmt.Fprintf(&b, "[Interface]\n# %s – %s (%s)\nPrivateKey = %s\nAddress = %s\n", oneLine(sb.Server.Name), oneLine(pb.Peer.Name), oneLine(pb.User.Name),
 		proto.Str(pb.Peer.Secrets, "private_key"), strings.Join(addrs, ", "))
 	if dns != "" && pb.Peer.Kind == "client" {
 		fmt.Fprintf(&b, "DNS = %s\n", dns)

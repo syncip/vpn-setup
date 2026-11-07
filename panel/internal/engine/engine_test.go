@@ -205,6 +205,27 @@ func TestMeshFirewall(t *testing.T) {
 	if strings.Contains(c, "AllowedIPs = 0.0.0.0/0") || !strings.Contains(c, "MASQUERADE") || strings.Contains(c, "192.168.1.0/24, ") {
 		t.Errorf("Homelab-Konfiguration falsch:\n%s", c)
 	}
+	// Zeilenumbrüche in Namen/Feldern dürfen keine Zeilen in wg0.conf einschleusen
+	evil := &store.Peer{UserID: bob.ID, ServerID: sv.ID, Name: "x", Kind: "server",
+		Settings: store.M{"endpoint": "1.2.3.4:51820\nPostUp = touch /tmp/pwn"}}
+	if err := e.InitPeer(sv, evil); err == nil {
+		t.Errorf("Endpunkt mit Zeilenumbruch akzeptiert")
+	}
+	evil.Settings = store.M{"dns": "1.1.1.1\n[Interface]"}
+	if err := e.InitPeer(sv, evil); err == nil {
+		t.Errorf("DNS mit Zeilenumbruch akzeptiert")
+	}
+	evil.Settings = store.M{"endpoint": "[2001:db8::1]:51820", "dns": "1.1.1.1, 2606:4700:4700::1111"}
+	if err := e.InitPeer(sv, evil); err != nil {
+		t.Errorf("gültige Werte abgelehnt: %v", err)
+	}
+	lab.Name = "lab\nPostUp = touch /tmp/pwn"
+	_ = e.St.SavePeer(lab)
+	_ = e.Apply()
+	conf, _ := os.ReadFile(filepath.Join(dry.Root, "etc/wireguard/wg0.conf"))
+	if strings.Contains(string(conf), "\nPostUp = touch") {
+		t.Errorf("Zeilenumbruch im Namen landet in wg0.conf:\n%s", conf)
+	}
 	// Routen-Befehl für das Netz hinter dem Homelab
 	found := false
 	for _, l := range dry.Log() {

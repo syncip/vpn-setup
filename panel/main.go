@@ -5,6 +5,7 @@
 package main
 
 import (
+	"vpnpanel/internal/proto/shaping"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -121,6 +122,8 @@ func serve(args []string) {
 	}
 	ensureAdmin(e, o)
 
+	// Nach einem Neustart sind die tc-Regeln weg → beim ersten Anwenden komplett neu aufbauen
+	shaping.Reset(e.Env().SetState)
 	if err := e.Apply(); err != nil {
 		log.Printf("Anwenden beim Start: %v", err)
 	}

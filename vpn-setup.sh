@@ -56,14 +56,27 @@ EOF
 sysctl -p /etc/sysctl.d/99-vpn.conf >/dev/null
 mkdir -p /etc/wireguard && chmod 700 /etc/wireguard
 
+# Installer erst herunterladen, dann ausführen – bei bash -c "$(curl …)" würde ein
+# fehlgeschlagener Download trotz set -e unbemerkt durchrutschen.
+run_installer() {
+  local url=$1; shift
+  local f; f=$(mktemp /tmp/vpn-installer.XXXXXX)
+  curl -fsSL --retry 3 -o "$f" "$url" || { rm -f "$f"; echo "Download fehlgeschlagen: $url"; exit 1; }
+  bash "$f" "$@"
+  rm -f "$f"
+}
+
 echo ">> Xray installieren/aktualisieren"
-bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+run_installer https://github.com/XTLS/Xray-install/raw/main/install-release.sh install
 
 echo ">> Hysteria2 installieren/aktualisieren"
 # offizielles Installationsscript; die Instanzen startet das Panel selbst (vpn-hysteria@<name>)
-bash -c "$(curl -fsSL https://get.hy2.sh/)"
+run_installer https://get.hy2.sh/
+[[ -x /usr/local/bin/hysteria ]] || { echo "Hysteria wurde nicht installiert."; exit 1; }
 systemctl disable --now hysteria-server.service 2>/dev/null || true
 mkdir -p /etc/hysteria
+# laufende Instanzen auf die neue Version bringen
+systemctl try-restart 'vpn-hysteria@*' 2>/dev/null || true
 
 echo ">> Altes Bash-Setup abbauen (Daten bleiben für die Übernahme liegen)"
 systemctl disable --now vpn-collect.timer vpn-collect-shutdown.service 2>/dev/null || true

@@ -74,10 +74,12 @@ type serverCfg struct {
 	CertFile              string  `json:"cert_file"`
 	KeyFile               string  `json:"key_file"`
 	Shaping               bool    `json:"shaping"`
+	IdleTimeout           int     `json:"idle_timeout"`
+	DisableMTUDiscovery   bool    `json:"disable_mtu_discovery"`
 }
 
 func defaults() serverCfg {
-	return serverCfg{Port: 443, Masquerade: "https://www.bing.com", IgnoreClientBandwidth: true, Shaping: true}
+	return serverCfg{Port: 443, Masquerade: "https://www.bing.com", IgnoreClientBandwidth: true, Shaping: true, IdleTimeout: 60}
 }
 
 func load(srv *store.Server) serverCfg {
@@ -110,6 +112,10 @@ func (Driver) Info() proto.Info {
 				Help: "Nutzt BBR statt „Brutal“. Nötig, damit die Drosselung pro Nutzer sauber greift."},
 			{Key: "shaping", Label: "Geschwindigkeitsbegrenzung", Type: "bool", Default: true, Advanced: true,
 				Help: "Begrenzt Nutzer über ihre Client-Adresse und tc auf der ausgehenden Schnittstelle."},
+			{Key: "idle_timeout", Label: "Leerlauf-Timeout (Sekunden)", Type: "number", Default: 60, Advanced: true,
+				Help: "So lange hält der Server eine stille Verbindung offen (4–120). Höher = weniger Abbrüche bei Handys im Standby."},
+			{Key: "disable_mtu_discovery", Label: "Paketgrößen-Erkennung aus", Type: "bool", Default: false, Advanced: true,
+				Help: "Nur einschalten, wenn Verbindungen in manchen Mobilfunknetzen hängen bleiben (dann feste, kleine Pakete)."},
 			{Key: "host", Label: "Adresse in den Links", Type: "text", Advanced: true, Placeholder: "Server-Domain aus den Einstellungen"},
 			{Key: "cert_file", Label: "Eigenes Zertifikat (Pfad)", Type: "text", Advanced: true, Placeholder: "leer = selbst erzeugt",
 				Help: "z. B. ein Let's-Encrypt-Zertifikat. Dann prüfen die Apps das Zertifikat normal (ohne „insecure“)."},
@@ -167,6 +173,12 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 	}
 	if c.BandwidthDown < 0 || c.BandwidthUp < 0 {
 		return fmt.Errorf("Bandbreite darf nicht negativ sein")
+	}
+	if c.IdleTimeout == 0 {
+		c.IdleTimeout = 60
+	}
+	if c.IdleTimeout < 4 || c.IdleTimeout > 120 {
+		return fmt.Errorf("Leerlauf-Timeout %d ungültig (4–120 Sekunden)", c.IdleTimeout)
 	}
 	srv.Settings = proto.Encode(c)
 
@@ -418,6 +430,10 @@ func applyServer(env *proto.Env, sb *proto.ServerBundle) error {
 			"url": fmt.Sprintf("%s/%d/%s", env.Global.HookURL, srv.ID, proto.Str(srv.State, "hook_secret"))}},
 		"trafficStats":          map[string]any{"listen": statsAddr(srv), "secret": proto.Str(srv.State, "stats_secret")},
 		"ignoreClientBandwidth": c.IgnoreClientBandwidth,
+		"quic": map[string]any{
+			"maxIdleTimeout":          fmt.Sprintf("%ds", idle(c.IdleTimeout)),
+			"disablePathMTUDiscovery": c.DisableMTUDiscovery,
+		},
 	}
 	if c.Obfs {
 		cfg["obfs"] = map[string]any{"type": "salamander", "salamander": map[string]any{"password": proto.Str(srv.State, "obfs_password")}}
@@ -584,7 +600,7 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	c := load(sb.Server)
 	host := fmt.Sprintf("%s:%d", linkHost(env, c), c.Port)
 	var y strings.Builder
-	fmt.Fprintf(&y, "# Hysteria2 – %s (%s)\nserver: %s\nauth: %s\ntls:\n  sni: %s\n", sb.Server.Name, pb.User.Name, host,
+	fmt.Fprintf(&y, "# Hysteria2 – %s (%s)\nserver: %s\nauth: %s\ntls:\n  sni: %s\n", oneLine(sb.Server.Name), oneLine(pb.User.Name), host,
 		proto.Str(pb.Peer.Secrets, "password"), sniOf(env, c))
 	if c.CertFile == "" {
 		fmt.Fprintf(&y, "  insecure: true\n  pinSHA256: %s\n", proto.Str(sb.Server.State, "cert_sha256"))
@@ -615,6 +631,15 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	}, nil
 }
 
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == 0x2028 || r == 0x2029 {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
 func safeName(s string) string {
 	return regexp.MustCompile(`[^A-Za-z0-9_-]+`).ReplaceAllString(s, "_")
 }
@@ -638,4 +663,11 @@ func (Driver) Status(env *proto.Env, srv *store.Server) proto.Status {
 		return proto.Status{Detail: "Hysteria2 läuft nicht"}
 	}
 	return proto.Status{Running: true, Detail: fmt.Sprintf("Hysteria2 auf UDP %d", load(srv).Port)}
+}
+
+func idle(s int) int {
+	if s < 4 || s > 120 {
+		return 60
+	}
+	return s
 }

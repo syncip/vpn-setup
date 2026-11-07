@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"vpnpanel/internal/engine"
 	"vpnpanel/internal/proto"
@@ -17,6 +19,20 @@ import (
 )
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)
+
+// badLabel: Anzeigenamen (Geräte, Server, Tarife) – keine Steuerzeichen, denn sie landen
+// als Kommentar in Konfigurationsdateien (wg0.conf, Client-Konfiguration).
+func badLabel(n string) bool {
+	if n == "" || len(n) > 48 || !utf8.ValidString(n) {
+		return true
+	}
+	for _, r := range n {
+		if unicode.IsControl(r) || r == ' ' || r == ' ' {
+			return true
+		}
+	}
+	return false
+}
 
 const onlineWindow = 180 // Sekunden
 
@@ -198,7 +214,7 @@ func orEmptyT[T any](v []T) any {
 }
 
 func orEmptyM(v []map[string]any) any { return orEmptyT(v) }
-func orEmptyA[T any](v []T) any        { return orEmptyT(v) }
+func orEmptyA[T any](v []T) any       { return orEmptyT(v) }
 
 // ---------- Nutzer ----------
 
@@ -321,12 +337,12 @@ func (a *API) planMap() map[int64]*store.Plan {
 
 type peerRow struct {
 	*store.Peer
-	ServerName string  `json:"server_name"`
-	Protocol   string  `json:"protocol"`
-	Online     bool    `json:"online"`
-	Active     bool    `json:"active"`
-	UserName   string  `json:"user_name"`
-	PublicKey  string  `json:"public_key,omitempty"`
+	ServerName string `json:"server_name"`
+	Protocol   string `json:"protocol"`
+	Online     bool   `json:"online"`
+	Active     bool   `json:"active"`
+	UserName   string `json:"user_name"`
+	PublicKey  string `json:"public_key,omitempty"`
 }
 
 func peerRowOf(pb *proto.PeerBundle, sv *store.Server) *peerRow {
@@ -494,10 +510,12 @@ func (a *API) series(w http.ResponseWriter, r *http.Request, filter string, id i
 	writeJSON(w, map[string]any{"bucket": bucket, "since": since, "points": orEmptyT(s)})
 }
 
-func (a *API) userTraffic(w http.ResponseWriter, r *http.Request)   { a.series(w, r, "user", pathID(r)) }
-func (a *API) peerTraffic(w http.ResponseWriter, r *http.Request)   { a.series(w, r, "peer", pathID(r)) }
-func (a *API) serverTraffic(w http.ResponseWriter, r *http.Request) { a.series(w, r, "server", pathID(r)) }
-func (a *API) traffic(w http.ResponseWriter, r *http.Request)       { a.series(w, r, "", 0) }
+func (a *API) userTraffic(w http.ResponseWriter, r *http.Request) { a.series(w, r, "user", pathID(r)) }
+func (a *API) peerTraffic(w http.ResponseWriter, r *http.Request) { a.series(w, r, "peer", pathID(r)) }
+func (a *API) serverTraffic(w http.ResponseWriter, r *http.Request) {
+	a.series(w, r, "server", pathID(r))
+}
+func (a *API) traffic(w http.ResponseWriter, r *http.Request) { a.series(w, r, "", 0) }
 
 // ---------- Zugänge ----------
 
@@ -517,7 +535,7 @@ func (a *API) addPeer(u *store.User, serverID int64, name, kind string, settings
 		}
 	}
 	name = strings.TrimSpace(name)
-	if name == "" || len(name) > 48 {
+	if badLabel(name) {
 		return nil, fmt.Errorf("Gerätename fehlt oder ist zu lang")
 	}
 	info := d.Info()
@@ -619,7 +637,7 @@ func (a *API) updatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
-		if n == "" || len(n) > 48 {
+		if badLabel(n) {
 			errJSON(w, http.StatusBadRequest, "Gerätename fehlt oder ist zu lang")
 			return
 		}
@@ -773,7 +791,7 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Name = strings.TrimSpace(in.Name)
-	if in.Name == "" || len(in.Name) > 48 {
+	if badLabel(in.Name) {
 		errJSON(w, http.StatusBadRequest, "Name fehlt oder ist zu lang")
 		return
 	}
@@ -812,7 +830,7 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
-		if n == "" || len(n) > 48 {
+		if badLabel(n) {
 			errJSON(w, http.StatusBadRequest, "Name fehlt oder ist zu lang")
 			return
 		}
@@ -947,7 +965,7 @@ func (a *API) savePlan(w http.ResponseWriter, r *http.Request, p *store.Plan) {
 		return
 	}
 	in.Name = strings.TrimSpace(in.Name)
-	if in.Name == "" || len(in.Name) > 48 {
+	if badLabel(in.Name) {
 		errJSON(w, http.StatusBadRequest, "Name fehlt oder ist zu lang")
 		return
 	}

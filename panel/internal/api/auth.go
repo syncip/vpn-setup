@@ -23,22 +23,35 @@ const cookieName = "vp_session"
 // ---------- Schutz gegen Durchprobieren ----------
 
 type limiter struct {
-	mu   sync.Mutex
-	hits map[string][]time.Time
+	mu    sync.Mutex
+	hits  map[string][]time.Time
+	clean time.Time
 }
 
 func newLimiter() *limiter { return &limiter{hits: map[string][]time.Time{}} }
 
-// allow: höchstens 8 Fehlversuche pro 15 Minuten und Adresse.
+// allow: höchstens 8 Fehlversuche pro 15 Minuten und Schlüssel (Adresse bzw. Benutzername).
 func (l *limiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cut := time.Now().Add(-15 * time.Minute)
+	if time.Since(l.clean) > 5*time.Minute { // alte Einträge wegräumen, damit die Map nicht wächst
+		for k, v := range l.hits {
+			if len(v) == 0 || !v[len(v)-1].After(cut) {
+				delete(l.hits, k)
+			}
+		}
+		l.clean = time.Now()
+	}
 	var keep []time.Time
 	for _, t := range l.hits[key] {
 		if t.After(cut) {
 			keep = append(keep, t)
 		}
+	}
+	if len(keep) == 0 {
+		delete(l.hits, key)
+		return true
 	}
 	l.hits[key] = keep
 	return len(keep) < 8
@@ -47,6 +60,9 @@ func (l *limiter) allow(key string) bool {
 func (l *limiter) fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if len(l.hits) > 100000 { // Notbremse gegen Speicherflut
+		l.hits = map[string][]time.Time{}
+	}
 	l.hits[key] = append(l.hits[key], time.Now())
 }
 
@@ -55,6 +71,34 @@ func (l *limiter) reset(key string) {
 	defer l.mu.Unlock()
 	delete(l.hits, key)
 }
+
+// usedCodes: schon benutzte TOTP-Codes (gegen Wiederverwendung innerhalb des Gültigkeitsfensters).
+type usedCodes struct {
+	mu sync.Mutex
+	m  map[string]time.Time
+}
+
+func (u *usedCodes) take(key string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.m == nil {
+		u.m = map[string]time.Time{}
+	}
+	now := time.Now()
+	for k, t := range u.m {
+		if now.Sub(t) > 3*time.Minute {
+			delete(u.m, k)
+		}
+	}
+	if _, ok := u.m[key]; ok {
+		return false
+	}
+	u.m[key] = now
+	return true
+}
+
+// dummyHash: Vergleich bei unbekanntem Benutzer, damit die Antwortzeit nichts verrät.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("vpnpanel-dummy-password"), 12)
 
 // ---------- Passwörter ----------
 
@@ -123,8 +167,11 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func adminOf(r *http.Request) *store.Admin { a, _ := r.Context().Value(adminKey).(*store.Admin); return a }
-func sessionOf(r *http.Request) string     { s, _ := r.Context().Value(adminKey + 1).(string); return s }
+func adminOf(r *http.Request) *store.Admin {
+	a, _ := r.Context().Value(adminKey).(*store.Admin)
+	return a
+}
+func sessionOf(r *http.Request) string { s, _ := r.Context().Value(adminKey + 1).(string); return s }
 
 // ---------- Handler ----------
 
@@ -135,13 +182,19 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := a.clientIP(r)
-	if !a.limiter.allow(ip) {
+	name := strings.ToLower(strings.TrimSpace(in.Username))
+	userKey := "u:" + name
+	if !a.limiter.allow(ip) || !a.limiter.allow(userKey) {
 		errJSON(w, http.StatusTooManyRequests, "Zu viele Fehlversuche – bitte 15 Minuten warten")
 		return
 	}
 	adm, err := a.St.AdminByName(strings.TrimSpace(in.Username))
+	if err != nil {
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(in.Password))
+	}
 	if err != nil || !checkPassword(adm.PassHash, in.Password) {
 		a.limiter.fail(ip)
+		a.limiter.fail(userKey)
 		a.E.Log("warn", "Fehlgeschlagene Anmeldung von "+ip)
 		errJSON(w, http.StatusUnauthorized, "Benutzername oder Passwort falsch")
 		return
@@ -151,13 +204,16 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"need_totp": true})
 			return
 		}
-		if !totp.Validate(strings.ReplaceAll(in.Code, " ", ""), adm.TOTPSecret) {
+		code := strings.ReplaceAll(in.Code, " ", "")
+		if !totp.Validate(code, adm.TOTPSecret) || !a.codes.take(strconv.FormatInt(adm.ID, 10)+":"+code) {
 			a.limiter.fail(ip)
+			a.limiter.fail(userKey)
 			errJSON(w, http.StatusUnauthorized, "Code falsch")
 			return
 		}
 	}
 	a.limiter.reset(ip)
+	a.limiter.reset(userKey)
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
 	tok := hex.EncodeToString(raw)
