@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -1078,7 +1079,7 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 		cc.Instructions = []string{
 			"WireGuard-App (Android, iOS, Windows, macOS): „+“ → „QR-Code scannen“ (Konfiguration) oder die Datei importieren.",
 			"Hiddify, v2rayNG, v2rayN & Co.: den QR-Code des wireguard://-Links scannen oder den Link kopieren und einfügen – er steckt auch im Abo.",
-			"v2RayTun & Apps, die den Link nicht annehmen: die Konfiguration (.conf) als Datei oder Text importieren.",
+			"v2RayTun: am einfachsten über das Abo (WireGuard kommt dort automatisch passend an). Apps, die den Link nicht annehmen: die Konfiguration (.conf) als Datei oder Text importieren.",
 			"Denselben Zugang nicht gleichzeitig in zwei Apps verbinden – für jedes Gerät/jede App einen eigenen Zugang anlegen.",
 		}
 	default:
@@ -1121,6 +1122,13 @@ func (d Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	if pb.Peer.Kind != "client" || !pb.Active {
 		return nil
 	}
+	if env.Global.Client == "v2raytun" {
+		// v2RayTun liest keine wireguard://-Links aus dem Abo, nimmt aber Xray-JSON-Zeilen an
+		if j := xrayJSON(env, sb, pb); j != "" {
+			return []string{j}
+		}
+		return nil
+	}
 	cc, err := d.ClientConfig(env, sb, pb)
 	if err != nil {
 		return nil
@@ -1159,6 +1167,65 @@ func shareLink(env *proto.Env, sc serverCfg, sb *proto.ServerBundle, pb *proto.P
 	// exportiert – url.User ließe „+“ und „=“ stehen, was manche Apps falsch lesen.
 	key := url.QueryEscape(proto.Str(pb.Peer.Secrets, "private_key"))
 	return "wireguard://" + key + "@" + strings.TrimPrefix(u.String(), "wireguard://")
+}
+
+// xrayJSON: vollständige Xray-Konfiguration (eine Zeile) mit WireGuard-Ausgang, für Apps wie
+// v2RayTun, die Xray-JSON im Abo verstehen, aber keine wireguard://-Links. Beim geteilten
+// Tunnel gehen nur die Netze des WireGuard-Servers durch den Tunnel, der Rest direkt.
+func xrayJSON(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) string {
+	cp, err := params(sb, pb)
+	if err != nil {
+		return ""
+	}
+	mtu := cp.mtu
+	if mtu == 0 {
+		mtu = 1280
+	}
+	peer := map[string]any{
+		"publicKey":  proto.Str(sb.Server.State, "public_key"),
+		"endpoint":   fmt.Sprintf("%s:%d", endpointHost(env, cp.sc), cp.sc.Port),
+		"allowedIPs": []string{"0.0.0.0/0", "::/0"},
+	}
+	if psk := proto.Str(pb.Peer.Secrets, "psk"); psk != "" {
+		peer["preSharedKey"] = psk
+	}
+	if cp.ka > 0 {
+		peer["keepAlive"] = cp.ka
+	}
+	wg := map[string]any{"tag": "proxy", "protocol": "wireguard", "settings": map[string]any{
+		"secretKey": proto.Str(pb.Peer.Secrets, "private_key"), "address": cp.addrs, "mtu": mtu,
+		"peers": []any{peer}}}
+	direct := map[string]any{"tag": "direct", "protocol": "freedom"}
+	outbounds := []any{wg, direct} // der erste Ausgang ist der Standard
+	routing := map[string]any{"domainStrategy": "AsIs"}
+	if cp.c.Tunnel != "full" {
+		outbounds = []any{direct, wg}
+		routing["rules"] = []any{map[string]any{"type": "field", "ip": cp.allowed, "outboundTag": "proxy"}}
+	}
+	cfg := map[string]any{
+		"remarks": oneLine(sb.Server.Name + " - " + pb.Peer.Name),
+		"log":     map[string]any{"loglevel": "warning"},
+		"inbounds": []any{map[string]any{"tag": "socks", "listen": "127.0.0.1", "port": 10808, "protocol": "socks",
+			"settings": map[string]any{"udp": true}, "sniffing": map[string]any{"enabled": true, "destOverride": []string{"http", "tls"}}}},
+		"outbounds": outbounds,
+		"routing":   routing,
+	}
+	if cp.dns != "" {
+		var servers []string
+		for _, s := range strings.Split(cp.dns, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				servers = append(servers, s)
+			}
+		}
+		if len(servers) > 0 {
+			cfg["dns"] = map[string]any{"servers": servers}
+		}
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // SingBox: WireGuard-Endpunkt für das sing-box-Profil. Nur Geräte „Handy / Laptop“ mit vollem

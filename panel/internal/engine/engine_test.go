@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -147,6 +148,34 @@ XR_SID="0123456789abcdef"
 		}
 		if pu, err := url.Parse(links[0]); err != nil || pu.User.Username() != key {
 			t.Errorf("WireGuard-Link nicht lesbar: %v", err)
+		}
+	}
+	// v2RayTun: WireGuard als Xray-JSON-Zeile statt wireguard://-Link
+	vt, _ := e.SubLinksFor(u.ID, "v2raytun")
+	if len(vt) != 4 || !strings.HasPrefix(vt[0], "{") || strings.Contains(vt[0], "\n") {
+		t.Errorf("v2RayTun-Abo falsch: %v", vt)
+	} else {
+		var xj struct {
+			Remarks   string `json:"remarks"`
+			Outbounds []struct {
+				Protocol string `json:"protocol"`
+				Settings struct {
+					SecretKey string   `json:"secretKey"`
+					Address   []string `json:"address"`
+					Peers     []struct {
+						Endpoint   string   `json:"endpoint"`
+						AllowedIPs []string `json:"allowedIPs"`
+					} `json:"peers"`
+				} `json:"settings"`
+			} `json:"outbounds"`
+		}
+		if err := json.Unmarshal([]byte(vt[0]), &xj); err != nil || xj.Remarks == "" || len(xj.Outbounds) != 2 ||
+			xj.Outbounds[0].Protocol != "wireguard" || xj.Outbounds[0].Settings.SecretKey == "" ||
+			len(xj.Outbounds[0].Settings.Peers) != 1 || !strings.HasSuffix(xj.Outbounds[0].Settings.Peers[0].Endpoint, ":51820") {
+			t.Errorf("Xray-JSON für WireGuard falsch (%v): %s", err, vt[0])
+		}
+		if !strings.HasPrefix(vt[1], "vless://") {
+			t.Errorf("v2RayTun: VLESS-Links fehlen: %v", vt[1:])
 		}
 	}
 	xc, _ := os.ReadFile(filepath.Join(dry.Root, "usr/local/etc/xray/config.json"))

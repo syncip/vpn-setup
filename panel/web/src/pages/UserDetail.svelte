@@ -336,7 +336,7 @@
             </div>
           </div>
         {/if}
-        <div class="help">Wurde der Link weitergegeben oder ist er bekannt geworden: „Neuen Link erzeugen“. Der alte Link funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen. Apps, die WireGuard nicht aus dem Abo übernehmen (z. B. v2RayTun), richtest du über „Zugänge“ → „Konfiguration“ ein.</div>
+        <div class="help">Wurde der Link weitergegeben oder ist er bekannt geworden: „Neuen Link erzeugen“. Der alte Link funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen. Apps, die WireGuard nicht aus dem Abo übernehmen, richtest du über „Zugänge“ → „Konfiguration“ ein.</div>
       </div>
     </div>
   {:else if tab === 'settings'}

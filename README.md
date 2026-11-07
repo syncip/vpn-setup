@@ -61,7 +61,9 @@ Form `host:443,20000-50000`. Apps ohne Unterstützung nutzen weiter den normalen
 
 Das Abo eines Nutzers enthält alle aktiven Zugänge: VLESS (ein Eintrag je Tarnziel), Hysteria2 und
 WireGuard-Geräte vom Typ „Handy / Laptop“ als `wireguard://`-Link. Einträge heißen „Server - Gerät“.
-Denselben WireGuard-Zugang nicht gleichzeitig in Hiddify und in der WireGuard-App nutzen.
+v2RayTun liest keine `wireguard://`-Links; erkennt das Panel die App (User-Agent `v2raytun`), steht
+WireGuard dort als einzeilige Xray-JSON-Konfiguration im Abo.
+Denselben WireGuard-Zugang nicht gleichzeitig in zwei Apps (oder App + WireGuard-App) nutzen.
 
 **sing-box-App:** Die offizielle sing-box-App liest keine Link-Listen. `<Abo-Link>?format=singbox` liefert
 stattdessen ein fertiges Profil (Hysteria2 mit eingebettetem Zertifikat, WireGuard „Handy / Laptop“ mit

@@ -39,6 +39,8 @@ func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 	client := ""
 	if ua := strings.ToLower(r.UserAgent()); strings.Contains(ua, "hiddify") || strings.Contains(ua, "sing-box") || strings.Contains(ua, "singbox") {
 		client = "singbox"
+	} else if strings.Contains(ua, "v2raytun") {
+		client = "v2raytun" // WireGuard als Xray-JSON (v2RayTun liest keine wireguard://-Links)
 	}
 	links, err := a.E.SubLinksFor(u.ID, client)
 	if err != nil {
