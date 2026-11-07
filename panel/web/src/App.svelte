@@ -233,7 +233,7 @@
     flex: 1;
     min-width: 0;
     padding: 28px 32px 48px;
-    max-width: 1440px;
+    max-width: 1760px;
   }
   .menu-btn {
     display: none;

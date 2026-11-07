@@ -107,6 +107,16 @@
     if (await run(() => put(`/peers/${p.id}`, { regenerate_keys: true }), 'Neue Schlüssel erzeugt')) load();
   }
 
+  // Was steckt im Abo? (aktive VLESS-/Hysteria2-Zugänge und WireGuard-Geräte „Handy / Laptop“)
+  const subSummary = $derived.by(() => {
+    const n = {};
+    for (const p of d?.peers || []) {
+      if (!p.enabled || !p.active || (p.protocol === 'wireguard' && p.kind !== 'client')) continue;
+      n[p.protocol] = (n[p.protocol] || 0) + 1;
+    }
+    return Object.entries(n).map(([k, c]) => `${c}× ${protocol(k)?.label || k}`).join(' · ');
+  });
+
   const kindIcon = { client: 'phone', server: 'server', site: 'network', access: 'key' };
   const kindLabel = (proto, kind) => protocol(proto)?.kinds?.find((k) => k.id === kind)?.label || kind;
 </script>
@@ -138,6 +148,8 @@
   </div>
 
   {#if tab === 'overview'}
+   <div class="ud">
+   <div class="ud-main">
     <div class="grid cols-4">
       <div class="card card-pad">
         <div class="muted small">Verbrauch {PERIODS[u.effective?.period] || 'gesamt'}</div>
@@ -162,6 +174,49 @@
     </div>
     <div style="margin-top:16px"><LivePanel user={id} compact bind:connected={liveOn} /></div>
     <div style="margin-top:16px"><TrafficPanel url={`/users/${id}/traffic`} /></div>
+   </div>
+   <aside class="ud-side">
+    <div class="card">
+      <div class="card-head"><h3>Abo-Link</h3><button class="btn sm ghost" onclick={() => (tab = 'sub')}>Mehr</button></div>
+      <div class="card-pad stack-sm side-sub">
+        <QR text={d.sub_url} size={168} />
+        <div class="muted tiny" style="text-align:center">{subSummary || 'Noch keine Zugänge im Abo'}</div>
+        <div class="row">
+          <button class="btn sm grow" onclick={() => copy(d.sub_url).then(() => toast('Abo-Link kopiert'))}><Icon name="copy" size={15} /> Kopieren</button>
+          <button class="btn sm danger" title="Neuen Abo-Link erzeugen (alter Link wird ungültig)" onclick={newToken}><Icon name="refresh" size={15} /> Neu</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Zugänge</h3><button class="btn sm ghost" onclick={() => (tab = 'peers')}>Verwalten</button></div>
+      <div class="side-list">
+        {#each d.peers as p}
+          <button class="side-peer" onclick={() => showCfg(p)} title="Konfiguration anzeigen">
+            <ProtoLogo id={p.protocol} size={22} />
+            <div class="grow" style="min-width:0">
+              <div class="strong ellipsis">{p.name}</div>
+              <div class="muted tiny ellipsis">{p.server_name}{p.settings?.address4 ? ` · ${p.settings.address4}` : ''}</div>
+            </div>
+            {#if !p.enabled}<span class="badge muted">aus</span>{:else if !p.active}<span class="badge bad">gesperrt</span>{:else}<span class="dot" class:on={p.online} title={p.online ? 'verbunden' : ago(p.last_seen)}></span>{/if}
+            <Icon name="qr" size={15} />
+          </button>
+        {:else}
+          <div class="empty small">Keine Zugänge</div>
+        {/each}
+      </div>
+    </div>
+    <div class="card card-pad">
+      <dl class="kv">
+        <dt>Limits</dt><dd>{d.custom ? 'Individuell' : u.plan_name ? `Tarif ${u.plan_name}` : 'keine'}</dd>
+        {#if u.effective}<dt></dt><dd class="muted small">{limitsSummary(u.effective)}</dd>{/if}
+        <dt>Gültig bis</dt><dd>{u.expires_at ? date(u.expires_at) : 'unbegrenzt'}</dd>
+        {#if u.next_reset}<dt>Zurücksetzung</dt><dd>{date(u.next_reset)}</dd>{/if}
+        <dt>Angelegt</dt><dd>{date(u.created)}</dd>
+        {#if u.note}<dt>Notiz</dt><dd style="white-space:pre-wrap">{u.note}</dd>{/if}
+      </dl>
+    </div>
+   </aside>
+   </div>
   {:else if tab === 'peers'}
     <div class="spread" style="margin-bottom:12px">
       <div class="muted small">Jeder Zugang ist ein Gerät (WireGuard) bzw. eine Kennung (VLESS, Hysteria2). Limits gelten für den Nutzer.</div>
@@ -239,14 +294,14 @@
       <div class="stack grow">
         <div>
           <h2>Abo-Link</h2>
-          <p class="muted small">Enthält alle VLESS-Zugänge dieses Nutzers. In v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an.</p>
+          <p class="muted small">Enthält alle aktiven Zugänge dieses Nutzers{subSummary ? ` (${subSummary})` : ''}: VLESS, Hysteria2 und WireGuard-Geräte „Handy / Laptop“. In Hiddify, v2rayNG, v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an.</p>
         </div>
         <div class="input-group">
           <input class="input mono" readonly value={d.sub_url} />
           <button class="btn" style="border-radius:0 8px 8px 0" onclick={() => copy(d.sub_url).then(() => toast('Kopiert'))}><Icon name="copy" size={15} /></button>
         </div>
         <div class="row"><button class="btn danger" onclick={newToken}><Icon name="refresh" size={15} /> Neuen Link erzeugen</button></div>
-        <div class="help">WireGuard-Geräte haben keinen Abo-Link – ihre Konfiguration findest du unter „Zugänge“.</div>
+        <div class="help">Wurde der Link weitergegeben oder ist er bekannt geworden: „Neuen Link erzeugen“. Der alte Link funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen. Apps, die WireGuard nicht aus dem Abo übernehmen (z. B. v2RayTun), richtest du über „Zugänge“ → „Konfiguration“ ein.</div>
       </div>
     </div>
   {:else if tab === 'settings'}
@@ -316,6 +371,58 @@
     font-size: 20px;
     font-weight: 700;
     margin: 4px 0 2px;
+  }
+  .ud {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 16px;
+    align-items: start;
+  }
+  .ud-side {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: sticky;
+    top: 16px;
+  }
+  .side-sub {
+    align-items: center;
+  }
+  .side-sub .row {
+    width: 100%;
+  }
+  .side-list {
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+  }
+  .side-peer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+  .side-peer:hover {
+    background: var(--panel-2);
+  }
+  @media (max-width: 1320px) {
+    .ud {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .ud-side {
+      position: static;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      align-items: start;
+    }
   }
   .sub {
     display: flex;

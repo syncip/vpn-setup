@@ -1053,10 +1053,12 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	}
 	switch pb.Peer.Kind {
 	case "client":
-		cc.Links = []proto.Link{{Label: "Hiddify / v2rayN", URL: shareLink(env, sc, sb, pb, c, addrs, allowed, ka)}}
+		cc.Links = []proto.Link{{Label: "Hiddify / v2rayNG", URL: shareLink(env, sc, sb, pb, c, addrs, allowed, ka)}}
 		cc.Instructions = []string{
 			"WireGuard-App (Android, iOS, Windows, macOS): „+“ → „QR-Code scannen“ (Konfiguration) oder die Datei importieren.",
-			"Hiddify, v2rayN & Co.: den QR-Code des wireguard://-Links scannen oder den Link kopieren und einfügen.",
+			"Hiddify, v2rayNG, v2rayN & Co.: den QR-Code des wireguard://-Links scannen oder den Link kopieren und einfügen – er steckt auch im Abo.",
+			"v2RayTun & Apps, die den Link nicht annehmen: die Konfiguration (.conf) als Datei oder Text importieren.",
+			"Denselben Zugang nicht gleichzeitig in zwei Apps verbinden – für jedes Gerät/jede App einen eigenen Zugang anlegen.",
 		}
 	default:
 		ifn := "wg-" + fname
@@ -1130,10 +1132,12 @@ func shareLink(env *proto.Env, sc serverCfg, sb *proto.ServerBundle, pb *proto.P
 	if c.Tunnel != "full" {
 		q.Set("allowedips", strings.Join(allowed, ","))
 	}
-	u := url.URL{Scheme: "wireguard", User: url.User(proto.Str(pb.Peer.Secrets, "private_key")),
-		Host: fmt.Sprintf("%s:%d", endpointHost(env, sc), sc.Port), Path: "/", RawQuery: q.Encode(),
-		Fragment: oneLine(sb.Server.Name + " - " + pb.Peer.Name)}
-	return u.String()
+	u := url.URL{Scheme: "wireguard", Host: fmt.Sprintf("%s:%d", endpointHost(env, sc), sc.Port),
+		Path: "/", RawQuery: q.Encode(), Fragment: oneLine(sb.Server.Name + " - " + pb.Peer.Name)}
+	// Privater Schlüssel vollständig kodiert (+ / = als %2B %2F %3D), so wie v2rayNG ihn selbst
+	// exportiert – url.User ließe „+“ und „=“ stehen, was manche Apps falsch lesen.
+	key := url.QueryEscape(proto.Str(pb.Peer.Secrets, "private_key"))
+	return "wireguard://" + key + "@" + strings.TrimPrefix(u.String(), "wireguard://")
 }
 
 func (Driver) Ports(srv *store.Server) []proto.Port {

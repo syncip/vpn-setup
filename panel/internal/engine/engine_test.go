@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"encoding/base64"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,6 +137,17 @@ XR_SID="0123456789abcdef"
 	// Abo: WireGuard (Handy/Laptop) als wireguard://-Link + VLESS je Tarnziel
 	if len(links) != 4 || !strings.HasPrefix(links[0], "wireguard://") || !strings.Contains(links[1], "sid=0123456789abcdef") || !strings.Contains(links[1], "@sys1.1337733.xyz:443") {
 		t.Errorf("Links falsch: %v", links)
+	} else {
+		// privater Schlüssel vollständig kodiert, nach dem Dekodieren 32 Byte
+		raw := strings.TrimPrefix(links[0][:strings.Index(links[0], "@")], "wireguard://")
+		key, err := url.QueryUnescape(raw)
+		b, err2 := base64.StdEncoding.DecodeString(key)
+		if strings.ContainsAny(raw, "+=/") || err != nil || err2 != nil || len(b) != 32 {
+			t.Errorf("WireGuard-Schlüssel im Link falsch kodiert: %q", raw)
+		}
+		if pu, err := url.Parse(links[0]); err != nil || pu.User.Username() != key {
+			t.Errorf("WireGuard-Link nicht lesbar: %v", err)
+		}
 	}
 	xc, _ := os.ReadFile(filepath.Join(dry.Root, "usr/local/etc/xray/config.json"))
 	if !strings.Contains(string(xc), `"domainStrategy": "UseIPv6v4"`) {

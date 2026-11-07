@@ -668,8 +668,9 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	links := []proto.Link{{Label: "Hysteria2", URL: link(env, sb, pb, false)}}
 	if hopFrom > 0 {
 		links = []proto.Link{
-			{Label: "Hiddify / sing-box", URL: link(env, sb, pb, true)},
-			{Label: "v2rayN, NekoBox & Co.", URL: link(env, sb, pb, false)},
+			// zuerst das Format, das (fast) jede App lesen kann; Hiddify nutzt dabei nur den Hauptport
+			{Label: "v2rayNG, v2RayTun, NekoBox & Co.", URL: link(env, sb, pb, false)},
+			{Label: "Hiddify / sing-box (mit Port-Hopping)", URL: link(env, sb, pb, true)},
 		}
 	}
 	info := [][2]string{
