@@ -295,10 +295,11 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		rules = append(rules, map[string]any{"type": "field", "user": byUser[id], "outboundTag": tag})
 	}
 	cfg := map[string]any{
-		"log":       map[string]any{"loglevel": "warning"},
-		"api":       map[string]any{"tag": "api", "listen": env.Global.XrayAPI, "services": []string{"StatsService"}},
-		"stats":     map[string]any{},
-		"policy":    map[string]any{"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true}}},
+		"log":   map[string]any{"loglevel": "warning"},
+		"api":   map[string]any{"tag": "api", "listen": env.Global.XrayAPI, "services": []string{"StatsService"}},
+		"stats": map[string]any{},
+		"policy": map[string]any{"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true,
+			"statsUserOnline": true}}}, // merkt sich die Client-IPs (xray api statsonlineiplist)
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
 		"routing":   map[string]any{"rules": orEmpty(rules)},
@@ -540,13 +541,58 @@ func (Driver) Live(env *proto.Env, servers []*proto.ServerBundle) (map[int64]pro
 			u.Down += v
 		}
 	}
+	// Verbundene Client-Adressen (echte IPs dank PROXY-Protocol von nginx)
+	ips := onlineIPs(env)
 	res := map[int64]proto.LiveSample{}
 	for _, sb := range servers {
 		for _, pb := range sb.Peers {
-			if u := byEmail[email(pb.Peer)]; u != nil {
-				res[pb.Peer.ID] = *u
+			u, ip := byEmail[email(pb.Peer)], ips[email(pb.Peer)]
+			if u == nil && ip == "" {
+				continue
 			}
+			s := proto.LiveSample{}
+			if u != nil {
+				s = *u
+			}
+			if ip != "" {
+				s.Endpoint, s.Online = ip, true
+			}
+			res[pb.Peer.ID] = s
 		}
 	}
 	return res, nil
+}
+
+// onlineIPs: E-Mail → zuletzt gesehene Client-Adresse laut Xray (leer, wenn Xray das nicht kann).
+func onlineIPs(env *proto.Env) map[string]string {
+	out, err := env.Sys.Run("xray", "api", "statsonlineiplist", "--server="+env.Global.XrayAPI, "-all")
+	if err != nil {
+		return nil
+	}
+	return parseOnlineIPs(out)
+}
+
+func parseOnlineIPs(out string) map[string]string {
+	var resp struct {
+		Users []struct {
+			Email string `json:"email"`
+			IPs   []struct {
+				IP       string `json:"ip"`
+				LastSeen int64  `json:"lastSeen"`
+			} `json:"ips"`
+		} `json:"users"`
+	}
+	if json.Unmarshal([]byte(out), &resp) != nil {
+		return nil
+	}
+	res := map[string]string{}
+	for _, u := range resp.Users {
+		var best int64 = -1
+		for _, ip := range u.IPs {
+			if ip.IP != "" && ip.LastSeen > best {
+				best, res[u.Email] = ip.LastSeen, ip.IP
+			}
+		}
+	}
+	return res
 }

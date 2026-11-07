@@ -312,6 +312,23 @@ func rememberAddr(id int64, a netip.Addr) (isNew bool) {
 	return true
 }
 
+// lastAddr: zuletzt bei der Anmeldung gesehene Client-Adresse („“ = unbekannt, z. B. nach Panel-Neustart
+// bis zur nächsten Anmeldung).
+func lastAddr(id int64) string {
+	addrMu.Lock()
+	defer addrMu.Unlock()
+	var best seenAddr
+	for _, s := range addrs[id] {
+		if s.at.After(best.at) {
+			best = s
+		}
+	}
+	if !best.addr.IsValid() {
+		return ""
+	}
+	return best.addr.Unmap().String()
+}
+
 func addrsOf(id int64) []netip.Addr {
 	addrMu.Lock()
 	defer addrMu.Unlock()
@@ -812,7 +829,11 @@ func (Driver) Live(env *proto.Env, servers []*proto.ServerBundle) (map[int64]pro
 			id := peerID(pb.Peer)
 			t, ok := traffic[id]
 			if ok || online[id] > 0 {
-				res[pb.Peer.ID] = proto.LiveSample{Up: t.Tx, Down: t.Rx, Online: online[id] > 0}
+				s := proto.LiveSample{Up: t.Tx, Down: t.Rx, Online: online[id] > 0}
+				if s.Online {
+					s.Endpoint = lastAddr(pb.Peer.ID)
+				}
+				res[pb.Peer.ID] = s
 			}
 		}
 	}
