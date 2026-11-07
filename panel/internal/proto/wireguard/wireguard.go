@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1052,9 +1053,10 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	}
 	switch pb.Peer.Kind {
 	case "client":
+		cc.Links = []proto.Link{{Label: "Hiddify / v2rayN", URL: shareLink(env, sc, sb, pb, c, addrs, allowed, ka)}}
 		cc.Instructions = []string{
-			"WireGuard-App installieren (Android, iOS, Windows, macOS).",
-			"In der App „+“ → „QR-Code scannen“ oder die Datei importieren.",
+			"WireGuard-App (Android, iOS, Windows, macOS): „+“ → „QR-Code scannen“ (Konfiguration) oder die Datei importieren.",
+			"Hiddify, v2rayN & Co.: den QR-Code des wireguard://-Links scannen oder den Link kopieren und einfügen.",
 		}
 	default:
 		ifn := "wg-" + fname
@@ -1090,7 +1092,36 @@ func sanitize(s string) string {
 	return s
 }
 
-func (Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) []string { return nil }
+func (Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) []string {
+	return nil
+}
+
+// shareLink: wireguard://<privater Schlüssel>@host:port?… – Format von v2rayN/Hiddify
+// (ray2sing: publickey, presharedkey, address, mtu, keepalive, allowedips).
+func shareLink(env *proto.Env, sc serverCfg, sb *proto.ServerBundle, pb *proto.PeerBundle, c peerCfg, addrs, allowed []string, ka int) string {
+	q := url.Values{}
+	q.Set("publickey", proto.Str(sb.Server.State, "public_key"))
+	q.Set("presharedkey", proto.Str(pb.Peer.Secrets, "psk"))
+	q.Set("address", strings.Join(addrs, ","))
+	mtu := c.MTU
+	if mtu == 0 {
+		mtu = sc.MTU
+	}
+	if mtu == 0 {
+		mtu = 1280 // Mobilfunk-tauglich; die Apps nehmen sonst sehr unterschiedliche Vorgaben
+	}
+	q.Set("mtu", strconv.Itoa(mtu))
+	if ka > 0 {
+		q.Set("keepalive", strconv.Itoa(ka))
+	}
+	if c.Tunnel != "full" {
+		q.Set("allowedips", strings.Join(allowed, ","))
+	}
+	u := url.URL{Scheme: "wireguard", User: url.User(proto.Str(pb.Peer.Secrets, "private_key")),
+		Host: fmt.Sprintf("%s:%d", endpointHost(env, sc), sc.Port), Path: "/", RawQuery: q.Encode(),
+		Fragment: oneLine(pb.User.Name + "-" + pb.Peer.Name)}
+	return u.String()
+}
 
 func (Driver) Ports(srv *store.Server) []proto.Port {
 	sc := load(srv)

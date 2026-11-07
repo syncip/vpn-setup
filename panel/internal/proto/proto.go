@@ -63,6 +63,9 @@ type Global struct {
 	XrayAPI    string
 	DataDir    string
 	HookURL    string // interner HTTP-Endpunkt des Panels (z. B. Hysteria2-Anmeldung), ohne Schrägstrich am Ende
+	// Client: Art der App, die ein Abo abruft („singbox“ = Hiddify/sing-box), leer = unbekannt.
+	// Treiber können Links daran anpassen (z. B. Port-Hopping im Host-Teil statt mport).
+	Client string
 }
 
 type Env struct {

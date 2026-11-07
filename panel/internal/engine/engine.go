@@ -523,12 +523,16 @@ func (e *Engine) ClientConfig(peerID int64) (*proto.ClientConfig, error) {
 }
 
 // SubLinks: alle Links eines Nutzers für das Abo.
-func (e *Engine) SubLinks(userID int64) ([]string, error) {
+func (e *Engine) SubLinks(userID int64) ([]string, error) { return e.SubLinksFor(userID, "") }
+
+// SubLinksFor: Links für eine bestimmte App-Familie (siehe proto.Global.Client).
+func (e *Engine) SubLinksFor(userID int64, client string) ([]string, error) {
 	snap, err := e.Snapshot()
 	if err != nil {
 		return nil, err
 	}
 	env := e.Env()
+	env.Global.Client = client
 	var out []string
 	for _, sb := range snap.Servers {
 		if !sb.Server.Enabled {

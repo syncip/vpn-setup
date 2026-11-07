@@ -28,7 +28,12 @@ func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 		http.NotFound(w, r)
 		return
 	}
-	links, err := a.E.SubLinks(u.ID)
+	// Hiddify & andere sing-box-Apps lesen manche Angaben anders (z. B. Port-Hopping)
+	client := ""
+	if ua := strings.ToLower(r.UserAgent()); strings.Contains(ua, "hiddify") || strings.Contains(ua, "sing-box") || strings.Contains(ua, "singbox") {
+		client = "singbox"
+	}
+	links, err := a.E.SubLinksFor(u.ID, client)
 	if err != nil {
 		http.Error(w, "Fehler", http.StatusInternalServerError)
 		return
@@ -48,7 +53,21 @@ func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 	h.Set("profile-title", "base64:"+base64.StdEncoding.EncodeToString([]byte(title)))
 	h.Set("profile-update-interval", a.E.Setting("sub_update_interval"))
 	h.Set("subscription-userinfo", fmt.Sprintf("upload=%d; download=%d; total=%d; expire=%d", u.PeriodUp, u.PeriodDown, total, u.ExpiresAt))
-	h.Set("content-disposition", `attachment; filename="`+title+`"`)
+	h.Set("content-disposition", `attachment; filename="`+asciiName(title)+`"`)
 	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
 	_, _ = w.Write([]byte(body))
+}
+
+// asciiName: Dateiname für den Header (nur einfache Zeichen).
+func asciiName(s string) string {
+	out := []rune{}
+	for _, r := range s {
+		if r >= 0x20 && r < 0x7f && r != '"' && r != 92 {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return "vpn"
+	}
+	return string(out)
 }

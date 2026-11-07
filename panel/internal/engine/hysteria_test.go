@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -202,4 +203,62 @@ func TestHysteria2PortHopping(t *testing.T) {
 	if !strings.Contains(strings.Join(dry.Log(), "\n"), "iptables -t nat -D PREROUTING -j VPNHY") {
 		t.Errorf("Umleitung nicht entfernt")
 	}
+}
+
+// Links für Hiddify (ray2sing): Port-Hopping im Host-Teil, WireGuard als wireguard://-Link.
+func TestShareLinksHiddify(t *testing.T) {
+	e, _ := newTest(t)
+	e.Cfg.HookAddr = "127.0.0.1:8479"
+	u := &store.User{Name: "martin", Enabled: true, SubToken: proto.RandHex(16)}
+	_ = e.St.SaveUser(u)
+	ids := map[string]int64{}
+	for _, pr := range []string{"wireguard", "hysteria2"} {
+		sv := &store.Server{Name: pr, Protocol: pr, Enabled: true, Settings: store.M{}}
+		if pr == "hysteria2" {
+			sv.Settings["hop_ports"] = "20000-40000"
+		}
+		if err := e.InitServer(sv); err != nil {
+			t.Fatal(err)
+		}
+		_ = e.St.SaveServer(sv)
+		p := &store.Peer{UserID: u.ID, ServerID: sv.ID, Name: "Handy", Kind: "client", Enabled: true, Settings: store.M{}}
+		if err := e.InitPeer(sv, p); err != nil {
+			t.Fatal(err)
+		}
+		_ = e.St.SavePeer(p)
+		ids[pr] = p.ID
+	}
+	hd, _ := e.SubLinksFor(u.ID, "singbox")
+	other, _ := e.SubLinks(u.ID)
+	if len(hd) != 1 || !strings.Contains(hd[0], ":443,20000-40000/?") || strings.Contains(hd[0], "mport") {
+		t.Errorf("Hiddify-Link falsch: %v", hd)
+	}
+	if len(other) != 1 || !strings.Contains(other[0], ":443/?") || !strings.Contains(other[0], "mport=20000-40000") {
+		t.Errorf("Standard-Link falsch: %v", other)
+	}
+	cc, _ := e.ClientConfig(ids["wireguard"])
+	if len(cc.Links) != 1 {
+		t.Fatalf("WireGuard-Link fehlt")
+	}
+	l, err := url.Parse(cc.Links[0].URL)
+	if err != nil || l.Scheme != "wireguard" || l.Port() != "51820" {
+		t.Fatalf("WireGuard-Link ungültig: %v %v", cc.Links[0].URL, err)
+	}
+	pb := e.mustPeer(t, ids["wireguard"])
+	if l.User.Username() != proto.Str(pb.Secrets, "private_key") || l.Query().Get("presharedkey") != proto.Str(pb.Secrets, "psk") ||
+		!strings.Contains(l.Query().Get("address"), "/32") || l.Query().Get("publickey") == "" || l.Query().Get("mtu") != "1280" {
+		t.Errorf("WireGuard-Link-Inhalt falsch: %s", cc.Links[0].URL)
+	}
+	if strings.ContainsAny(l.Fragment, "\r\n") {
+		t.Errorf("Zeilenumbruch im Namen")
+	}
+}
+
+func (e *Engine) mustPeer(t *testing.T, id int64) *store.Peer {
+	t.Helper()
+	p, err := e.St.Peer(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

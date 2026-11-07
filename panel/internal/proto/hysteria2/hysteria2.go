@@ -616,8 +616,12 @@ func (Driver) Collect(env *proto.Env, servers []*proto.ServerBundle) (map[int64]
 
 // ---------- Links und Konfiguration ----------
 
-func link(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) string {
+// link: hysteria2://-Link. singbox=true: Port-Hopping-Bereich im Host-Teil
+// („host:443,20000-50000“, so liest es Hiddify/sing-box), sonst als mport-Parameter
+// (v2rayN, NekoBox; Apps ohne Unterstützung nutzen einfach den normalen Port).
+func link(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle, singbox bool) string {
 	c := load(sb.Server)
+	ports := strconv.Itoa(c.Port)
 	q := url.Values{}
 	q.Set("sni", sniOf(env, c))
 	if c.CertFile == "" {
@@ -625,7 +629,11 @@ func link(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) string {
 		q.Set("pinSHA256", proto.Str(sb.Server.State, "cert_sha256"))
 	}
 	if f, t, err := hopRange(c.HopPorts); err == nil && f > 0 {
-		q.Set("mport", fmt.Sprintf("%d-%d", f, t))
+		if singbox {
+			ports = fmt.Sprintf("%d,%d-%d", c.Port, f, t)
+		} else {
+			q.Set("mport", fmt.Sprintf("%d-%d", f, t))
+		}
 	}
 	if c.Obfs {
 		q.Set("obfs", "salamander")
@@ -635,8 +643,8 @@ func link(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) string {
 	if sb.Server.Name != "" {
 		label = fmt.Sprintf("%s-%s", pb.User.Name, sb.Server.Name)
 	}
-	return fmt.Sprintf("hysteria2://%s@%s:%d/?%s#%s", url.PathEscape(proto.Str(pb.Peer.Secrets, "password")),
-		linkHost(env, c), c.Port, q.Encode(), url.PathEscape(label))
+	return fmt.Sprintf("hysteria2://%s@%s:%s/?%s#%s", url.PathEscape(proto.Str(pb.Peer.Secrets, "password")),
+		linkHost(env, c), ports, q.Encode(), url.PathEscape(oneLine(label)))
 }
 
 func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (*proto.ClientConfig, error) {
@@ -660,6 +668,13 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 		fmt.Fprintf(&y, "transport:\n  udp:\n    hopInterval: %ds\n", c.HopInterval)
 	}
 	y.WriteString("socks5:\n  listen: 127.0.0.1:1080\nhttp:\n  listen: 127.0.0.1:8080\n")
+	links := []proto.Link{{Label: "Hysteria2", URL: link(env, sb, pb, false)}}
+	if hopFrom > 0 {
+		links = []proto.Link{
+			{Label: "Hiddify / sing-box", URL: link(env, sb, pb, true)},
+			{Label: "v2rayN, NekoBox & Co.", URL: link(env, sb, pb, false)},
+		}
+	}
 	info := [][2]string{
 		{"Server", server + " (UDP)"},
 		{"Passwort", proto.Str(pb.Peer.Secrets, "password")},
@@ -670,7 +685,7 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	}
 	return &proto.ClientConfig{
 		Title: "Hysteria2 – " + sb.Server.Name,
-		Links: []proto.Link{{Label: "Hysteria2", URL: link(env, sb, pb)}},
+		Links: links,
 		Files: []proto.File{{Name: "hysteria-" + safeName(pb.User.Name) + ".yaml", Content: y.String()}},
 		Info:  info,
 		Instructions: []string{
@@ -696,7 +711,7 @@ func safeName(s string) string {
 }
 
 func (Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) []string {
-	return []string{link(env, sb, pb)}
+	return []string{link(env, sb, pb, env.Global.Client == "singbox")}
 }
 
 func (Driver) Ports(srv *store.Server) []proto.Port {

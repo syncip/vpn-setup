@@ -71,7 +71,7 @@
         <div class="spread">
           <span class="strong mono">{f.name}</span>
           <div class="row">
-            <button class="btn sm" onclick={() => show(f.content, f.name)}><Icon name="qr" size={15} /> QR</button>
+            {#if f.qr}<button class="btn sm" onclick={() => show(f.content, f.name + ' – WireGuard-App')}><Icon name="qr" size={15} /> QR</button>{/if}
             <button class="btn sm" onclick={() => cp(f.content)}><Icon name="copy" size={15} /> Kopieren</button>
             <button class="btn sm" onclick={() => download(f.name, f.content)}><Icon name="download" size={15} /> Datei</button>
           </div>
