@@ -52,6 +52,11 @@ func TestSingBoxProfile(t *testing.T) {
 		Outbounds []map[string]any `json:"outbounds"`
 		Endpoints []map[string]any `json:"endpoints"`
 		Route     map[string]any   `json:"route"`
+		Exp       struct {
+			Cache struct {
+				Enabled bool `json:"enabled"`
+			} `json:"cache_file"`
+		} `json:"experimental"`
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		t.Fatal(err)
@@ -81,6 +86,9 @@ func TestSingBoxProfile(t *testing.T) {
 	}
 	if n := len(sel["outbounds"].([]any)); n != 3 { // Automatisch + Hysteria2 + WireGuard
 		t.Errorf("Auswahl hat %d Einträge", n)
+	}
+	if !cfg.Exp.Cache.Enabled || sel["interrupt_exist_connections"] != true {
+		t.Errorf("Auswahl wird nicht gemerkt bzw. nicht sofort umgeschaltet")
 	}
 	if cfg.Route["final"] != "VPN" {
 		t.Errorf("Route falsch: %v", cfg.Route)

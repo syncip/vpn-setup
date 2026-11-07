@@ -65,7 +65,10 @@ func (e *Engine) SingBoxProfile(userID int64) ([]byte, error) {
 		return nil, ErrNoSingBox
 	}
 	all := append([]any{
-		map[string]any{"type": "selector", "tag": "VPN", "outbounds": append([]string{"Automatisch"}, tags...), "default": "Automatisch"},
+		// Auswahl in der App (Groups → VPN, sichtbar sobald der Dienst läuft); beim Umschalten
+		// wechseln auch bestehende Verbindungen sofort
+		map[string]any{"type": "selector", "tag": "VPN", "outbounds": append([]string{"Automatisch"}, tags...), "default": "Automatisch",
+			"interrupt_exist_connections": true},
 		map[string]any{"type": "urltest", "tag": "Automatisch", "outbounds": tags,
 			"url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50},
 	}, outbounds...)
@@ -85,6 +88,8 @@ func (e *Engine) SingBoxProfile(userID int64) ([]byte, error) {
 			"auto_route": true, "strict_route": true,
 		}},
 		"outbounds": all,
+		// merkt sich die gewählte Verbindung über Neustarts und Profil-Updates hinweg
+		"experimental": map[string]any{"cache_file": map[string]any{"enabled": true}},
 		"route": map[string]any{
 			"rules": []any{
 				map[string]any{"action": "sniff"},
