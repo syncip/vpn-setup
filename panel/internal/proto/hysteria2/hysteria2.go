@@ -639,10 +639,7 @@ func link(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle, singbox 
 		q.Set("obfs", "salamander")
 		q.Set("obfs-password", proto.Str(sb.Server.State, "obfs_password"))
 	}
-	label := fmt.Sprintf("%s-hy2", pb.User.Name)
-	if sb.Server.Name != "" {
-		label = fmt.Sprintf("%s-%s", pb.User.Name, sb.Server.Name)
-	}
+	label := sb.Server.Name + " - " + pb.Peer.Name
 	return fmt.Sprintf("hysteria2://%s@%s:%s/?%s#%s", url.PathEscape(proto.Str(pb.Peer.Secrets, "password")),
 		linkHost(env, c), ports, q.Encode(), url.PathEscape(oneLine(label)))
 }

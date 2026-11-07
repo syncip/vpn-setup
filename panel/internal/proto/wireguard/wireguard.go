@@ -1092,8 +1092,21 @@ func sanitize(s string) string {
 	return s
 }
 
-func (Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) []string {
-	return nil
+// ShareLinks: Geräte der Art „Handy / Laptop“ kommen als wireguard://-Link ins Abo
+// (Hiddify, v2rayN). Server und Homelabs laufen mit wg-quick und brauchen das nicht.
+func (d Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) []string {
+	if pb.Peer.Kind != "client" || !pb.Active {
+		return nil
+	}
+	cc, err := d.ClientConfig(env, sb, pb)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, l := range cc.Links {
+		out = append(out, l.URL)
+	}
+	return out
 }
 
 // shareLink: wireguard://<privater Schlüssel>@host:port?… – Format von v2rayN/Hiddify
@@ -1119,7 +1132,7 @@ func shareLink(env *proto.Env, sc serverCfg, sb *proto.ServerBundle, pb *proto.P
 	}
 	u := url.URL{Scheme: "wireguard", User: url.User(proto.Str(pb.Peer.Secrets, "private_key")),
 		Host: fmt.Sprintf("%s:%d", endpointHost(env, sc), sc.Port), Path: "/", RawQuery: q.Encode(),
-		Fragment: oneLine(pb.User.Name + "-" + pb.Peer.Name)}
+		Fragment: oneLine(sb.Server.Name + " - " + pb.Peer.Name)}
 	return u.String()
 }
 

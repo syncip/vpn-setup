@@ -1,5 +1,6 @@
 <script>
   import Icon from '../components/Icon.svelte';
+  import ProtoLogo from '../components/ProtoLogo.svelte';
   import Modal from '../components/Modal.svelte';
   import TrafficPanel from '../components/TrafficPanel.svelte';
   import LivePanel from '../components/LivePanel.svelte';
@@ -170,7 +171,7 @@
       {#each byServer as [sid, g]}
         <div class="card">
           <div class="card-head">
-            <h3><span class="badge">{protocol(g.protocol)?.label || g.protocol}</span> {g.name}</h3>
+            <h3 class="row" style="gap:8px"><ProtoLogo id={g.protocol} size={24} /> {g.name} <span class="muted small" style="font-weight:400">{protocol(g.protocol)?.label || g.protocol}</span></h3>
             {#if g.protocol === 'wireguard'}<a class="small" href="#/network/{sid}">Netzwerk ansehen</a>{/if}
           </div>
           <div class="table-wrap">

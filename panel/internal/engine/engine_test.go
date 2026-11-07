@@ -132,7 +132,8 @@ XR_SID="0123456789abcdef"
 		t.Fatalf("Apply: %v", err)
 	}
 	links, _ := e.SubLinks(u.ID)
-	if len(links) != 3 || !strings.Contains(links[0], "sid=0123456789abcdef") || !strings.Contains(links[0], "@sys1.1337733.xyz:443") {
+	// Abo: WireGuard (Handy/Laptop) als wireguard://-Link + VLESS je Tarnziel
+	if len(links) != 4 || !strings.HasPrefix(links[0], "wireguard://") || !strings.Contains(links[1], "sid=0123456789abcdef") || !strings.Contains(links[1], "@sys1.1337733.xyz:443") {
 		t.Errorf("Links falsch: %v", links)
 	}
 	xc, _ := os.ReadFile(filepath.Join(dry.Root, "usr/local/etc/xray/config.json"))

@@ -1,5 +1,6 @@
 <script>
   import Icon from '../components/Icon.svelte';
+  import ProtoLogo from '../components/ProtoLogo.svelte';
   import PageHead from '../components/PageHead.svelte';
   import Modal from '../components/Modal.svelte';
   import FieldForm from '../components/FieldForm.svelte';
@@ -68,7 +69,6 @@
     if (!(await confirmDialog({ title: 'Neue Server-Schlüssel?', text: 'Alle Geräte und Links dieses Servers funktionieren danach nicht mehr und müssen neu eingerichtet werden.', ok: 'Neu erzeugen', danger: true }))) return;
     if (await run(() => put(`/servers/${s.id}`, { regenerate_keys: true }), 'Neue Schlüssel erzeugt')) load();
   }
-  const protoIcon = { wireguard: 'network', vless: 'shield', hysteria2: 'zap' };
 </script>
 
 <PageHead title="Server" subtitle="VPN-Instanzen auf diesem System – mehrere pro Protokoll möglich">
@@ -81,7 +81,7 @@
     <div class="card srv" class:disabled={!s.enabled}>
       <div class="card-head">
         <div class="row grow">
-          <span class="pill-icon"><Icon name={protoIcon[s.protocol] || 'server'} /></span>
+          <ProtoLogo id={s.protocol} size={38} />
           <div class="grow">
             <h3>{s.name}</h3>
             <div class="muted tiny">{p?.label || s.protocol}</div>
@@ -137,7 +137,7 @@
       <div class="grid cols-2" style="gap:10px">
         {#each meta.protocols as p}
           <button type="button" class="choice" class:active={form.protocol === p.id} onclick={() => pick(p)}>
-            <span class="ic"><Icon name={protoIcon[p.id] || 'server'} /></span>
+            <ProtoLogo id={p.id} size={34} />
             <span><span class="strong">{p.label}</span><br /><span class="muted tiny">{p.description}</span></span>
           </button>
         {/each}

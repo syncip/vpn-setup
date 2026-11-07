@@ -433,7 +433,7 @@ func links(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) []proto
 			q.Set("sid", c.ShortIDs[0])
 			q.Set("type", "tcp")
 			q.Set("headerType", "none")
-			label := fmt.Sprintf("%s-%s", pb.User.Name, sni)
+			label := fmt.Sprintf("%s - %s (%s)", sb.Server.Name, pb.Peer.Name, sni)
 			u := fmt.Sprintf("vless://%s@%s:%d?%s#%s", proto.Str(pb.Peer.Secrets, "uuid"), linkHost(env, c), c.PublicPort, q.Encode(), url.PathEscape(label))
 			out = append(out, proto.Link{Label: sni, URL: u})
 		}

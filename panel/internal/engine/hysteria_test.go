@@ -230,6 +230,10 @@ func TestShareLinksHiddify(t *testing.T) {
 	}
 	hd, _ := e.SubLinksFor(u.ID, "singbox")
 	other, _ := e.SubLinks(u.ID)
+	if len(hd) != 2 || !strings.HasPrefix(hd[0], "wireguard://") {
+		t.Errorf("WireGuard fehlt im Abo: %v", hd)
+	}
+	hd, other = hd[1:], other[1:]
 	if len(hd) != 1 || !strings.Contains(hd[0], ":443,20000-40000/?") || strings.Contains(hd[0], "mport") {
 		t.Errorf("Hiddify-Link falsch: %v", hd)
 	}

@@ -2,10 +2,10 @@
   // Live-Anzeige: aktuelle Geschwindigkeit, Verlauf der letzten Minuten (zoombar) und
   // verbundene Geräte. Fragt alle 2 Sekunden ab, solange die Seite sichtbar ist.
   import Icon from './Icon.svelte';
+  import ProtoLogo from './ProtoLogo.svelte';
   import TimeChart from './TimeChart.svelte';
   import { get } from '../lib/api.js';
   import { speed, duration } from '../lib/format.js';
-  import { protocol } from '../lib/state.svelte.js';
 
   let { user = 0, compact = false, connected = $bindable(0) } = $props();
 
@@ -59,7 +59,6 @@
     connected = peers.length;
   });
   const peak = $derived(Math.max(1, ...peers.map((p) => p.up + p.down)));
-  const proto = (p) => protocol(p)?.label || p;
 </script>
 
 {#if err}<div class="notice bad" style="margin-bottom:12px">{err}</div>{/if}
@@ -118,7 +117,7 @@
             <tr>
               {#if !user}<td class="nowrap"><a href="#/users/{p.user_id}" class="strong">{p.user}</a></td>{/if}
               <td class="nowrap">{p.name}</td>
-              <td class="small hide-xs"><span class="badge">{proto(p.protocol)}</span> <span class="muted">{p.server}</span></td>
+              <td class="small hide-xs"><span class="row" style="gap:6px;flex-wrap:nowrap"><ProtoLogo id={p.protocol} size={18} /><span class="muted">{p.server}</span></span></td>
               <td class="small muted hide-sm mono">{p.endpoint || '–'}</td>
               <td class="small muted hide-sm">{p.since ? duration(now / 1000 - p.since) : '–'}</td>
               <td>

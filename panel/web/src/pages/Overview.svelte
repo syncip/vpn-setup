@@ -1,5 +1,6 @@
 <script>
   import Icon from '../components/Icon.svelte';
+  import ProtoLogo from '../components/ProtoLogo.svelte';
   import TrafficPanel from '../components/TrafficPanel.svelte';
   import LivePanel from '../components/LivePanel.svelte';
   import PageHead from '../components/PageHead.svelte';
@@ -88,7 +89,7 @@
       <div class="list">
         {#each d.servers as s}
           <a class="item" href={s.protocol === 'wireguard' ? `#/network/${s.id}` : '#/servers'}>
-            <span class="dot" class:on={s.status.running} class:bad={s.enabled && !s.status.running}></span>
+            <span class="srvlogo"><ProtoLogo id={s.protocol} size={30} /><span class="dot" class:on={s.status.running} class:bad={s.enabled && !s.status.running}></span></span>
             <div class="grow">
               <div class="strong">{s.name}</div>
               <div class="muted tiny">{protocol(s.protocol)?.label || s.protocol} · {s.status.detail}</div>
@@ -159,6 +160,8 @@
     gap: 14px;
     align-items: center;
   }
+  .srvlogo { position: relative; display: inline-flex; flex: none; }
+  .srvlogo .dot { position: absolute; right: -3px; bottom: -3px; box-shadow: 0 0 0 2px var(--panel); }
   .stat .pill-icon {
     width: 42px;
     height: 42px;

@@ -1,12 +1,13 @@
 <script>
   import Icon from '../components/Icon.svelte';
+  import ProtoLogo from '../components/ProtoLogo.svelte';
   import PageHead from '../components/PageHead.svelte';
   import Modal from '../components/Modal.svelte';
   import Usage from '../components/Usage.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LimitsForm from '../components/LimitsForm.svelte';
   import { get, post, run } from '../lib/api.js';
-  import { ago, isOnline, rate, PROTO_LABEL, fromDateInput, limitsSummary } from '../lib/format.js';
+  import { ago, isOnline, rate, fromDateInput, limitsSummary } from '../lib/format.js';
   import { go, protocol, toast } from '../lib/state.svelte.js';
 
   let users = $state([]);
@@ -136,7 +137,7 @@
             </td>
             <td>
               <div class="row">
-                {#each u.protocols || [] as p}<span class="badge">{PROTO_LABEL[p] || p}</span>{/each}
+                {#each u.protocols || [] as p}<ProtoLogo id={p} size={20} />{/each}
                 <span class="muted small">{u.devices}</span>
               </div>
             </td>

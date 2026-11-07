@@ -71,8 +71,10 @@
   });
 
   function nice(v) {
-    if (v <= 0) return 1;
-    if (binary && v >= 1024) {
+    // Mindestskala, sonst zeigt ein leeres Diagramm Achsenwerte wie „1 B, 1 B, 0 B“
+    if (binary && v < 1024) return 1024;
+    if (v < 1000) return 1000;
+    if (binary) {
       const b = Math.pow(1024, Math.floor(Math.log(v) / Math.log(1024)));
       return niceDec(v / b) * b;
     }
