@@ -38,6 +38,12 @@ const onlineWindow = 180 // Sekunden
 
 func online(ts int64) bool { return ts > 0 && nowUnix()-ts < onlineWindow }
 
+// liveOnline: Live-Messung der Engine (in New gesetzt).
+var liveOnline = func(int64) bool { return false }
+
+// peerOn: verbunden laut letzter Statistik oder Live-Messung.
+func peerOn(p *store.Peer) bool { return online(p.LastSeen) || liveOnline(p.ID) }
+
 // ---------- Meta & Übersicht ----------
 
 func (a *API) meta(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +87,7 @@ func (a *API) userRows(snap *engine.Snapshot) []*userRow {
 		seen := map[string]bool{}
 		for _, pb := range byUser[u.ID] {
 			row.Devices++
-			if online(pb.Peer.LastSeen) {
+			if peerOn(pb.Peer) {
 				row.Online = true
 			}
 			if pr := proto2[pb.Peer.ServerID]; !seen[pr] {
@@ -107,8 +113,6 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Unix()
 	tu, td, _ := a.St.TrafficSum(day)
 	mu, md, _ := a.St.TrafficSum(month)
-	s24, _ := a.St.TrafficSeries(now.Add(-24*time.Hour).Unix(), 3600, "", 0)
-	s30, _ := a.St.TrafficSeries(now.AddDate(0, 0, -30).Unix(), 86400, "", 0)
 
 	counts := map[string]int{}
 	var totalUp, totalDown int64
@@ -121,7 +125,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 	usersOnline := map[int64]bool{}
 	for _, pb := range snap.Peers {
 		counts["peers"]++
-		if online(pb.Peer.LastSeen) {
+		if peerOn(pb.Peer) {
 			counts["peers_online"]++
 			usersOnline[pb.Peer.UserID] = true
 		}
@@ -138,7 +142,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		}
 		on := 0
 		for _, pb := range sb.Peers {
-			if online(pb.Peer.LastSeen) {
+			if peerOn(pb.Peer) {
 				on++
 			}
 		}
@@ -195,11 +199,10 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 	events, _ := a.St.Events(8, "")
 
 	writeJSON(w, map[string]any{
-		"counts":   counts,
-		"today":    map[string]int64{"up": tu, "down": td},
-		"month":    map[string]int64{"up": mu, "down": md},
-		"total":    map[string]int64{"up": totalUp, "down": totalDown},
-		"series24": s24, "series30": s30,
+		"counts":  counts,
+		"today":   map[string]int64{"up": tu, "down": td},
+		"month":   map[string]int64{"up": mu, "down": md},
+		"total":   map[string]int64{"up": totalUp, "down": totalDown},
 		"servers": orEmptyM(servers), "top": orEmptyT(tops), "alerts": orEmptyA(alerts),
 		"events": events, "errors": a.E.Errors(),
 	})
@@ -346,7 +349,7 @@ type peerRow struct {
 }
 
 func peerRowOf(pb *proto.PeerBundle, sv *store.Server) *peerRow {
-	pr := &peerRow{Peer: pb.Peer, Online: online(pb.Peer.LastSeen), Active: pb.Active, UserName: pb.User.Name}
+	pr := &peerRow{Peer: pb.Peer, Online: peerOn(pb.Peer), Active: pb.Active, UserName: pb.User.Name}
 	if sv != nil {
 		pr.ServerName, pr.Protocol = sv.Name, sv.Protocol
 	}
@@ -487,27 +490,50 @@ func (a *API) newToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"sub_url": a.subURL(r, u)})
 }
 
-func rangeParams(r *http.Request) (since, bucket int64) {
+// rangeParams: feste Zeiträume (range=24h|7d|30d|90d) oder ein Ausschnitt (from/to, Unix-Zeit)
+// zum Hineinzoomen. Die Auflösung richtet sich nach der Länge (feinste Stufe: 1 Stunde).
+func rangeParams(r *http.Request) (since, until, bucket int64) {
 	now := time.Now()
-	switch r.URL.Query().Get("range") {
-	case "7d":
-		return now.AddDate(0, 0, -7).Unix(), 6 * 3600
-	case "30d":
-		return now.AddDate(0, 0, -30).Unix(), 86400
-	case "90d":
-		return now.AddDate(0, 0, -90).Unix(), 86400
+	q := r.URL.Query()
+	if f, err := strconv.ParseInt(q.Get("from"), 10, 64); err == nil && f > 0 {
+		t, err := strconv.ParseInt(q.Get("to"), 10, 64)
+		if err != nil || t <= f || t > now.Unix()+3600 {
+			t = now.Unix()
+		}
+		if f < now.AddDate(-2, 0, 0).Unix() {
+			f = now.AddDate(-2, 0, 0).Unix()
+		}
+		span := t - f
+		switch {
+		case span <= 4*86400:
+			bucket = 3600
+		case span <= 21*86400:
+			bucket = 6 * 3600
+		default:
+			bucket = 86400
+		}
+		return f, t, bucket
 	}
-	return now.Add(-24 * time.Hour).Unix(), 3600
+	until = now.Unix() + 3600
+	switch q.Get("range") {
+	case "7d":
+		return now.AddDate(0, 0, -7).Unix(), until, 6 * 3600
+	case "30d":
+		return now.AddDate(0, 0, -30).Unix(), until, 86400
+	case "90d":
+		return now.AddDate(0, 0, -90).Unix(), until, 86400
+	}
+	return now.Add(-24 * time.Hour).Unix(), until, 3600
 }
 
 func (a *API) series(w http.ResponseWriter, r *http.Request, filter string, id int64) {
-	since, bucket := rangeParams(r)
-	s, err := a.St.TrafficSeries(since, bucket, filter, id)
+	since, until, bucket := rangeParams(r)
+	s, err := a.St.TrafficSeries(since, until, bucket, filter, id)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"bucket": bucket, "since": since, "points": orEmptyT(s)})
+	writeJSON(w, map[string]any{"bucket": bucket, "since": since, "until": until, "points": orEmptyT(s)})
 }
 
 func (a *API) userTraffic(w http.ResponseWriter, r *http.Request) { a.series(w, r, "user", pathID(r)) }
@@ -735,7 +761,7 @@ func (a *API) serverRows(snap *engine.Snapshot) []*serverRow {
 		row.PublicKey = proto.Str(sb.Server.State, "public_key")
 		row.Error = errs[sb.Server.Protocol]
 		for _, pb := range sb.Peers {
-			if online(pb.Peer.LastSeen) {
+			if peerOn(pb.Peer) {
 				row.Online++
 			}
 			row.Up += pb.Peer.TotalUp
@@ -1090,7 +1116,7 @@ func (a *API) system(w http.ResponseWriter, r *http.Request) {
 	for _, sv := range servers {
 		if d, ok := proto.Get(sv.Protocol); ok && sv.Enabled {
 			for _, p := range d.Ports(sv) {
-				ports = append(ports, map[string]any{"server": sv.Name, "port": p.Port, "proto": p.Proto, "note": p.Note})
+				ports = append(ports, map[string]any{"server": sv.Name, "port": p.Port, "to": p.To, "proto": p.Proto, "note": p.Note})
 			}
 		}
 	}

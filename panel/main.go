@@ -5,7 +5,6 @@
 package main
 
 import (
-	"vpnpanel/internal/proto/shaping"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -26,6 +25,7 @@ import (
 	"vpnpanel/internal/api"
 	"vpnpanel/internal/engine"
 	_ "vpnpanel/internal/proto/hysteria2"
+	"vpnpanel/internal/proto/shaping"
 	_ "vpnpanel/internal/proto/vless"
 	_ "vpnpanel/internal/proto/wireguard"
 	"vpnpanel/internal/store"
@@ -44,7 +44,7 @@ func env(k, def string) string {
 
 type opts struct {
 	db, dataDir, listen, direct, hook, cert, key, legacy string
-	proxy, dev, demo                       bool
+	proxy, dev, demo                                     bool
 }
 
 func parseOpts(args []string) (*opts, []string) {
@@ -130,6 +130,7 @@ func serve(args []string) {
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() { e.Run(stop); close(done) }()
+	go e.RunLive(stop)
 
 	secure := o.cert != "" || !o.dev
 	a := api.New(e, webui.FS(), secure, version)

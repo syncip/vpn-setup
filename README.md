@@ -42,6 +42,21 @@ iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 443 -j DNAT --to-destinati
 printf '%s\n' net.core.rmem_max=16777216 net.core.wmem_max=16777216 > /etc/sysctl.d/90-hysteria.conf && sysctl --system
 ```
 
+### Port-Hopping (optional)
+
+Unter Server → Hysteria2 → Erweitert einen UDP-Bereich eintragen, z. B. `20000-50000`. Der Client
+wechselt dann regelmäßig den Zielport (hilft, wenn Anbieter einzelne UDP-Verbindungen drosseln).
+Das Panel leitet den Bereich im Container auf den Hysteria-Port um; auf dem Proxmox-Host muss der
+Bereich an den Container gehen:
+
+```bash
+iptables  -t nat -A PREROUTING -i vmbr0 -p udp --dport 20000:50000 -j DNAT --to-destination 10.10.10.3
+ip6tables -t nat -A PREROUTING -i vmbr0 -d 2001:41d0:203:4a76::10 -p udp --dport 20000:50000 -j DNAT --to-destination fd10:10:10::3
+```
+
+Links bekommen `mport=20000-50000` (Hiddify, NekoBox, v2rayN). Apps ohne Unterstützung nutzen
+weiter den normalen Port.
+
 Die Anmeldung läuft über das Panel (interner Endpunkt `127.0.0.1:8479`). So werden gesperrte
 Nutzer sofort abgewiesen, und gedrosselte Nutzer werden über ihre Client-Adresse begrenzt.
 

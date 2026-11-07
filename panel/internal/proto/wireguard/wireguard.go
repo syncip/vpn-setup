@@ -1139,3 +1139,42 @@ func ImportKey(srv *store.Server, privB64 string) error {
 	srv.State["public_key"] = proto.B64(pub)
 	return nil
 }
+
+// Live: Zählerstände aus „wg show all dump“ (ohne etwas zurückzusetzen).
+func (Driver) Live(env *proto.Env, servers []*proto.ServerBundle) (map[int64]proto.LiveSample, error) {
+	out, err := env.Sys.Run("wg", "show", "all", "dump")
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		rx, tx, hs int64
+		ep         string
+	}
+	rows := map[string]row{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 9 {
+			continue
+		}
+		hs, _ := strconv.ParseInt(f[5], 10, 64)
+		rx, _ := strconv.ParseInt(f[6], 10, 64)
+		tx, _ := strconv.ParseInt(f[7], 10, 64)
+		ep := f[3]
+		if ep == "(none)" {
+			ep = ""
+		}
+		rows[f[0]+"|"+f[1]] = row{rx, tx, hs, ep}
+	}
+	now := time.Now().Unix()
+	res := map[int64]proto.LiveSample{}
+	for _, sb := range servers {
+		sc := load(sb.Server)
+		for _, pb := range sb.Peers {
+			if r, ok := rows[sc.Interface+"|"+proto.Str(pb.Peer.Secrets, "public_key")]; ok {
+				// rx am Server = Upload des Geräts; online = Handshake in den letzten 3 Minuten
+				res[pb.Peer.ID] = proto.LiveSample{Up: r.rx, Down: r.tx, Online: r.hs > 0 && now-r.hs < 180, Endpoint: r.ep}
+			}
+		}
+	}
+	return res, nil
+}

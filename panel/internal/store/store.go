@@ -467,9 +467,12 @@ func (s *Store) AddTraffic(peerID, userID, serverID, ts, up, down int64) error {
 
 // TrafficSeries liefert Summen pro Zeitfenster (bucket Sekunden) ab since.
 // filter: "" | "user" | "server" | "peer" mit id.
-func (s *Store) TrafficSeries(since, bucket int64, filter string, id int64) ([]TrafficPoint, error) {
-	where := "hour >= ?"
-	args := []any{bucket, bucket, since}
+func (s *Store) TrafficSeries(since, until, bucket int64, filter string, id int64) ([]TrafficPoint, error) {
+	if bucket <= 0 {
+		bucket = 3600
+	}
+	where := "hour >= ? AND hour < ?"
+	args := []any{bucket, bucket, since - since%3600, until}
 	switch filter {
 	case "user":
 		where += " AND user_id=?"

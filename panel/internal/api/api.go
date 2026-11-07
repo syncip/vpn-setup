@@ -28,6 +28,7 @@ type API struct {
 }
 
 func New(e *engine.Engine, static fs.FS, secure bool, version string) *API {
+	liveOnline = e.PeerLiveOnline
 	return &API{E: e, St: e.St, Static: static, Secure: secure, Version: version, limiter: newLimiter()}
 }
 
@@ -90,6 +91,7 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("POST /api/system/collect", a.auth(a.collectNow))
 	api.HandleFunc("GET /api/events", a.auth(a.events))
 	api.HandleFunc("GET /api/traffic", a.auth(a.traffic))
+	api.HandleFunc("GET /api/live", a.auth(a.live))
 
 	static := a.staticHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

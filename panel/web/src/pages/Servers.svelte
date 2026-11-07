@@ -108,7 +108,7 @@
             <dd class="row"><code class="ellipsis grow">{s.public_key}</code><button class="btn sm icon ghost" title="Kopieren" onclick={() => copy(s.public_key).then(() => toast('Kopiert'))}><Icon name="copy" size={14} /></button></dd>
           {/if}
           <dt>Port</dt>
-          <dd>{#each s.ports || [] as pt}<span class="badge">{pt.proto.toUpperCase()} {pt.port}</span> {/each}</dd>
+          <dd>{#each s.ports || [] as pt}<span class="badge">{pt.proto.toUpperCase()} {pt.port}{pt.to ? `–${pt.to}` : ''}</span> {/each}</dd>
         </dl>
       </div>
       <div class="actions">

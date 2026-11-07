@@ -76,10 +76,12 @@ type serverCfg struct {
 	Shaping               bool    `json:"shaping"`
 	IdleTimeout           int     `json:"idle_timeout"`
 	DisableMTUDiscovery   bool    `json:"disable_mtu_discovery"`
+	HopPorts              string  `json:"hop_ports"`    // z. B. „20000-50000“, leer = aus
+	HopInterval           int     `json:"hop_interval"` // Sekunden, wie oft der Client den Port wechselt
 }
 
 func defaults() serverCfg {
-	return serverCfg{Port: 443, Masquerade: "https://www.bing.com", IgnoreClientBandwidth: true, Shaping: true, IdleTimeout: 60}
+	return serverCfg{Port: 443, Masquerade: "https://www.bing.com", IgnoreClientBandwidth: true, Shaping: true, IdleTimeout: 60, HopInterval: 30}
 }
 
 func load(srv *store.Server) serverCfg {
@@ -112,6 +114,10 @@ func (Driver) Info() proto.Info {
 				Help: "Nutzt BBR statt „Brutal“. Nötig, damit die Drosselung pro Nutzer sauber greift."},
 			{Key: "shaping", Label: "Geschwindigkeitsbegrenzung", Type: "bool", Default: true, Advanced: true,
 				Help: "Begrenzt Nutzer über ihre Client-Adresse und tc auf der ausgehenden Schnittstelle."},
+			{Key: "hop_ports", Label: "Port-Hopping (UDP-Bereich)", Type: "text", Advanced: true, Placeholder: "aus – z. B. 20000-50000",
+				Help: "Der Client wechselt regelmäßig den Zielport. Hilft, wenn Anbieter eine einzelne UDP-Verbindung drosseln oder kappen. Der Bereich muss auf dem Proxmox-Host per UDP an den Container weitergeleitet werden."},
+			{Key: "hop_interval", Label: "Port-Wechsel alle (Sekunden)", Type: "number", Default: 30, Advanced: true,
+				Help: "Nur für Clients, die das unterstützen (offizieller Client, sing-box/Hiddify)."},
 			{Key: "idle_timeout", Label: "Leerlauf-Timeout (Sekunden)", Type: "number", Default: 60, Advanced: true,
 				Help: "So lange hält der Server eine stille Verbindung offen (4–120). Höher = weniger Abbrüche bei Handys im Standby."},
 			{Key: "disable_mtu_discovery", Label: "Paketgrößen-Erkennung aus", Type: "bool", Default: false, Advanced: true,
@@ -144,10 +150,35 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 			continue
 		}
 		for _, p := range d.Ports(o) {
-			if p.Proto == "udp" && p.Port == c.Port {
+			if p.Proto != "udp" {
+				continue
+			}
+			end := p.To
+			if end == 0 {
+				end = p.Port
+			}
+			if c.Port >= p.Port && c.Port <= end {
 				return fmt.Errorf("UDP-Port %d wird schon von „%s“ verwendet", c.Port, o.Name)
 			}
+			if f, t, err := hopRange(c.HopPorts); err == nil && f > 0 && f <= end && t >= p.Port {
+				return fmt.Errorf("Port-Hopping %d-%d überschneidet sich mit UDP %d von „%s“", f, t, p.Port, o.Name)
+			}
 		}
+	}
+	from, to, err := hopRange(c.HopPorts)
+	if err != nil {
+		return err
+	}
+	if from > 0 {
+		c.HopPorts = fmt.Sprintf("%d-%d", from, to)
+	} else {
+		c.HopPorts = ""
+	}
+	if c.HopInterval == 0 {
+		c.HopInterval = 30
+	}
+	if c.HopInterval < 5 || c.HopInterval > 3600 {
+		return fmt.Errorf("Port-Wechsel %d ungültig (5–3600 Sekunden)", c.HopInterval)
 	}
 	c.SNI = strings.ToLower(strings.TrimSpace(c.SNI))
 	c.Host = strings.TrimSpace(c.Host)
@@ -365,6 +396,9 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 			errs = append(errs, sb.Server.Name+": "+err.Error())
 		}
 	}
+	if err := applyHopping(env, servers); err != nil {
+		errs = append(errs, "Port-Hopping: "+err.Error())
+	}
 	// Entfernte/deaktivierte Instanzen abbauen
 	var prev []string
 	_ = json.Unmarshal([]byte(env.GetState("hy:instances")), &prev)
@@ -484,7 +518,13 @@ func applyServer(env *proto.Env, sb *proto.ServerBundle) error {
 		if c.Shaping && (pb.RateDown > 0 || pb.RateUp > 0) {
 			if as := addrsOf(pb.Peer.ID); len(as) > 0 {
 				// ausgehend = Download des Nutzers, eingehend = Upload
-				env.Shape.Add(shaping.Rule{Key: fmt.Sprintf("hy-p%d", pb.Peer.ID), Egress: pb.RateDown, Ingress: pb.RateUp, Addrs: as, Port: c.Port})
+				// Beim Port-Hopping kommen Pakete auf vielen Ports an (tc sieht sie vor der Umleitung) →
+				// dann alles von/zu der Client-Adresse begrenzen.
+				port := c.Port
+				if f, _, _ := hopRange(c.HopPorts); f > 0 {
+					port = 0
+				}
+				env.Shape.Add(shaping.Rule{Key: fmt.Sprintf("hy-p%d", pb.Peer.ID), Egress: pb.RateDown, Ingress: pb.RateUp, Addrs: as, Port: port})
 			}
 		}
 	}
@@ -584,6 +624,9 @@ func link(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) string {
 		q.Set("insecure", "1")
 		q.Set("pinSHA256", proto.Str(sb.Server.State, "cert_sha256"))
 	}
+	if f, t, err := hopRange(c.HopPorts); err == nil && f > 0 {
+		q.Set("mport", fmt.Sprintf("%d-%d", f, t))
+	}
 	if c.Obfs {
 		q.Set("obfs", "salamander")
 		q.Set("obfs-password", proto.Str(sb.Server.State, "obfs_password"))
@@ -599,8 +642,13 @@ func link(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) string {
 func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (*proto.ClientConfig, error) {
 	c := load(sb.Server)
 	host := fmt.Sprintf("%s:%d", linkHost(env, c), c.Port)
+	hopFrom, hopTo, _ := hopRange(c.HopPorts)
+	server := host
+	if hopFrom > 0 {
+		server = fmt.Sprintf("%s:%d-%d", linkHost(env, c), hopFrom, hopTo)
+	}
 	var y strings.Builder
-	fmt.Fprintf(&y, "# Hysteria2 – %s (%s)\nserver: %s\nauth: %s\ntls:\n  sni: %s\n", oneLine(sb.Server.Name), oneLine(pb.User.Name), host,
+	fmt.Fprintf(&y, "# Hysteria2 – %s (%s)\nserver: %s\nauth: %s\ntls:\n  sni: %s\n", oneLine(sb.Server.Name), oneLine(pb.User.Name), server,
 		proto.Str(pb.Peer.Secrets, "password"), sniOf(env, c))
 	if c.CertFile == "" {
 		fmt.Fprintf(&y, "  insecure: true\n  pinSHA256: %s\n", proto.Str(sb.Server.State, "cert_sha256"))
@@ -608,9 +656,12 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	if c.Obfs {
 		fmt.Fprintf(&y, "obfs:\n  type: salamander\n  salamander:\n    password: %s\n", proto.Str(sb.Server.State, "obfs_password"))
 	}
+	if hopFrom > 0 {
+		fmt.Fprintf(&y, "transport:\n  udp:\n    hopInterval: %ds\n", c.HopInterval)
+	}
 	y.WriteString("socks5:\n  listen: 127.0.0.1:1080\nhttp:\n  listen: 127.0.0.1:8080\n")
 	info := [][2]string{
-		{"Server", host + " (UDP)"},
+		{"Server", server + " (UDP)"},
 		{"Passwort", proto.Str(pb.Peer.Secrets, "password")},
 		{"SNI", sniOf(env, c)},
 	}
@@ -649,7 +700,27 @@ func (Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerB
 }
 
 func (Driver) Ports(srv *store.Server) []proto.Port {
-	return []proto.Port{{Port: load(srv).Port, Proto: "udp", Note: "Hysteria2 " + srv.Name}}
+	c := load(srv)
+	out := []proto.Port{{Port: c.Port, Proto: "udp", Note: "Hysteria2 " + srv.Name}}
+	if f, t, err := hopRange(c.HopPorts); err == nil && f > 0 {
+		out = append(out, proto.Port{Port: f, To: t, Proto: "udp", Note: "Hysteria2 Port-Hopping " + srv.Name})
+	}
+	return out
+}
+
+// hopRange: „20000-50000“ → 20000, 50000 (leer → 0, 0).
+func hopRange(v string) (from, to int, err error) {
+	v = strings.TrimSpace(strings.ReplaceAll(v, ":", "-"))
+	if v == "" {
+		return 0, 0, nil
+	}
+	a, b, ok := strings.Cut(v, "-")
+	from, err1 := strconv.Atoi(strings.TrimSpace(a))
+	to, err2 := strconv.Atoi(strings.TrimSpace(b))
+	if !ok || err1 != nil || err2 != nil || from < 1024 || to > 65535 || to <= from {
+		return 0, 0, fmt.Errorf("Port-Hopping: bitte einen Bereich wie 20000-50000 (1024–65535)")
+	}
+	return from, to, nil
 }
 
 func (Driver) Status(env *proto.Env, srv *store.Server) proto.Status {
@@ -670,4 +741,85 @@ func idle(s int) int {
 		return 60
 	}
 	return s
+}
+
+// Live: trafficStats ohne Zurücksetzen plus Liste der verbundenen Zugänge.
+func (Driver) Live(env *proto.Env, servers []*proto.ServerBundle) (map[int64]proto.LiveSample, error) {
+	if env.Sys.DryRun() {
+		return nil, nil
+	}
+	res := map[int64]proto.LiveSample{}
+	var errs []string
+	for _, sb := range servers {
+		if !sb.Server.Enabled {
+			continue
+		}
+		var traffic map[string]struct{ Tx, Rx int64 }
+		if err := statsCall(sb.Server, "GET", "/traffic", nil, &traffic); err != nil {
+			errs = append(errs, sb.Server.Name+": "+err.Error())
+			continue
+		}
+		var online map[string]int
+		_ = statsCall(sb.Server, "GET", "/online", nil, &online)
+		for _, pb := range sb.Peers {
+			id := peerID(pb.Peer)
+			t, ok := traffic[id]
+			if ok || online[id] > 0 {
+				res[pb.Peer.ID] = proto.LiveSample{Up: t.Tx, Down: t.Rx, Online: online[id] > 0}
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return res, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return res, nil
+}
+
+// applyHopping: Port-Hopping – eingehende UDP-Pakete im Bereich auf den Port der Instanz
+// umleiten (iptables/ip6tables REDIRECT, eigene Kette VPNHY in der nat-Tabelle).
+func applyHopping(env *proto.Env, servers []*proto.ServerBundle) error {
+	sys := env.Sys
+	dev := env.Global.OutIf
+	if dev == "" {
+		dev = "eth0"
+	}
+	var rules []string
+	for _, sb := range servers {
+		if !sb.Server.Enabled {
+			continue
+		}
+		c := load(sb.Server)
+		if f, t, err := hopRange(c.HopPorts); err == nil && f > 0 {
+			rules = append(rules, fmt.Sprintf("-A VPNHY -i %s -p udp -m udp --dport %d:%d -j REDIRECT --to-ports %d", dev, f, t, c.Port))
+		}
+	}
+	sort.Strings(rules)
+	// immer setzen (billig) – nach einem Neustart des Containers sind die Regeln weg
+	sig := strings.Join(rules, "\n")
+	changed := env.GetState("hy:hop") != sig
+	if !changed && len(rules) == 0 {
+		return nil
+	}
+	for _, bin := range []string{"iptables", "ip6tables"} {
+		if len(rules) == 0 {
+			_, _ = sys.Run(bin, "-t", "nat", "-D", "PREROUTING", "-j", "VPNHY")
+			_, _ = sys.Run(bin, "-t", "nat", "-F", "VPNHY")
+			_, _ = sys.Run(bin, "-t", "nat", "-X", "VPNHY")
+			continue
+		}
+		rs := "*nat\n:VPNHY - [0:0]\n-F VPNHY\n" + strings.Join(rules, "\n") + "\nCOMMIT\n"
+		if _, err := sys.RunInput(rs, bin+"-restore", "-n"); err != nil {
+			return fmt.Errorf("%s: %w", bin, err)
+		}
+		if _, err := sys.Run(bin, "-t", "nat", "-C", "PREROUTING", "-j", "VPNHY"); err != nil {
+			if _, err := sys.Run(bin, "-t", "nat", "-I", "PREROUTING", "-j", "VPNHY"); err != nil {
+				return fmt.Errorf("%s: %w", bin, err)
+			}
+		}
+	}
+	env.SetState("hy:hop", sig)
+	if changed && len(rules) > 0 {
+		env.Log("info", fmt.Sprintf("Hysteria2 Port-Hopping aktiv (%d Bereich(e))", len(rules)))
+	}
+	return nil
 }

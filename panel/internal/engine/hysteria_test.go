@@ -149,3 +149,57 @@ func TestHysteria2(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// Port-Hopping: Umleitung im Container, Link mit mport, Kollision mit WireGuard erkannt.
+func TestHysteria2PortHopping(t *testing.T) {
+	e, dry := newTest(t)
+	e.Cfg.HookAddr = "127.0.0.1:8479"
+	wg := &store.Server{Name: "WG", Protocol: "wireguard", Enabled: true, Settings: store.M{}}
+	if err := e.InitServer(wg); err != nil {
+		t.Fatal(err)
+	}
+	_ = e.St.SaveServer(wg)
+	bad := &store.Server{Name: "x", Protocol: "hysteria2", Enabled: true, Settings: store.M{"hop_ports": "50000-52000"}}
+	if err := e.InitServer(bad); err == nil {
+		t.Errorf("Überschneidung mit WireGuard 51820 nicht erkannt")
+	}
+	bad.Settings = store.M{"hop_ports": "kaputt"}
+	if err := e.InitServer(bad); err == nil {
+		t.Errorf("ungültiger Bereich akzeptiert")
+	}
+	hy := &store.Server{Name: "Hop", Protocol: "hysteria2", Enabled: true, Settings: store.M{"hop_ports": "20000:40000"}}
+	if err := e.InitServer(hy); err != nil {
+		t.Fatal(err)
+	}
+	if hy.Settings["hop_ports"] != "20000-40000" {
+		t.Errorf("Bereich nicht vereinheitlicht: %v", hy.Settings["hop_ports"])
+	}
+	_ = e.St.SaveServer(hy)
+	u := &store.User{Name: "u", Enabled: true, SubToken: proto.RandHex(16)}
+	_ = e.St.SaveUser(u)
+	p := &store.Peer{UserID: u.ID, ServerID: hy.ID, Name: "u", Enabled: true, Settings: store.M{}}
+	_ = e.InitPeer(hy, p)
+	_ = e.St.SavePeer(p)
+	if err := e.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if in := dry.Inputs["ip6tables-restore"]; !strings.Contains(in, "-A VPNHY -i eth0 -p udp -m udp --dport 20000:40000 -j REDIRECT --to-ports 443") {
+		t.Errorf("Umleitung fehlt:\n%s", in)
+	}
+	links, _ := e.SubLinks(u.ID)
+	if len(links) != 1 || !strings.Contains(links[0], "mport=20000-40000") || !strings.Contains(links[0], ":443/") {
+		t.Errorf("Link ohne mport: %v", links)
+	}
+	cc, _ := e.ClientConfig(p.ID)
+	if !strings.Contains(cc.Files[0].Content, ":20000-40000\n") || !strings.Contains(cc.Files[0].Content, "hopInterval: 30s") {
+		t.Errorf("Client-Datei ohne Port-Hopping:\n%s", cc.Files[0].Content)
+	}
+	// Aus → Regeln weg
+	hy.Settings["hop_ports"] = ""
+	_ = e.InitServer(hy)
+	_ = e.St.SaveServer(hy)
+	_ = e.Apply()
+	if !strings.Contains(strings.Join(dry.Log(), "\n"), "iptables -t nat -D PREROUTING -j VPNHY") {
+		t.Errorf("Umleitung nicht entfernt")
+	}
+}

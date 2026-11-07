@@ -115,3 +115,25 @@ export function download(name, content) {
 
 // Tiefe Kopie (funktioniert auch mit Svelte-State-Proxies, anders als structuredClone)
 export const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
+
+// speed: Bytes pro Sekunde → bit/s mit passender Einheit
+export function speed(bps) {
+  let b = (Number(bps) || 0) * 8;
+  const u = ['bit/s', 'kbit/s', 'Mbit/s', 'Gbit/s'];
+  let i = 0;
+  while (b >= 1000 && i < u.length - 1) {
+    b /= 1000;
+    i++;
+  }
+  const d = i === 0 ? 0 : b < 10 ? 2 : b < 100 ? 1 : 0;
+  return b.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d }) + ' ' + u[i];
+}
+
+// duration: Sekunden → „2 Std. 5 Min.“
+export function duration(s) {
+  s = Math.max(0, Math.floor(s));
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} Min.`;
+  if (s < 86400) return `${Math.floor(s / 3600)} Std. ${Math.floor((s % 3600) / 60)} Min.`;
+  return `${Math.floor(s / 86400)} T. ${Math.floor((s % 86400) / 3600)} Std.`;
+}

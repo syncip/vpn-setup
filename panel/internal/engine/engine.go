@@ -33,10 +33,14 @@ type Engine struct {
 	applyCh chan struct{}
 	lastErr map[string]string
 	errMu   sync.Mutex
+
+	live     liveState
+	liveKick chan struct{}
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
-	return &Engine{St: st, Sys: sys, Cfg: cfg, applyCh: make(chan struct{}, 1), lastErr: map[string]string{}}
+	return &Engine{St: st, Sys: sys, Cfg: cfg, applyCh: make(chan struct{}, 1), lastErr: map[string]string{},
+		liveKick: make(chan struct{}, 1)}
 }
 
 // ---------- Einstellungen ----------
@@ -196,6 +200,9 @@ func (e *Engine) applyLocked() error {
 		return err
 	}
 	e.saveVerdicts(snap)
+	e.live.mu.Lock()
+	e.live.snap = nil // Live-Anzeige: Namen/Zugänge neu laden
+	e.live.mu.Unlock()
 	env := e.Env()
 	var errs []string
 	for _, d := range proto.All() {

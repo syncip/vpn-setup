@@ -1,13 +1,14 @@
 <script>
   import Icon from '../components/Icon.svelte';
-  import Chart from '../components/Chart.svelte';
+  import TrafficPanel from '../components/TrafficPanel.svelte';
+  import LivePanel from '../components/LivePanel.svelte';
   import PageHead from '../components/PageHead.svelte';
   import { get } from '../lib/api.js';
   import { bytes, date } from '../lib/format.js';
   import { protocol } from '../lib/state.svelte.js';
 
   let d = $state(null);
-  let range = $state('24h');
+  let refresh = $state(0);
   let err = $state('');
 
   async function load() {
@@ -24,14 +25,13 @@
     return () => clearInterval(t);
   });
 
-  const series = $derived(range === '24h' ? { points: d?.series24 || [], bucket: 3600, since: Date.now() / 1000 - 86400 } : { points: d?.series30 || [], bucket: 86400, since: Date.now() / 1000 - 30 * 86400 });
   const topMax = $derived(Math.max(1, ...(d?.top || []).map((t) => t.up + t.down)));
   const alertTone = { blocked: 'bad', expired: 'bad', throttled: 'warn', limit: 'warn', expiring: 'warn' };
   const alertIcon = { blocked: 'lock', expired: 'clock', throttled: 'gauge', limit: 'alert', expiring: 'calendar' };
 </script>
 
 <PageHead title="Übersicht" subtitle="Alles auf einen Blick">
-  <button class="btn" onclick={load}><Icon name="refresh" size={16} /> Aktualisieren</button>
+  <button class="btn" onclick={() => (load(), refresh++)}><Icon name="refresh" size={16} /> Aktualisieren</button>
 </PageHead>
 
 {#if err}<div class="notice bad">{err}</div>{/if}
@@ -47,19 +47,21 @@
     </div>
   {/if}
 
-  <div class="grid cols-4">
+  <LivePanel />
+
+  <div class="grid cols-4" style="margin-top:16px">
     <div class="card card-pad stat">
       <div class="pill-icon"><Icon name="users" /></div>
       <div>
-        <div class="muted small">Nutzer online</div>
-        <div class="big">{d.counts.users_online || 0}<span class="muted"> / {d.counts.users || 0}</span></div>
+        <div class="muted small">Nutzer gesamt</div>
+        <div class="big">{d.counts.users || 0}<span class="muted">{' · '}{d.counts.peers || 0} Zugänge</span></div>
       </div>
     </div>
     <div class="card card-pad stat">
-      <div class="pill-icon"><Icon name="phone" /></div>
+      <div class="pill-icon"><Icon name="server" /></div>
       <div>
-        <div class="muted small">Zugänge verbunden</div>
-        <div class="big">{d.counts.peers_online || 0}<span class="muted"> / {d.counts.peers || 0}</span></div>
+        <div class="muted small">Server</div>
+        <div class="big">{d.counts.servers || 0}</div>
       </div>
     </div>
     <div class="card card-pad stat">
@@ -79,16 +81,7 @@
   </div>
 
   <div class="grid main-grid" style="margin-top:16px">
-    <div class="card">
-      <div class="card-head">
-        <h2>Traffic</h2>
-        <div class="segmented">
-          <button class:active={range === '24h'} onclick={() => (range = '24h')}>24 Stunden</button>
-          <button class:active={range === '30d'} onclick={() => (range = '30d')}>30 Tage</button>
-        </div>
-      </div>
-      <div class="card-pad"><Chart {...series} height={210} /></div>
-    </div>
+    <TrafficPanel url="/traffic" {refresh} />
 
     <div class="card">
       <div class="card-head"><h2>Server</h2><a href="#/servers" class="small">Alle</a></div>

@@ -130,6 +130,7 @@ type Port struct {
 	Port  int    `json:"port"`
 	Proto string `json:"proto"` // udp | tcp
 	Note  string `json:"note"`
+	To    int    `json:"to,omitempty"` // Ende eines Portbereichs (z. B. Port-Hopping), 0 = einzelner Port
 }
 
 type Status struct {
@@ -241,4 +242,17 @@ func UUID() string {
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// LiveSample: aktueller Zählerstand eines Zugangs (beliebiger Nullpunkt – die Engine bildet
+// Differenzen; fällt ein Zähler, wurde er zurückgesetzt).
+type LiveSample struct {
+	Up, Down int64
+	Online   bool   // sicher verbunden (Handshake/Sitzung); sonst zählt Aktivität
+	Endpoint string // öffentliche Adresse, wenn bekannt
+}
+
+// LiveReader: optional – schnelle Zählerabfrage ohne Zurücksetzen (für die Live-Anzeige).
+type LiveReader interface {
+	Live(env *Env, servers []*ServerBundle) (map[int64]LiveSample, error)
 }

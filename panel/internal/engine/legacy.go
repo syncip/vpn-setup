@@ -19,27 +19,27 @@ import (
 // und Statistik bleiben erhalten, bestehende Clients funktionieren unverändert weiter.
 
 type legacyUser struct {
-	UUID       string `json:"uuid"`
-	N          int    `json:"n"`
-	WGPriv     string `json:"wg_priv"`
-	WGPub      string `json:"wg_pub"`
-	PSK        string `json:"psk"`
-	Created    string `json:"created"`
-	VlessUp    int64  `json:"vless_up"`
-	VlessDown  int64  `json:"vless_down"`
-	WGRx       int64  `json:"wg_rx"`
-	WGTx       int64  `json:"wg_tx"`
-	WGLastRx   int64  `json:"wg_last_rx"`
-	WGLastTx   int64  `json:"wg_last_tx"`
-	WGHS       int64  `json:"wg_handshake"`
-	VlessSeen  int64  `json:"vless_seen"`
-	Sub        string `json:"sub"`
+	UUID      string `json:"uuid"`
+	N         int    `json:"n"`
+	WGPriv    string `json:"wg_priv"`
+	WGPub     string `json:"wg_pub"`
+	PSK       string `json:"psk"`
+	Created   string `json:"created"`
+	VlessUp   int64  `json:"vless_up"`
+	VlessDown int64  `json:"vless_down"`
+	WGRx      int64  `json:"wg_rx"`
+	WGTx      int64  `json:"wg_tx"`
+	WGLastRx  int64  `json:"wg_last_rx"`
+	WGLastTx  int64  `json:"wg_last_tx"`
+	WGHS      int64  `json:"wg_handshake"`
+	VlessSeen int64  `json:"vless_seen"`
+	Sub       string `json:"sub"`
 }
 
 var (
-	envLine  = regexp.MustCompile(`^([A-Z0-9_]+)=(.*)$`)
-	arrayRe  = regexp.MustCompile(`\[\d+\]="((?:[^"\\]|\\.)*)"`)
-	tokenRe  = regexp.MustCompile(`^[a-f0-9]{32}$`)
+	envLine = regexp.MustCompile(`^([A-Z0-9_]+)=(.*)$`)
+	arrayRe = regexp.MustCompile(`\[\d+\]="((?:[^"\\]|\\.)*)"`)
+	tokenRe = regexp.MustCompile(`^[a-f0-9]{32}$`)
 )
 
 func parseEnv(data string) (map[string]string, []string) {

@@ -259,7 +259,7 @@
           <table class="table">
             <tbody>
               {#each sys.ports as p}
-                <tr><td><span class="badge">{p.proto.toUpperCase()} {p.port}</span></td><td class="small">{p.server}</td><td class="small muted">{p.note}</td></tr>
+                <tr><td><span class="badge">{p.proto.toUpperCase()} {p.port}{p.to ? `–${p.to}` : ''}</span></td><td class="small">{p.server}</td><td class="small muted">{p.note}</td></tr>
               {/each}
             </tbody>
           </table>

@@ -1,7 +1,8 @@
 <script>
   import Icon from '../components/Icon.svelte';
   import Modal from '../components/Modal.svelte';
-  import Chart from '../components/Chart.svelte';
+  import TrafficPanel from '../components/TrafficPanel.svelte';
+  import LivePanel from '../components/LivePanel.svelte';
   import Usage from '../components/Usage.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LimitsForm from '../components/LimitsForm.svelte';
@@ -18,8 +19,7 @@
   let plans = $state([]);
   let servers = $state([]);
   let tab = $state('overview');
-  let range = $state('24h');
-  let traffic = $state({ points: [], bucket: 3600, since: 0 });
+  let liveOn = $state(0);
 
   async function load() {
     [d, plans, servers] = await Promise.all([get(`/users/${id}`), get('/plans'), get('/servers')]);
@@ -27,10 +27,6 @@
   }
   load().catch((e) => toast(e.message, 'error'));
 
-  $effect(() => {
-    const r = range;
-    get(`/users/${id}/traffic?range=${r}`).then((t) => (traffic = t));
-  });
 
   const u = $derived(d?.user);
   const byServer = $derived.by(() => {
@@ -112,7 +108,6 @@
 
   const kindIcon = { client: 'phone', server: 'server', site: 'network', access: 'key' };
   const kindLabel = (proto, kind) => protocol(proto)?.kinds?.find((k) => k.id === kind)?.label || kind;
-  const ranges = [['24h', '24 Std.'], ['7d', '7 Tage'], ['30d', '30 Tage'], ['90d', '90 Tage']];
 </script>
 
 {#if u}
@@ -160,19 +155,12 @@
       </div>
       <div class="card card-pad">
         <div class="muted small">Zuletzt da</div>
-        <div class="big row"><span class="dot" class:on={isOnline(u.last_seen)}></span>{ago(u.last_seen)}</div>
+        <div class="big row"><span class="dot" class:on={liveOn > 0 || isOnline(u.last_seen)}></span>{liveOn > 0 ? 'online' : ago(u.last_seen)}</div>
         <div class="muted tiny">{u.devices} Zugänge</div>
       </div>
     </div>
-    <div class="card" style="margin-top:16px">
-      <div class="card-head">
-        <h2>Traffic</h2>
-        <div class="segmented">
-          {#each ranges as [k, l]}<button class:active={range === k} onclick={() => (range = k)}>{l}</button>{/each}
-        </div>
-      </div>
-      <div class="card-pad"><Chart points={traffic.points} bucket={traffic.bucket} since={traffic.since} /></div>
-    </div>
+    <div style="margin-top:16px"><LivePanel user={id} compact bind:connected={liveOn} /></div>
+    <div style="margin-top:16px"><TrafficPanel url={`/users/${id}/traffic`} /></div>
   {:else if tab === 'peers'}
     <div class="spread" style="margin-bottom:12px">
       <div class="muted small">Jeder Zugang ist ein Gerät (WireGuard) bzw. eine Kennung (VLESS, Hysteria2). Limits gelten für den Nutzer.</div>

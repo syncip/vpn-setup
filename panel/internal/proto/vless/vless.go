@@ -502,3 +502,51 @@ func ImportKeys(srv *store.Server, priv, pub, sid string) error {
 	}
 	return nil
 }
+
+// Live: Xray-Zähler ohne Zurücksetzen (Collect setzt sie alle paar Sekunden/Minuten zurück –
+// die Engine erkennt das am fallenden Zähler).
+func (Driver) Live(env *proto.Env, servers []*proto.ServerBundle) (map[int64]proto.LiveSample, error) {
+	if len(layout(servers)) == 0 {
+		return nil, nil
+	}
+	out, err := env.Sys.Run("xray", "api", "statsquery", "--server="+env.Global.XrayAPI, "-pattern", "user>>>")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return nil, err
+	}
+	var resp struct {
+		Stat []struct {
+			Name  string          `json:"name"`
+			Value json.RawMessage `json:"value"`
+		} `json:"stat"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return nil, fmt.Errorf("Xray-Statistik lesen: %w", err)
+	}
+	byEmail := map[string]*proto.LiveSample{}
+	for _, s := range resp.Stat {
+		f := strings.Split(s.Name, ">>>")
+		if len(f) != 4 {
+			continue
+		}
+		v, _ := strconv.ParseInt(strings.Trim(string(s.Value), `"`), 10, 64)
+		u := byEmail[f[1]]
+		if u == nil {
+			u = &proto.LiveSample{}
+			byEmail[f[1]] = u
+		}
+		if f[3] == "uplink" {
+			u.Up += v
+		} else {
+			u.Down += v
+		}
+	}
+	res := map[int64]proto.LiveSample{}
+	for _, sb := range servers {
+		for _, pb := range sb.Peers {
+			if u := byEmail[email(pb.Peer)]; u != nil {
+				res[pb.Peer.ID] = *u
+			}
+		}
+	}
+	return res, nil
+}
