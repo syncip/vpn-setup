@@ -295,6 +295,7 @@ func listenAddr(env *proto.Env, port int) string {
 }
 
 func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
+	setLog(env.Log)
 	mgr.Lock()
 	defer mgr.Unlock()
 	var errs []string
@@ -494,14 +495,30 @@ func acceptLoop(in *instance, ln net.Listener, isHTTP bool) {
 		}
 		ip := addrOf(c)
 		mgr.Lock()
-		ok := mgr.inst[in.id] == in && mgr.total < maxTotal && mgr.perIP[ip] < maxPerIP && in.acl.Allowed(ip) && !banned(ip)
-		if ok {
+		kind, why := "", ""
+		switch {
+		case mgr.inst[in.id] != in:
+			kind = "stop" // Server wird gerade abgebaut – nicht melden
+		case !in.acl.Allowed(ip):
+			kind, why = "acl", "durch eine IP-Liste gesperrt"
+		case banned(ip):
+			kind = "ban"
+			why = fmt.Sprintf("nach zu vielen Fehlversuchen gesperrt (noch %d Min.)", int(time.Until(mgr.fails[ip].until).Minutes())+1)
+		case mgr.perIP[ip] >= maxPerIP:
+			kind, why = "perip", fmt.Sprintf("zu viele gleichzeitige Verbindungen von dieser Adresse (max. %d)", maxPerIP)
+		case mgr.total >= maxTotal:
+			kind, why = "total", fmt.Sprintf("Verbindungsgrenze des Proxys erreicht (max. %d)", maxTotal)
+		default:
 			mgr.total++
 			mgr.perIP[ip]++
 		}
+		name := in.name
 		mgr.Unlock()
-		if !ok {
+		if kind != "" {
 			_ = c.Close()
+			if why != "" {
+				note("warn", ip.String()+"|"+kind, fmt.Sprintf("Proxy „%s“: Verbindung von %s abgelehnt – %s", name, ip, why))
+			}
 			continue
 		}
 		go func() {
@@ -533,7 +550,32 @@ func banned(ip netip.Addr) bool {
 	return f != nil && time.Now().Before(f.until)
 }
 
-func authFailed(ip netip.Addr) {
+// loginFailed: fehlgeschlagene Anmeldung melden. Richtige Zugangsdaten eines gesperrten oder
+// deaktivierten Zugangs zählen nicht als Fehlversuch (kein Erraten) – sonst sperrt sich ein
+// Fernseher, der es weiter versucht, nach Ablauf seines Zugangs auch für andere Zugänge aus.
+func (in *instance) loginFailed(ip netip.Addr, user, pass, via string) {
+	mgr.Lock()
+	name := in.name
+	var off *peerRT
+	for _, rt := range mgr.peers {
+		if rt.srv == in.id && !rt.active && rt.user == user && subtle.ConstantTimeCompare([]byte(rt.pass), []byte(pass)) == 1 {
+			off = rt
+			break
+		}
+	}
+	mgr.Unlock()
+	if off != nil {
+		note("warn", ip.String()+"|off|"+user, fmt.Sprintf("Proxy „%s“: Anmeldung von %s (%s) mit Zugang „%s“ abgewiesen – Zugang gesperrt, abgelaufen oder über dem Limit", name, ip, via, user))
+		return
+	}
+	note("info", ip.String()+"|auth", fmt.Sprintf("Proxy „%s“: Anmeldung von %s (%s) fehlgeschlagen – falscher Benutzername oder falsches Passwort", name, ip, via))
+	if authFailed(ip) {
+		note("warn", ip.String()+"|banstart", fmt.Sprintf("Proxy „%s“: %s nach %d Fehlversuchen für %d Minuten gesperrt", name, ip, failMax, int(failBan.Minutes())))
+	}
+}
+
+// authFailed zählt einen Fehlversuch; true = Sperre hat gerade begonnen.
+func authFailed(ip netip.Addr) bool {
 	mgr.Lock()
 	defer mgr.Unlock()
 	now := time.Now()
@@ -553,6 +595,7 @@ func authFailed(ip netip.Addr) {
 			}
 		}
 	}
+	return f.n == failMax
 }
 
 // login prüft Benutzername/Passwort (Zeit-konstant).
@@ -858,20 +901,22 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 			return
 		}
 		if rt = in.login(string(u), string(p)); rt == nil {
-			authFailed(ip)
 			_, _ = c.Write([]byte{1, 1})
+			in.loginFailed(ip, string(u), string(p), "SOCKS5")
 			return
 		}
 		_, _ = c.Write([]byte{1, 0})
 	case hasNone:
+		// Ohne Zugangsdaten lässt sich kein Passwort erraten → kein Fehlversuch für die Sperre
 		if rt = in.bySource(ip); rt == nil {
 			_, _ = c.Write([]byte{5, 0xff})
-			authFailed(ip)
+			in.notice(ip, "noauth", "SOCKS5 ohne Benutzername/Passwort, und die Adresse gehört zu keinem Zugang mit „Anmeldung per IP“")
 			return
 		}
 		_, _ = c.Write([]byte{5, 0})
 	default:
 		_, _ = c.Write([]byte{5, 0xff})
+		in.notice(ip, "method", "der SOCKS5-Client bietet keine unterstützte Anmeldeart an")
 		return
 	}
 	req := make([]byte, 4)
@@ -881,6 +926,9 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 	reply := func(code byte) { _, _ = c.Write([]byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0}) }
 	if req[1] != 1 { // nur CONNECT
 		reply(7)
+		if req[1] == 3 {
+			in.notice(ip, "udp", "der Client verlangt UDP (UDP ASSOCIATE) – der Proxy leitet nur TCP weiter")
+		}
 		return
 	}
 	var host string
@@ -903,6 +951,7 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 		host = string(a)
 	default: // IPv6 wird nicht unterstützt
 		reply(8)
+		in.notice(ip, "v6", "Ziel ist eine IPv6-Adresse; der Proxy kann nur IPv4 – im Client die Namensauflösung über den Proxy einschalten (bei curl socks5h://)")
 		return
 	}
 	pb := make([]byte, 2)
@@ -913,6 +962,7 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 	t := in.track(c, rt, ip)
 	if t == nil {
 		reply(2)
+		in.limitHit(ip, rt)
 		return
 	}
 	m.rt = rt
@@ -964,12 +1014,13 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 			return
 		}
 		// Anmeldung (bei jeder Anfrage dieselbe)
-		who := in.authHTTP(req, ip)
+		who, u, p := in.authHTTP(req, ip)
 		if who == nil {
-			if req.Header.Get("Proxy-Authorization") != "" {
-				authFailed(ip)
-			}
+			// ohne Zugangsdaten ist 407 der normale erste Schritt (Browser fragen dann nach) → nicht melden
 			writeStatus(c, http.StatusProxyAuthRequired, "Proxy-Authenticate: Basic realm=\"Proxy\"\r\n")
+			if req.Header.Get("Proxy-Authorization") != "" {
+				in.loginFailed(ip, u, p, "HTTP")
+			}
 			return
 		}
 		if rt != nil && who != rt {
@@ -979,6 +1030,7 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 			rt = who
 			if t = in.track(c, rt, ip); t == nil {
 				writeStatus(c, http.StatusTooManyRequests, "")
+				in.limitHit(ip, rt)
 				return
 			}
 			m.rt = rt
@@ -1027,24 +1079,41 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 	}
 }
 
-func (in *instance) authHTTP(req *http.Request, ip netip.Addr) *peerRT {
+// authHTTP liefert den Zugang (nil = abgelehnt) und die gesendeten Zugangsdaten (für die Meldung).
+func (in *instance) authHTTP(req *http.Request, ip netip.Addr) (*peerRT, string, string) {
 	h := req.Header.Get("Proxy-Authorization")
 	if h == "" {
-		return in.bySource(ip)
+		return in.bySource(ip), "", ""
 	}
 	scheme, val, ok := strings.Cut(h, " ")
 	if !ok || !strings.EqualFold(scheme, "Basic") {
-		return nil
+		return nil, "", ""
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(val))
 	if err != nil {
-		return nil
+		return nil, "", ""
 	}
 	u, p, ok := strings.Cut(string(raw), ":")
 	if !ok {
-		return nil
+		return nil, "", ""
 	}
-	return in.login(u, p)
+	return in.login(u, p), u, p
+}
+
+// notice: abgelehnte Verbindung melden (gedrosselt, siehe notes.go).
+func (in *instance) notice(ip netip.Addr, kind, why string) {
+	mgr.Lock()
+	name := in.name
+	mgr.Unlock()
+	note("info", ip.String()+"|"+kind, fmt.Sprintf("Proxy „%s“: Verbindung von %s abgelehnt – %s", name, ip, why))
+}
+
+// limitHit: Zugang hat seine Höchstzahl gleichzeitiger Verbindungen erreicht.
+func (in *instance) limitHit(ip netip.Addr, rt *peerRT) {
+	mgr.Lock()
+	name, user, max := in.name, rt.user, in.cfg.MaxConns
+	mgr.Unlock()
+	note("warn", ip.String()+"|limit|"+user, fmt.Sprintf("Proxy „%s“: Zugang „%s“ hat die Höchstzahl gleichzeitiger Verbindungen erreicht (%d) – weitere von %s abgelehnt", name, user, max, ip))
 }
 
 func dialStatus(err error) int {

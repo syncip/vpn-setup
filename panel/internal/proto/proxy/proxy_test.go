@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -230,5 +231,175 @@ func TestInitPeerSourceIPs(t *testing.T) {
 	}
 	if len(proto.Str(p.Secrets, "password")) != 24 || !strings.HasPrefix(proto.Str(p.Secrets, "username"), "u") {
 		t.Fatal("Zugangsdaten fehlen")
+	}
+}
+
+// TestNotes: abgelehnte Verbindungen und Anmeldungen landen (gedrosselt) im Ereignisprotokoll,
+// nur echte Fehlversuche zählen für die Sperre.
+func TestNotes(t *testing.T) {
+	f := setup(t)
+	var mu sync.Mutex
+	var logs []string
+	f.env.Log = func(level, msg string) { mu.Lock(); logs = append(logs, level+" "+msg); mu.Unlock() }
+	resetNotes()
+	lo := netip.MustParseAddr("127.0.0.1")
+	reset := func() {
+		mgr.Lock()
+		delete(mgr.fails, lo)
+		mgr.Unlock()
+		resetNotes()
+		mu.Lock()
+		logs = nil
+		mu.Unlock()
+	}
+	reset()
+	if err := (Driver{}).Apply(f.env, []*proto.ServerBundle{f.sb}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reset)
+	has := func(s string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, l := range logs {
+			if strings.Contains(l, s) {
+				return true
+			}
+		}
+		return false
+	}
+	count := func(s string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, l := range logs {
+			if strings.Contains(l, s) {
+				n++
+			}
+		}
+		return n
+	}
+	fails := func() int {
+		mgr.Lock()
+		defer mgr.Unlock()
+		if r := mgr.fails[lo]; r != nil {
+			return r.n
+		}
+		return 0
+	}
+	noAuth := func() {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", f.socks))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+		_, _ = c.Write([]byte{5, 1, 0})
+		b := make([]byte, 2)
+		if _, err := io.ReadFull(c, b); err != nil || b[1] != 0xff {
+			t.Fatalf("ohne Anmeldung: %v %v", b, err)
+		}
+	}
+	// SOCKS5 ohne Zugangsdaten: Meldung, aber kein Fehlversuch – mehrfach nur eine Meldung
+	for i := 0; i < 15; i++ {
+		noAuth()
+	}
+	time.Sleep(100 * time.Millisecond)
+	if fails() != 0 || count("ohne Benutzername/Passwort") != 1 {
+		t.Fatalf("ohne Anmeldung: Fehlversuche=%d Meldungen=%d %v", fails(), count("ohne Benutzername/Passwort"), logs)
+	}
+	// richtiges Passwort eines gesperrten Zugangs: Meldung mit Grund, kein Fehlversuch
+	u2, p2 := creds(f.sb.Peers[1])
+	if _, err := socksGet(t, f.socks, u2, p2, "example.com:80"); err == nil {
+		t.Fatal("gesperrter Zugang angenommen")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if fails() != 0 || !has("Zugang „"+u2+"“ abgewiesen – Zugang gesperrt") {
+		t.Fatalf("gesperrter Zugang: Fehlversuche=%d %v", fails(), logs)
+	}
+	// falsches Passwort (SOCKS5 und HTTP) → Meldung ohne Passwort, nach 10 Versuchen Sperre
+	u1, p1 := creds(f.sb.Peers[0])
+	pu := &url.URL{Scheme: "http", User: url.UserPassword(u1, "falsch-http"), Host: fmt.Sprintf("127.0.0.1:%d", f.hp)}
+	cl := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+	if resp, err := cl.Get("http://example.com/"); err != nil || resp.StatusCode != http.StatusProxyAuthRequired {
+		t.Fatalf("HTTP falsches Passwort: %v %v", resp, err)
+	}
+	for i := 0; i < 9; i++ {
+		_, _ = socksGet(t, f.socks, u1, "falsch-socks", "example.com:80")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !has("(HTTP) fehlgeschlagen") || !has("nach 10 Fehlversuchen für 5 Minuten gesperrt") {
+		t.Fatalf("Fehlversuche/Sperre nicht gemeldet: %v", logs)
+	}
+	if has("falsch-") || has(p1) {
+		t.Fatal("Passwort im Protokoll")
+	}
+	// gesperrt: Verbindung wird sofort geschlossen, mit Grund im Protokoll
+	if _, err := socksGet(t, f.socks, u1, p1, "example.com:80"); err == nil {
+		t.Fatal("trotz Sperre angenommen")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !has("abgelehnt – nach zu vielen Fehlversuchen gesperrt (noch 5 Min.)") {
+		t.Fatalf("Sperre beim Verbinden nicht gemeldet: %v", logs)
+	}
+	// IP-Liste
+	reset()
+	f.env.Global.ACLs = map[int64]*proto.ACL{7: {Deny: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}}
+	_ = (Driver{}).Apply(f.env, []*proto.ServerBundle{f.sb})
+	_, _ = socksGet(t, f.socks, u1, p1, "example.com:80")
+	time.Sleep(100 * time.Millisecond)
+	f.env.Global.ACLs = nil
+	_ = (Driver{}).Apply(f.env, []*proto.ServerBundle{f.sb})
+	if !has("Verbindung von 127.0.0.1 abgelehnt – durch eine IP-Liste gesperrt") {
+		t.Fatalf("IP-Liste nicht gemeldet: %v", logs)
+	}
+}
+
+func TestNoteThrottle(t *testing.T) {
+	var got []string
+	setLog(func(_, m string) { got = append(got, m) })
+	t.Cleanup(func() { setLog(nil); resetNotes() })
+	resetNotes()
+	for i := 0; i < 100; i++ {
+		note("info", "a", "gleich")
+		note("info", fmt.Sprint("k", i), "verschieden")
+	}
+	if len(got) != noteMax {
+		t.Fatalf("%d Meldungen, erwartet %d", len(got), noteMax)
+	}
+	if strings.Count(strings.Join(got, "|"), "gleich") != 1 {
+		t.Fatal("gleiche Meldung mehrfach")
+	}
+}
+
+func TestNoteIPv6Target(t *testing.T) {
+	f := setup(t)
+	var mu sync.Mutex
+	var logs []string
+	f.env.Log = func(_, msg string) { mu.Lock(); logs = append(logs, msg); mu.Unlock() }
+	resetNotes()
+	_ = (Driver{}).Apply(f.env, []*proto.ServerBundle{f.sb})
+	u, p := creds(f.sb.Peers[0])
+	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", f.socks))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	_, _ = c.Write([]byte{5, 1, 2})
+	b := make([]byte, 2)
+	_, _ = io.ReadFull(c, b)
+	msg := append([]byte{1, byte(len(u))}, u...)
+	_, _ = c.Write(append(append(msg, byte(len(p))), p...))
+	_, _ = io.ReadFull(c, b)
+	_, _ = c.Write(append([]byte{5, 1, 0, 4}, append(net.ParseIP("2001:db8::1").To16(), 0, 80)...))
+	rep := make([]byte, 10)
+	if _, err := io.ReadFull(c, rep); err != nil || rep[1] != 8 {
+		t.Fatalf("Antwort %v %v", rep, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(strings.Join(logs, "\n"), "Ziel ist eine IPv6-Adresse") {
+		t.Fatalf("keine Meldung: %v", logs)
 	}
 }

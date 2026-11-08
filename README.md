@@ -129,7 +129,13 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   öffentlichen Adresse des Anschlusses.
 - Über den Proxy sind lokale Ziele (Container, Proxmox-Host, private Netze, Tailscale) und Port 25
   (Mailversand) gesperrt. Nach 10 falschen Anmeldungen in einer Minute wird die Adresse 5 Minuten
-  abgewiesen.
+  abgewiesen (Versuche ohne Zugangsdaten und mit richtigen Daten eines gesperrten Zugangs zählen nicht).
+- Abgelehnte Verbindungen und Anmeldungen stehen mit Grund unter **Ereignisse** (Übersicht bzw. Einstellungen → Ereignisse; IP-Liste, Sperre nach
+  Fehlversuchen, falsches Passwort, Zugang gesperrt, Verbindungsgrenze, IPv6-Ziel …) – je Adresse und
+  Grund höchstens alle 10 Minuten, damit Portscanner das Protokoll nicht füllen.
+- Ziele nur über IPv4. Clients sollen die Namen über den Proxy auflösen lassen, sonst scheitern Ziele
+  mit IPv6-Adresse. Test mit curl: `curl -x socks5h://BENUTZER:PASSWORT@HOST:1080 https://www.cloudflare.com/cdn-cgi/trace`
+  (`socks5h`, nicht `socks5`) bzw. `-x http://BENUTZER:PASSWORT@HOST:8080`.
 - Die Proxy-Verbindung selbst ist **unverschlüsselt** (Benutzername/Passwort können mitgelesen werden;
   HTTPS-Inhalte bleiben verschlüsselt).
 
