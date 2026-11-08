@@ -469,6 +469,14 @@ func (m *Manager) ensureRoutes(env *Env, exits []*Exit, groups []*Group) {
 func (m *Manager) routeGroup(env *Env, g *Group, active int64) {
 	t := strconv.Itoa(groupTable + g.Slot)
 	sys := env.Sys
+	// Sicherung: Verschwindet die Schnittstelle (OpenVPN verbindet neu), wäre die Tabelle leer und
+	// der Verkehr liefe bis zur nächsten Prüfung direkt mit der Adresse des Servers. Die Sperr-Route
+	// mit hoher Metrik greift nur dann. Bei „direkt“ ist der direkte Weg gewollt.
+	if g.OnFail == "direct" {
+		_, _ = sys.Run("ip", "-4", "route", "del", "blackhole", "default", "metric", safetyMetric, "table", t)
+	} else {
+		_, _ = sys.Run("ip", "-4", "route", "replace", "blackhole", "default", "metric", safetyMetric, "table", t)
+	}
 	switch {
 	case active != 0:
 		if _, err := sys.Run("ip", "-4", "route", "replace", "default", "dev", IfName(active), "table", t); err != nil {
@@ -481,6 +489,8 @@ func (m *Manager) routeGroup(env *Env, g *Group, active int64) {
 		_, _ = sys.Run("ip", "-4", "route", "replace", "blackhole", "default", "table", t)
 	}
 }
+
+const safetyMetric = "10000"
 
 func syncRules(env *Env, want []rule) error {
 	sys := env.Sys

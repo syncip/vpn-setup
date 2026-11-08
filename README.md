@@ -120,22 +120,27 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
 - **Gruppen:** mehrere Ausgänge in fester Reihenfolge. Alle 30 Sekunden prüft der Server jeden Ausgang
   (Ping, HTTPS-Abruf über den Tunnel → öffentliche IP und Land; auf Wunsch ein Geschwindigkeitstest mit
   5 MB, Einstellung `exit_speedtest`). Überschreitet der aktive Ausgang die Grenzen (Verlust,
-  Antwortzeit, Mindesttempo), übernimmt der nächste. Zurück geht es, wenn der bevorzugte Ausgang
-  10 Minuten stabil war. Fallen alle aus: **sperren** (kein Verkehr) oder **direkt** über den Server.
+  Antwortzeit, Mindesttempo) in zwei Prüfungen hintereinander, übernimmt der nächste – ein einzelner
+  Aussetzer schaltet nicht um. Antwortet nur der Ping nicht (manche Anbieter blockieren ICMP), zählt das
+  nicht als Verlust. Zurück geht es, wenn der bevorzugte Ausgang 10 Minuten stabil war. Fallen alle aus:
+  **sperren** (kein Verkehr) oder **direkt** über den Server. Bei „sperren“ greift die Sperre auch in der
+  kurzen Zeit, in der ein OpenVPN-Ausgang neu verbindet (kein kurzes Durchrutschen mit der Server-Adresse).
   Von Hand umschalten macht den gewählten Ausgang zum bevorzugten; Ausgang 1 wählen = normale Reihenfolge.
 - **DNS** der Proxy-Nutzer wird über den aktiven Ausgang aufgelöst (DNS-Server je Gruppe).
 - **Proxy-Zugänge** hängen wie alle Zugänge am Nutzer (Limits, Drosselung, Statistik, Sperre).
   Geräte ohne Passwort-Unterstützung (viele Fernseher): beim Zugang „Anmeldung per IP“ mit der festen
   öffentlichen Adresse des Anschlusses.
-- Über den Proxy sind lokale Ziele (Container, Proxmox-Host, private Netze, Tailscale) und Port 25
-  (Mailversand) gesperrt. Nach 10 falschen Anmeldungen in einer Minute wird die Adresse 5 Minuten
-  abgewiesen (Versuche ohne Zugangsdaten und mit richtigen Daten eines gesperrten Zugangs zählen nicht).
-- Abgelehnte Verbindungen und Anmeldungen stehen mit Grund unter **Ereignisse** (Übersicht bzw. Einstellungen → Ereignisse; IP-Liste, Sperre nach
-  Fehlversuchen, falsches Passwort, Zugang gesperrt, Verbindungsgrenze, IPv6-Ziel …) – je Adresse und
-  Grund höchstens alle 10 Minuten, damit Portscanner das Protokoll nicht füllen.
-- Ziele nur über IPv4. Clients sollen die Namen über den Proxy auflösen lassen, sonst scheitern Ziele
-  mit IPv6-Adresse. Test mit curl: `curl -x socks5h://BENUTZER:PASSWORT@HOST:1080 https://www.cloudflare.com/cdn-cgi/trace`
-  (`socks5h`, nicht `socks5`) bzw. `-x http://BENUTZER:PASSWORT@HOST:8080`.
+- Über den Proxy sind lokale Ziele (Container, Proxmox-Host, private Netze, Tailscale), die öffentlichen
+  Adressen des Servers selbst und Port 25 (Mailversand) gesperrt. Eine Sperre nach Fehlversuchen gibt es
+  nicht (sie traf vor allem die eigenen Geräte); die zufälligen 24-stelligen Passwörter sind nicht zu erraten.
+- Abgelehnte Verbindungen und Anmeldungen stehen mit Grund unter **Ereignisse** (Übersicht bzw.
+  Einstellungen → Ereignisse): IP-Liste, falsches Passwort, Zugang gesperrt, Verbindungsgrenze, Ziel nicht
+  erreichbar (mit Fehler, auch bei 502/SOCKS-Fehlern) … – je Adresse und Grund höchstens alle 10 Minuten.
+  Der Grund steht auch im Text der Fehlerantwort (`curl -v`).
+- Ziele: **direkt** über den Server IPv4 und IPv6, über eine **Ausgangsgruppe** nur IPv4. Die Zugangsdaten
+  zeigen deshalb `socks5h://…` – damit löst der Proxy die Namen auf (DNS über den Ausgang). Test mit curl:
+  `curl -x socks5h://BENUTZER:PASSWORT@HOST:1080 https://www.cloudflare.com/cdn-cgi/trace` bzw.
+  `-x http://BENUTZER:PASSWORT@HOST:8080`.
 - Die Proxy-Verbindung selbst ist **unverschlüsselt** (Benutzername/Passwort können mitgelesen werden;
   HTTPS-Inhalte bleiben verschlüsselt).
 

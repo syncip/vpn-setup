@@ -134,3 +134,66 @@ func TestManualSwitchSticks(t *testing.T) {
 		t.Fatal("fremder Ausgang angenommen")
 	}
 }
+
+// addSample hängt eine Messung an (wie Check).
+func addSample(m *Manager, id int64, s Sample) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.status[id]
+	st.Up = true
+	st.Samples = append(st.Samples, s)
+	st.Loss, st.RTT = avg(st.Samples)
+}
+
+func TestSingleHiccupNoFailover(t *testing.T) {
+	env, _, _ := testEnv(t)
+	m := New()
+	exits := map[int64]*Exit{1: {ID: 1, Name: "A", Enabled: true, Slot: 1}, 2: {ID: 2, Name: "B", Enabled: true, Slot: 2}}
+	g := &Group{ID: 4, Name: "G", Enabled: true, Slot: 1, Exits: []int64{1, 2}, OnFail: "block", MaxLoss: 20, MaxRTT: 400}
+	setHealth(m, 1, true)
+	setHealth(m, 2, true)
+	m.evaluate(env, g, exits)
+	active := func() int64 { _, gs := m.Status(); return gs[4].Active }
+	good := Sample{TS: time.Now().Unix(), Loss: 0, RTT: 30, OK: true}
+	// eine Prüfung ohne HTTPS-Antwort, eine verlorene Ping-Runde → bleibt bei A
+	addSample(m, 1, Sample{TS: time.Now().Unix(), Loss: 0, RTT: 30, OK: false})
+	m.evaluate(env, g, exits)
+	if active() != 1 {
+		t.Fatal("einzelner HTTPS-Aussetzer hat umgeschaltet")
+	}
+	addSample(m, 1, good)
+	addSample(m, 1, Sample{TS: time.Now().Unix(), Loss: 100, OK: true, RTT: 0})
+	m.evaluate(env, g, exits)
+	if active() != 1 {
+		t.Fatal("blockierter Ping (HTTPS geht) hat umgeschaltet")
+	}
+	addSample(m, 1, good)
+	addSample(m, 1, Sample{TS: time.Now().Unix(), Loss: 60, RTT: 30, OK: true})
+	m.evaluate(env, g, exits)
+	if active() != 1 {
+		t.Fatal("eine verlustreiche Ping-Runde hat umgeschaltet")
+	}
+	// zweimal hintereinander schlecht → B
+	addSample(m, 1, Sample{TS: time.Now().Unix(), Loss: 100, OK: false})
+	m.evaluate(env, g, exits)
+	if active() != 2 {
+		t.Fatal("zwei schlechte Prüfungen hintereinander: kein Umschalten")
+	}
+}
+
+func TestSafetyRoute(t *testing.T) {
+	env, _, _ := testEnv(t)
+	m := New()
+	g := &Group{ID: 4, Name: "G", Enabled: true, Slot: 3, OnFail: "block"}
+	m.routeGroup(env, g, 1)
+	log := strings.Join(env.Sys.Log(), "\n")
+	if !strings.Contains(log, "ip -4 route replace blackhole default metric 10000 table 3003") ||
+		!strings.Contains(log, "ip -4 route replace default dev ex1 table 3003") {
+		t.Fatalf("Sicherung fehlt:\n%s", log)
+	}
+	g.OnFail = "direct"
+	m.routeGroup(env, g, 1)
+	if log = strings.Join(env.Sys.Log(), "\n"); !strings.Contains(log, "ip -4 route del blackhole default metric 10000 table 3003") {
+		t.Fatalf("Sicherung bei „direkt“ nicht entfernt:\n%s", log)
+	}
+}

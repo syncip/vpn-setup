@@ -36,9 +36,6 @@ const (
 	idleTimeout      = 10 * time.Minute
 	maxPerIP         = 512
 	maxTotal         = 8192
-	failWindow       = time.Minute
-	failMax          = 10
-	failBan          = 5 * time.Minute
 )
 
 type serverCfg struct {
@@ -271,21 +268,15 @@ type instance struct {
 	resolver  *net.Resolver
 }
 
-type failRec struct {
-	n     int
-	first time.Time
-	until time.Time
-}
-
 var mgr = struct {
 	sync.Mutex
 	inst  map[int64]*instance
 	peers map[int64]*peerRT
 	conns map[*tracked]struct{}
 	perIP map[netip.Addr]int
-	fails map[netip.Addr]*failRec
 	total int
-}{inst: map[int64]*instance{}, peers: map[int64]*peerRT{}, conns: map[*tracked]struct{}{}, perIP: map[netip.Addr]int{}, fails: map[netip.Addr]*failRec{}}
+	self  []netip.Prefix // öffentliche Adressen des Servers (nie als Ziel)
+}{inst: map[int64]*instance{}, peers: map[int64]*peerRT{}, conns: map[*tracked]struct{}{}, perIP: map[netip.Addr]int{}}
 
 func listenAddr(env *proto.Env, port int) string {
 	if env.Sys.DryRun() {
@@ -296,8 +287,12 @@ func listenAddr(env *proto.Env, port int) string {
 
 func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 	setLog(env.Log)
+	self, selfOK := selfPrefixes(env, servers)
 	mgr.Lock()
 	defer mgr.Unlock()
+	if selfOK || len(self) > len(mgr.self) {
+		mgr.self = self
+	}
 	var errs []string
 	want := map[int64]bool{}
 	seenPeers := map[int64]bool{}
@@ -501,9 +496,6 @@ func acceptLoop(in *instance, ln net.Listener, isHTTP bool) {
 			kind = "stop" // Server wird gerade abgebaut – nicht melden
 		case !in.acl.Allowed(ip):
 			kind, why = "acl", "durch eine IP-Liste gesperrt"
-		case banned(ip):
-			kind = "ban"
-			why = fmt.Sprintf("nach zu vielen Fehlversuchen gesperrt (noch %d Min.)", int(time.Until(mgr.fails[ip].until).Minutes())+1)
 		case mgr.perIP[ip] >= maxPerIP:
 			kind, why = "perip", fmt.Sprintf("zu viele gleichzeitige Verbindungen von dieser Adresse (max. %d)", maxPerIP)
 		case mgr.total >= maxTotal:
@@ -545,14 +537,9 @@ func acceptLoop(in *instance, ln net.Listener, isHTTP bool) {
 	}
 }
 
-func banned(ip netip.Addr) bool {
-	f := mgr.fails[ip]
-	return f != nil && time.Now().Before(f.until)
-}
-
-// loginFailed: fehlgeschlagene Anmeldung melden. Richtige Zugangsdaten eines gesperrten oder
-// deaktivierten Zugangs zählen nicht als Fehlversuch (kein Erraten) – sonst sperrt sich ein
-// Fernseher, der es weiter versucht, nach Ablauf seines Zugangs auch für andere Zugänge aus.
+// loginFailed: fehlgeschlagene Anmeldung melden (gedrosselt). Eine Sperre nach Fehlversuchen gibt
+// es bewusst nicht: Sie traf vor allem die eigenen Geräte (Apps, die es mit alten Daten weiter
+// versuchen), und die zufälligen 24-stelligen Passwörter lassen sich ohnehin nicht erraten.
 func (in *instance) loginFailed(ip netip.Addr, user, pass, via string) {
 	mgr.Lock()
 	name := in.name
@@ -569,33 +556,6 @@ func (in *instance) loginFailed(ip netip.Addr, user, pass, via string) {
 		return
 	}
 	note("info", ip.String()+"|auth", fmt.Sprintf("Proxy „%s“: Anmeldung von %s (%s) fehlgeschlagen – falscher Benutzername oder falsches Passwort", name, ip, via))
-	if authFailed(ip) {
-		note("warn", ip.String()+"|banstart", fmt.Sprintf("Proxy „%s“: %s nach %d Fehlversuchen für %d Minuten gesperrt", name, ip, failMax, int(failBan.Minutes())))
-	}
-}
-
-// authFailed zählt einen Fehlversuch; true = Sperre hat gerade begonnen.
-func authFailed(ip netip.Addr) bool {
-	mgr.Lock()
-	defer mgr.Unlock()
-	now := time.Now()
-	f := mgr.fails[ip]
-	if f == nil || now.Sub(f.first) > failWindow {
-		f = &failRec{first: now}
-		mgr.fails[ip] = f
-	}
-	f.n++
-	if f.n >= failMax {
-		f.until = now.Add(failBan)
-	}
-	if len(mgr.fails) > 10000 { // aufräumen
-		for k, v := range mgr.fails {
-			if now.Sub(v.first) > failWindow && now.After(v.until) {
-				delete(mgr.fails, k)
-			}
-		}
-	}
-	return f.n == failMax
 }
 
 // login prüft Benutzername/Passwort (Zeit-konstant).
@@ -668,20 +628,83 @@ func (t *tracked) setUpstream(u net.Conn) bool {
 
 var errNotAllowed = errors.New("Ziel nicht erlaubt")
 var errNoRoute = errors.New("Ausgang nicht verfügbar")
+var errV6 = errors.New("IPv6-Ziel über eine Ausgangsgruppe")
 
-// blocked: Ziele, die über den Proxy nie erreichbar sein dürfen (Server selbst, lokale Netze,
-// Proxmox-Host, Tailscale, Multicast …).
 // allowLocal: nur für Tests (Ziel auf 127.0.0.1)
 var allowLocal = false
 
+// blockedNets: zusätzlich zu Loopback/privat/Link-local/Multicast nie erreichbar – CGNAT/Tailscale,
+// Sonderbereiche und IPv6-Übergänge, über die sich IPv4-Ziele (auch private) verstecken ließen.
+var blockedNets = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4",
+		"::/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32", "2002::/16", "fec0::/10"} {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
+// blocked: Ziele, die über den Proxy nie erreichbar sein dürfen (lokale Netze, Proxmox-Host,
+// Tailscale, Multicast …). Die öffentlichen Adressen des Servers selbst prüft dial über mgr.self.
 func blocked(a netip.Addr) bool {
+	a = a.Unmap()
 	if allowLocal && a.IsLoopback() {
 		return false
 	}
-	return !a.Is4() || a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() ||
-		netip.MustParsePrefix("100.64.0.0/10").Contains(a) || netip.MustParsePrefix("0.0.0.0/8").Contains(a) ||
-		netip.MustParsePrefix("192.0.0.0/24").Contains(a) || netip.MustParsePrefix("198.18.0.0/15").Contains(a) ||
-		netip.MustParsePrefix("240.0.0.0/4").Contains(a)
+	if !a.IsValid() || a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() {
+		return true
+	}
+	for _, p := range blockedNets {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// selfPrefixes: öffentliche Adressen des Servers (Domain aus den Einstellungen und den Proxy-Servern) –
+// IPv4 genau, IPv6 als /64. Darüber wären sonst Dienste des Proxmox-Hosts erreichbar.
+func selfPrefixes(env *proto.Env, servers []*proto.ServerBundle) ([]netip.Prefix, bool) {
+	if env.Sys == nil || env.Sys.DryRun() {
+		return nil, true
+	}
+	hosts := map[string]bool{}
+	if env.Global.ServerHost != "" {
+		hosts[env.Global.ServerHost] = true
+	}
+	for _, sb := range servers {
+		if h := load(sb.Server).Host; h != "" {
+			hosts[h] = true
+		}
+	}
+	var out []netip.Prefix
+	ok := true
+	for h := range hosts {
+		if a, err := netip.ParseAddr(h); err == nil {
+			out = append(out, hostPrefix(a))
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", h)
+		cancel()
+		if err != nil {
+			ok = false
+			continue
+		}
+		for _, a := range ips {
+			out = append(out, hostPrefix(a))
+		}
+	}
+	return out, ok
+}
+
+func hostPrefix(a netip.Addr) netip.Prefix {
+	a = a.Unmap()
+	if a.Is4() {
+		return netip.PrefixFrom(a, 32)
+	}
+	p, _ := a.Prefix(64)
+	return p
 }
 
 func (in *instance) dial(ctx context.Context, addr string) (net.Conn, error) {
@@ -694,7 +717,7 @@ func (in *instance) dial(ctx context.Context, addr string) (net.Conn, error) {
 		return nil, errNotAllowed
 	}
 	mgr.Lock()
-	cfg, route, group, res := in.cfg, in.route, in.group, in.resolver
+	cfg, route, group, res, self := in.cfg, in.route, in.group, in.resolver, mgr.self
 	mgr.Unlock()
 	if port == 25 && cfg.BlockSMTP {
 		return nil, errNotAllowed
@@ -706,30 +729,80 @@ func (in *instance) dial(ctx context.Context, addr string) (net.Conn, error) {
 		}
 		mark = route.Mark
 	}
+	// Direkt über den Server gehen IPv4 und IPv6 (IPv4 bevorzugt); Ausgänge können nur IPv4.
 	var ips []netip.Addr
 	if a, err := netip.ParseAddr(host); err == nil {
-		ips = []netip.Addr{a.Unmap()}
+		a = a.Unmap()
+		if a.Is6() && group != 0 {
+			return nil, errV6
+		}
+		ips = []netip.Addr{a}
 	} else {
 		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		ips, err = res.LookupNetIP(rctx, "ip4", host)
+		if group == 0 {
+			if v6, err6 := res.LookupNetIP(rctx, "ip6", host); err6 == nil && len(v6) > 0 {
+				ips = append(ips, v6...)
+				err = nil
+			}
+		}
 		cancel()
-		if err != nil {
+		if err != nil || len(ips) == 0 {
+			if err == nil {
+				err = &net.DNSError{Err: "keine Adresse", Name: host, IsNotFound: true}
+			}
 			return nil, err
 		}
 	}
 	d := exits.Dialer(mark)
 	var lastErr error = errNotAllowed
 	for _, a := range ips {
-		if blocked(a.Unmap()) {
+		a = a.Unmap()
+		if blocked(a) || inPrefixes(self, a) {
 			continue
 		}
-		c, err := d.DialContext(ctx, "tcp4", netip.AddrPortFrom(a.Unmap(), uint16(port)).String())
+		nw := "tcp4"
+		if a.Is6() {
+			nw = "tcp6"
+		}
+		c, err := d.DialContext(ctx, nw, netip.AddrPortFrom(a, uint16(port)).String())
 		if err == nil {
 			return c, nil
 		}
 		lastErr = err
 	}
 	return nil, lastErr
+}
+
+func inPrefixes(ps []netip.Prefix, a netip.Addr) bool {
+	for _, p := range ps {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// dialReason: verständlicher Grund für ein fehlgeschlagenes Verbinden (Antwort an den Client und Ereignis).
+func (in *instance) dialReason(target string, err error) (kind, msg string) {
+	mgr.Lock()
+	via := "direkt über den Server"
+	if in.group != 0 {
+		via = "über die Ausgangsgruppe „" + in.route.Name + "“"
+	}
+	mgr.Unlock()
+	var dnsErr *net.DNSError
+	switch {
+	case errors.Is(err, errNotAllowed):
+		return "notallowed", "Ziel " + target + " ist über den Proxy nicht erlaubt (lokales Netz, Server selbst oder Port 25)"
+	case errors.Is(err, errNoRoute):
+		return "noroute", "die Ausgangsgruppe ist deaktiviert oder gelöscht"
+	case errors.Is(err, errV6):
+		return "v6", "Ziel " + target + " ist eine IPv6-Adresse – Ausgangsgruppen können nur IPv4; im Client die Namensauflösung über den Proxy einschalten (bei curl socks5h://)"
+	case errors.As(err, &dnsErr):
+		return "dns", "Name " + target + " ließ sich nicht auflösen (" + via + "): " + dnsErr.Err
+	}
+	return "dial", "Verbindung zu " + target + " fehlgeschlagen (" + via + "): " + err.Error()
 }
 
 // ---------- Weiterleiten mit Zählung und Drosselung ----------
@@ -907,7 +980,6 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 		}
 		_, _ = c.Write([]byte{1, 0})
 	case hasNone:
-		// Ohne Zugangsdaten lässt sich kein Passwort erraten → kein Fehlversuch für die Sperre
 		if rt = in.bySource(ip); rt == nil {
 			_, _ = c.Write([]byte{5, 0xff})
 			in.notice(ip, "noauth", "SOCKS5 ohne Benutzername/Passwort, und die Adresse gehört zu keinem Zugang mit „Anmeldung per IP“")
@@ -949,9 +1021,14 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 			return
 		}
 		host = string(a)
-	default: // IPv6 wird nicht unterstützt
+	case 4:
+		a := make([]byte, 16)
+		if _, err := io.ReadFull(br, a); err != nil {
+			return
+		}
+		host = netip.AddrFrom16([16]byte(a)).Unmap().String()
+	default:
 		reply(8)
-		in.notice(ip, "v6", "Ziel ist eine IPv6-Adresse; der Proxy kann nur IPv4 – im Client die Namensauflösung über den Proxy einschalten (bei curl socks5h://)")
 		return
 	}
 	pb := make([]byte, 2)
@@ -971,19 +1048,20 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 	up, err := in.dial(ctx, net.JoinHostPort(host, strconv.Itoa(port)))
 	cancel()
 	if err != nil {
-		switch {
-		case errors.Is(err, errNotAllowed):
+		kind, msg := in.dialReason(net.JoinHostPort(host, strconv.Itoa(port)), err)
+		switch kind {
+		case "notallowed":
 			reply(2)
-		case errors.Is(err, errNoRoute):
+		case "noroute":
 			reply(3)
+		case "v6":
+			reply(8)
+		case "dns":
+			reply(4)
 		default:
-			var dnsErr *net.DNSError
-			if errors.As(err, &dnsErr) {
-				reply(4)
-			} else {
-				reply(5)
-			}
+			reply(5)
 		}
+		in.notice(ip, "dial-"+kind, msg)
 		return
 	}
 	if !t.setUpstream(up) {
@@ -1043,7 +1121,9 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 			up, err := in.dial(ctx, req.Host)
 			cancel()
 			if err != nil {
-				writeStatus(client, dialStatus(err), "")
+				_, msg := in.dialReason(req.Host, err)
+				writeStatusMsg(client, dialStatus(err), "", msg)
+				in.notice(ip, "dial", msg)
 				return
 			}
 			if !t.setUpstream(up) {
@@ -1064,7 +1144,9 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 		}
 		resp, err := in.transport.RoundTrip(req) // Körper kommt über br (gezählt)
 		if err != nil {
-			writeStatus(client, dialStatus(err), "")
+			_, msg := in.dialReason(req.URL.Host, err)
+			writeStatusMsg(client, dialStatus(err), "", msg)
+			in.notice(ip, "dial", msg)
 			return
 		}
 		resp.Header.Del("Connection")
@@ -1126,8 +1208,14 @@ func dialStatus(err error) int {
 	return http.StatusBadGateway
 }
 
-func writeStatus(w io.Writer, code int, extra string) {
+func writeStatus(w io.Writer, code int, extra string) { writeStatusMsg(w, code, extra, "") }
+
+// writeStatusMsg: Fehlerantwort mit Grund im Text (curl -v / Browser zeigen ihn an).
+func writeStatusMsg(w io.Writer, code int, extra, msg string) {
 	body := http.StatusText(code) + "\n"
+	if msg != "" {
+		body += msg + "\n"
+	}
 	fmt.Fprintf(w, "HTTP/1.1 %d %s\r\n%sContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
 		code, http.StatusText(code), extra, len(body), body)
 }
@@ -1201,7 +1289,8 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	var links []proto.Link
 	if c.Socks {
 		info = append(info, [2]string{"SOCKS5-Port", strconv.Itoa(c.SocksPort)})
-		links = append(links, proto.Link{Label: "SOCKS5", URL: (&url.URL{Scheme: "socks5", User: ui, Host: net.JoinHostPort(host, strconv.Itoa(c.SocksPort))}).String()})
+		// socks5h: Namen löst der Proxy auf (DNS über den Ausgang, keine IPv6-Ziele vom Client)
+		links = append(links, proto.Link{Label: "SOCKS5", URL: (&url.URL{Scheme: "socks5h", User: ui, Host: net.JoinHostPort(host, strconv.Itoa(c.SocksPort))}).String()})
 	}
 	if c.HTTP {
 		info = append(info, [2]string{"HTTP-Proxy-Port", strconv.Itoa(c.HTTPPort)})

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -33,6 +34,9 @@ var (
 	traceURL   = "https://1.1.1.1/cdn-cgi/trace"
 	speedURL   = "https://speed.cloudflare.com/__down?bytes=5000000"
 )
+
+// errNoTunnel: Schnittstelle des Ausgangs fehlt (OpenVPN nicht verbunden).
+var errNoTunnel = errors.New("Tunnel nicht verbunden")
 
 // SetProbeTargets ersetzt die Prüfziele – nur für Tests in einer Laborumgebung.
 func SetProbeTargets(ping, trace, speed string) { pingTarget, traceURL, speedURL = ping, trace, speed }
@@ -100,7 +104,7 @@ func (m *Manager) probe(env *Env, e *Exit, speed bool) (Sample, string, string, 
 		return s, fmt.Sprintf("203.0.113.%d", 10+e.ID%200), []string{"US", "DE", "GB", "NL", "JP"}[e.ID%5], mb, nil
 	}
 	if _, err := env.Sys.Run("ip", "link", "show", "dev", n); err != nil {
-		return s, "", "", 0, fmt.Errorf("Tunnel nicht verbunden")
+		return s, "", "", 0, errNoTunnel
 	}
 	mark := strconv.FormatUint(uint64(probeMark(e.Slot)), 10)
 	out, _ := env.Sys.Run("ping", "-n", "-q", "-c", "5", "-i", "0.3", "-W", "2", "-m", mark, "-I", n, pingTarget)
@@ -189,7 +193,8 @@ func (m *Manager) Check(env *Env, exits []*Exit, groups []*Group, speedEvery tim
 			if st == nil {
 				return
 			}
-			st.Checked, st.Up = s.TS, err == nil || s.OK
+			// Up = Schnittstelle da; ob Verkehr durchgeht, bewertet isHealthy anhand der Messungen
+			st.Checked, st.Up = s.TS, !errors.Is(err, errNoTunnel)
 			st.Samples = append(st.Samples, s)
 			if len(st.Samples) > keepSamples {
 				st.Samples = st.Samples[len(st.Samples)-keepSamples:]
@@ -251,15 +256,27 @@ func (m *Manager) isHealthy(g *Group, e *Exit) (bool, string) {
 	if st == nil || len(st.Samples) == 0 {
 		return false, "noch nicht geprüft"
 	}
-	last := st.Samples[len(st.Samples)-1]
+	n := len(st.Samples)
+	last := st.Samples[n-1]
+	// Ein einzelner Aussetzer (eine Prüfung ohne Antwort, eine verlorene Ping-Runde) schaltet nicht
+	// um: gestört erst, wenn auch die vorige Prüfung schlecht war. Antwortet HTTPS, aber kein Ping,
+	// blockiert der Anbieter ICMP – dann zählt der Verlust nicht.
+	lossOf := func(s Sample) float64 {
+		if s.OK && s.Loss >= 100 {
+			return 0
+		}
+		return s.Loss
+	}
+	bad := func(s Sample) bool { return !s.OK || lossOf(s) > g.MaxLoss }
+	again := n == 1 || bad(st.Samples[n-2])
 	switch {
 	case !st.Up:
 		return false, "Tunnel nicht verbunden"
-	case !last.OK:
+	case !last.OK && again:
 		return false, "kein Internet über den Tunnel"
-	case st.Loss > g.MaxLoss:
-		return false, fmt.Sprintf("Paketverlust %.0f %%", st.Loss)
-	case g.MaxRTT > 0 && st.RTT > g.MaxRTT:
+	case lossOf(last) > g.MaxLoss && again:
+		return false, fmt.Sprintf("Paketverlust %.0f %%", lossOf(last))
+	case g.MaxRTT > 0 && st.RTT > g.MaxRTT && last.RTT > g.MaxRTT:
 		return false, fmt.Sprintf("Antwortzeit %.0f ms", st.RTT)
 	case g.MinMbit > 0 && st.Mbit > 0 && st.Mbit < g.MinMbit:
 		return false, fmt.Sprintf("nur %.1f Mbit/s", st.Mbit)

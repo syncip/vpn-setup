@@ -284,6 +284,10 @@ func TestLab(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "HACKED")); err == nil {
 		t.Fatal("up-Skript der hochgeladenen Konfiguration wurde ausgeführt!")
 	}
+	// Sicherung in der Gruppen-Tabelle: verschwindet die Schnittstelle, wird gesperrt statt direkt
+	if out := sh(t, "ip", "-4", "route", "show", "table", "3061"); !strings.Contains(out, "blackhole default metric 10000") {
+		t.Fatalf("Sicherungs-Route fehlt:\n%s", out)
+	}
 	// Prüfung
 	exits.SetProbeTargets(target, "http://"+target+"/cdn-cgi/trace", "http://"+target+"/down")
 	m.Check(env, xs, gs, time.Nanosecond)
@@ -361,6 +365,7 @@ func TestLab(t *testing.T) {
 	// Ausfall des Anbieters → Gruppe sperrt, Proxy über die Gruppe kommt nicht mehr durch
 	_ = ovpnSrv.Process.Kill()
 	_, _ = ovpnSrv.Process.Wait()
+	m.Check(env, xs, gs, 0) // ein Aussetzer schaltet nicht um – erst die zweite schlechte Prüfung
 	m.Check(env, xs, gs, 0)
 	_, gst = m.Status()
 	t.Logf("nach Ausfall: %+v", gst[groupID])
@@ -493,6 +498,7 @@ func TestLab(t *testing.T) {
 	// OpenVPN-Anbieter fällt aus → Gruppe weicht auf WireGuard aus
 	_ = ovpnSrv.Process.Kill()
 	_, _ = ovpnSrv.Process.Wait()
+	m.Check(env, xs, gs, 0) // ein Aussetzer schaltet nicht um – erst die zweite schlechte Prüfung
 	m.Check(env, xs, gs, 0)
 	_, gst = m.Status()
 	t.Logf("nach OpenVPN-Ausfall: %+v", gst[groupID])
@@ -513,6 +519,7 @@ func TestLab(t *testing.T) {
 	}
 	// beide weg → (OnFail direct) über den Server selbst
 	sh(t, "ip", "netns", "exec", "prov", "ip", "link", "set", "wgp", "down")
+	m.Check(env, xs, gs, 0) // ein Aussetzer schaltet nicht um – erst die zweite schlechte Prüfung
 	m.Check(env, xs, gs, 0)
 	_, gst = m.Status()
 	if gst[groupID].State != "direct" {
