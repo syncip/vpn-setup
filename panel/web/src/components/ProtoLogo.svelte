@@ -3,10 +3,11 @@
   import wireguard from '../assets/logos/wireguard.svg';
   import vless from '../assets/logos/vless.svg';
   import hysteria2 from '../assets/logos/hysteria2.svg';
+  import openvpn from '../assets/logos/openvpn.svg';
   import { PROTO_LABEL } from '../lib/format.js';
 
   let { id, size = 20, label = false } = $props();
-  const LOGOS = { wireguard, vless, hysteria2 };
+  const LOGOS = { wireguard, vless, hysteria2, openvpn };
   const name = $derived(PROTO_LABEL[id] || id);
 </script>
 

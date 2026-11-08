@@ -25,6 +25,7 @@ import (
 	"vpnpanel/internal/api"
 	"vpnpanel/internal/engine"
 	_ "vpnpanel/internal/proto/hysteria2"
+	_ "vpnpanel/internal/proto/openvpn"
 	"vpnpanel/internal/proto/shaping"
 	_ "vpnpanel/internal/proto/vless"
 	_ "vpnpanel/internal/proto/wireguard"

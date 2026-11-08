@@ -135,7 +135,7 @@ systemctl stop vpnpanel 2>/dev/null || true
 echo ">> Pakete installieren"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx
+  wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx openvpn
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnginx-mod-stream || true
 
 echo ">> Forwarding aktivieren"
@@ -146,6 +146,8 @@ net.ipv6.conf.${OUT_IF}.accept_ra=2
 EOF
 sysctl -p /etc/sysctl.d/99-vpn.conf >/dev/null
 mkdir -p /etc/wireguard && chmod 700 /etc/wireguard
+# OpenVPN: eigene Instanzen des Panels (vpn-openvpn@ovpn<ID>), Debians Vorlagen bleiben ungenutzt
+mkdir -p /etc/openvpn/vpn && chmod 755 /etc/openvpn/vpn  # OpenVPN liest das ccd-Verzeichnis als „nobody“
 
 # Installer erst herunterladen, dann ausführen – bei bash -c "$(curl …)" würde ein
 # fehlgeschlagener Download trotz set -e unbemerkt durchrutschen.
@@ -257,8 +259,10 @@ echo "Befehle:               vpn help   (Domains ändern: vpn config, oder bash 
 cat <<EOF
 
 Nach außen offen sein müssen: TCP 443 und 9443, UDP 51820 (WireGuard) und UDP 443
-(Hysteria2, bei Port-Hopping zusätzlich der eingestellte UDP-Bereich).
+(Hysteria2, bei Port-Hopping zusätzlich der eingestellte UDP-Bereich), für OpenVPN-Server
+deren Port (Vorgabe UDP 1194). Die Liste je Server steht im Panel unter „Server“.
 EOF
+[[ -c /dev/net/tun ]] || echo "Hinweis: /dev/net/tun fehlt – OpenVPN-Server können so nicht starten (siehe unten)."
 if systemd-detect-virt -c -q 2>/dev/null; then
 cat <<EOF
 
@@ -270,6 +274,9 @@ Container erkannt (interne Adresse ${IP4:-?}). Auf dem Host (z. B. Proxmox) einm
       printf '%s\n' wireguard ifb act_connmark act_mirred sch_htb sch_ingress cls_fw cls_u32 cls_matchall \
         > /etc/modules-load.d/vpn.conf
       systemctl restart systemd-modules-load
+  - für OpenVPN das Gerät /dev/net/tun freigeben (Proxmox: /etc/pve/lxc/<ID>.conf, danach Container neu starten):
+      lxc.cgroup2.devices.allow: c 10:200 rwm
+      lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
   - größere UDP-Puffer für Hysteria2 (im Container nicht einstellbar):
       printf '%s\n' net.core.rmem_max=16777216 net.core.wmem_max=16777216 > /etc/sysctl.d/90-hysteria.conf
       sysctl --system

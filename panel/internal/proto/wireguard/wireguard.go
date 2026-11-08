@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"vpnpanel/internal/proto"
+	"vpnpanel/internal/proto/shaping"
 	"vpnpanel/internal/store"
 )
 
@@ -198,12 +199,15 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 	if !ifaceRe.MatchString(c.Interface) {
 		return fmt.Errorf("Schnittstellenname %q ungültig (max. 15 Zeichen, a-z 0-9 _ -)", c.Interface)
 	}
+	if strings.HasPrefix(c.Interface, "ovpn") || c.Interface == shaping.IfbDev || c.Interface == outIf(env, c) {
+		return fmt.Errorf("Schnittstellenname %q ist reserviert", c.Interface)
+	}
 	if used(func(o serverCfg) bool { return o.Interface == c.Interface }) {
 		return fmt.Errorf("Schnittstelle %s wird schon von einem anderen Server benutzt", c.Interface)
 	}
 	if c.Port == 0 {
 		c.Port = 51820
-		for used(func(o serverCfg) bool { return o.Port == c.Port }) {
+		for used(func(o serverCfg) bool { return o.Port == c.Port }) || proto.PortConflict(env.Global, all, srv.ID, "udp", c.Port, 0) != "" {
 			c.Port++
 		}
 	}
@@ -213,9 +217,12 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 	if used(func(o serverCfg) bool { return o.Port == c.Port }) {
 		return fmt.Errorf("UDP-Port %d wird schon von einem anderen WireGuard-Server benutzt", c.Port)
 	}
+	if msg := proto.PortConflict(env.Global, all, srv.ID, "udp", c.Port, 0); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
 	if c.Net4 == "" {
 		p := netip.MustParsePrefix("10.8.0.0/24")
-		for used(func(o serverCfg) bool { q, err := parsePrefix(o.Net4); return err == nil && q.Overlaps(p) }) {
+		for used(func(o serverCfg) bool { q, err := parsePrefix(o.Net4); return err == nil && q.Overlaps(p) }) || proto.NetConflict(all, srv.ID, p) != "" {
 			p = nextNet(p)
 		}
 		c.Net4 = p.String()
@@ -228,9 +235,12 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 	if used(func(o serverCfg) bool { q, err := parsePrefix(o.Net4); return err == nil && q.Overlaps(n4) }) {
 		return fmt.Errorf("Tunnelnetz %s überschneidet sich mit einem anderen WireGuard-Server", c.Net4)
 	}
+	if msg := proto.NetConflict(all, srv.ID, n4); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
 	if c.Net6 == "\x00" { // nicht gesetzt → Vorgabe
 		p := netip.MustParsePrefix("fd42:42:42::/64")
-		for used(func(o serverCfg) bool { q, err := parsePrefix(o.Net6); return err == nil && q.Overlaps(p) }) {
+		for used(func(o serverCfg) bool { q, err := parsePrefix(o.Net6); return err == nil && q.Overlaps(p) }) || proto.NetConflict(all, srv.ID, p) != "" {
 			p = nextNet(p)
 		}
 		c.Net6 = p.String()
@@ -243,6 +253,9 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 		c.Net6 = n6.String()
 		if used(func(o serverCfg) bool { q, err := parsePrefix(o.Net6); return err == nil && q.Overlaps(n6) }) {
 			return fmt.Errorf("Tunnelnetz %s überschneidet sich mit einem anderen WireGuard-Server", c.Net6)
+		}
+		if msg := proto.NetConflict(all, srv.ID, n6); msg != "" {
+			return fmt.Errorf("%s", msg)
 		}
 	}
 	switch c.DefaultAccess {
@@ -789,79 +802,11 @@ func applyFirewall(env *proto.Env, servers []*proto.ServerBundle) error {
 // applyShaping: Download (Server → Gerät) per HTB auf der Schnittstelle,
 // Upload (Gerät → Server) per Policer am Eingang.
 func applyShaping(env *proto.Env, sb *proto.ServerBundle, iface string) error {
-	sys := env.Sys
-	var cmds [][]string
-	anyDown, anyUp := false, false
-	all := nodes(sb, true)
-	for _, n := range all {
-		anyDown = anyDown || n.pb.RateDown > 0
-		anyUp = anyUp || n.pb.RateUp > 0
+	var rules []shaping.IfaceRule
+	for _, n := range nodes(sb, true) {
+		rules = append(rules, shaping.IfaceRule{ID: n.pb.Peer.ID, Down: n.pb.RateDown, Up: n.pb.RateUp, Prefixes: n.all()})
 	}
-	if anyDown {
-		cmds = append(cmds,
-			[]string{"qdisc", "add", "dev", iface, "root", "handle", "1:", "htb", "default", "1"},
-			[]string{"class", "add", "dev", iface, "parent", "1:", "classid", "1:1", "htb", "rate", "10gbit"})
-		for _, n := range all {
-			if n.pb.RateDown <= 0 {
-				continue
-			}
-			cls := fmt.Sprintf("1:%x", n.pb.Peer.ID+0x10)
-			rate := mbit(n.pb.RateDown)
-			cmds = append(cmds, []string{"class", "add", "dev", iface, "parent", "1:", "classid", cls, "htb", "rate", rate, "ceil", rate})
-			for _, p := range n.all() {
-				if p.Addr().Is4() {
-					cmds = append(cmds, []string{"filter", "add", "dev", iface, "parent", "1:", "protocol", "ip", "prio", "1", "u32", "match", "ip", "dst", p.String(), "flowid", cls})
-				} else {
-					cmds = append(cmds, []string{"filter", "add", "dev", iface, "parent", "1:", "protocol", "ipv6", "prio", "2", "u32", "match", "ip6", "dst", p.String(), "flowid", cls})
-				}
-			}
-		}
-	}
-	if anyUp {
-		cmds = append(cmds, []string{"qdisc", "add", "dev", iface, "handle", "ffff:", "ingress"})
-		for _, n := range all {
-			if n.pb.RateUp <= 0 {
-				continue
-			}
-			rate := mbit(n.pb.RateUp)
-			burst := fmt.Sprintf("%dk", max(32, int(n.pb.RateUp*1000/8/10))) // ~100 ms
-			for _, p := range n.all() {
-				if p.Addr().Is4() {
-					cmds = append(cmds, []string{"filter", "add", "dev", iface, "parent", "ffff:", "protocol", "ip", "prio", "1", "u32", "match", "ip", "src", p.String(), "police", "rate", rate, "burst", burst, "drop", "flowid", ":1"})
-				} else {
-					cmds = append(cmds, []string{"filter", "add", "dev", iface, "parent", "ffff:", "protocol", "ipv6", "prio", "2", "u32", "match", "ip6", "src", p.String(), "police", "rate", rate, "burst", burst, "drop", "flowid", ":1"})
-				}
-			}
-		}
-	}
-	var sig strings.Builder
-	for _, c := range cmds {
-		sig.WriteString(strings.Join(c, " ") + "\n")
-	}
-	h := ""
-	if len(cmds) > 0 {
-		h = hash(sig.String())
-	}
-	if env.GetState("tc:"+iface) == h {
-		if h == "" {
-			return nil
-		}
-		if out, err := sys.Run("tc", "qdisc", "show", "dev", iface); err == nil && (sys.DryRun() || strings.Contains(out, "htb") || strings.Contains(out, "ingress")) {
-			return nil
-		}
-	}
-	_, _ = sys.Run("tc", "qdisc", "del", "dev", iface, "root")
-	_, _ = sys.Run("tc", "qdisc", "del", "dev", iface, "ingress")
-	for _, c := range cmds {
-		if _, err := sys.Run("tc", c...); err != nil {
-			_, _ = sys.Run("tc", "qdisc", "del", "dev", iface, "root")
-			_, _ = sys.Run("tc", "qdisc", "del", "dev", iface, "ingress")
-			env.SetState("tc:"+iface, "")
-			return err
-		}
-	}
-	env.SetState("tc:"+iface, h)
-	return nil
+	return shaping.ApplyIface(env.Sys, iface, rules, env.GetState, env.SetState)
 }
 
 func mbit(v float64) string { return strconv.FormatFloat(v*1000, 'f', 0, 64) + "kbit" }

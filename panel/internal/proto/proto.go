@@ -62,6 +62,7 @@ type Global struct {
 	OutIf      string
 	XrayAPI    string
 	DataDir    string
+	PublicPort int    // TCP-Port von nginx (Panel, Abo, VLESS), 0 = 443
 	HookURL    string // interner HTTP-Endpunkt des Panels (z. B. Hysteria2-Anmeldung), ohne Schrägstrich am Ende
 	// Client: Art der App, die ein Abo abruft („singbox“ = Hiddify/sing-box, „v2raytun“ = v2RayTun), leer = unbekannt.
 	// Treiber können Links daran anpassen (z. B. Port-Hopping im Host-Teil statt mport).
@@ -253,6 +254,7 @@ type LiveSample struct {
 	Up, Down int64
 	Online   bool   // sicher verbunden (Handshake/Sitzung); sonst zählt Aktivität
 	Endpoint string // öffentliche Adresse, wenn bekannt
+	Since    int64  // verbunden seit (Unix), wenn der Dienst es kennt (OpenVPN); 0 = Engine schätzt
 }
 
 // SingBoxer: optional – Ausgang (outbound) bzw. Endpunkt (endpoint) eines Zugangs für das

@@ -39,6 +39,11 @@ func seedDemo(e *engine.Engine) error {
 		return err
 	}
 	_ = e.St.SaveServer(hy)
+	ov := &store.Server{Name: "OpenVPN", Protocol: "openvpn", Enabled: true, Settings: store.M{}}
+	if err := e.InitServer(ov); err != nil {
+		return err
+	}
+	_ = e.St.SaveServer(ov)
 
 	std := &store.Plan{Name: "Standard", Description: "100 GB im Monat, danach 5 Mbit/s",
 		Limits: store.Limits{TrafficGB: 100, Period: "monthly", ResetDay: 1, OnLimit: "throttle", LimitDownMbit: 5, LimitUpMbit: 2,
@@ -69,9 +74,10 @@ func seedDemo(e *engine.Engine) error {
 			{lab, "Arbeits-PC", "server", store.M{"routes": []string{"10.20.0.0/24"}}, false},
 			{vl, "martin", "access", store.M{}, false},
 			{hy, "martin", "access", store.M{}, true},
+			{ov, "OPNsense", "access", store.M{}, true},
 		}, 0},
 		{"anna", std, 62, []dev{{wg, "iPhone", "client", store.M{}, true}, {vl, "anna", "access", store.M{}, true}, {hy, "anna", "access", store.M{}, true}}, 0},
-		{"papa", std, 104, []dev{{vl, "papa", "access", store.M{}, false}}, 0},
+		{"papa", std, 104, []dev{{vl, "papa", "access", store.M{}, false}, {ov, "Büro-PC", "access", store.M{}, false}}, 0},
 		{"gast-tom", gast, 3.2, []dev{{wg, "Handy", "client", store.M{}, false}}, now.AddDate(0, 0, 4).Unix()},
 		{"lisa", gast, 10.5, []dev{{vl, "lisa", "access", store.M{}, false}}, 0},
 	}

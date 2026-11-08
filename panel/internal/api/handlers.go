@@ -746,7 +746,17 @@ func (a *API) peerConfig(w http.ResponseWriter, r *http.Request) {
 		*proto.ClientConfig
 		SubURL     string `json:"sub_url,omitempty"`
 		SingBoxURL string `json:"singbox_url,omitempty"`
+		ProfileURL string `json:"profile_url,omitempty"` // OpenVPN: .ovpn zum Herunterladen (über den Abo-Token)
+		ImportURL  string `json:"import_url,omitempty"`  // OpenVPN Connect: Profil per Link/QR übernehmen
 	}{ClientConfig: cc}
+	if p, err := a.St.Peer(id); err == nil {
+		if sv, err := a.St.Server(p.ServerID); err == nil && sv.Protocol == "openvpn" {
+			if u, err := a.St.User(p.UserID); err == nil {
+				resp.ProfileURL = a.subURL(r, u) + "/openvpn/" + strconv.FormatInt(p.ID, 10)
+				resp.ImportURL = "openvpn://import-profile/" + resp.ProfileURL
+			}
+		}
+	}
 	if len(cc.Links) > 0 {
 		if p, err := a.St.Peer(id); err == nil {
 			if u, err := a.St.User(p.UserID); err == nil {
@@ -900,12 +910,16 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	// Tunnelnetz geändert → Geräteadressen neu vergeben
-	if sv.Protocol == "wireguard" && (oldNets[0] != proto.Str(sv.Settings, "net4") || oldNets[1] != proto.Str(sv.Settings, "net6")) {
+	// Tunnelnetz geändert → Geräteadressen neu vergeben; neue OpenVPN-CA → neue Zertifikate
+	tunnel := sv.Protocol == "wireguard" || sv.Protocol == "openvpn"
+	netChanged := tunnel && (oldNets[0] != proto.Str(sv.Settings, "net4") || oldNets[1] != proto.Str(sv.Settings, "net6"))
+	if netChanged || (in.Regen && sv.Protocol == "openvpn") {
 		peers, _ := a.St.PeersOfServer(sv.ID)
-		for _, p := range peers {
-			delete(p.Settings, "address4")
-			delete(p.Settings, "address6")
+		if netChanged {
+			for _, p := range peers {
+				delete(p.Settings, "address4")
+				delete(p.Settings, "address6")
+			}
 		}
 		var done []*store.Peer
 		d, _ := proto.Get(sv.Protocol)
@@ -919,7 +933,9 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 		for _, p := range peers {
 			_ = a.St.SavePeer(p)
 		}
-		a.E.Log("warn", "Server "+sv.Name+": Tunnelnetz geändert – Geräte brauchen eine neue Konfiguration")
+		if netChanged {
+			a.E.Log("warn", "Server "+sv.Name+": Tunnelnetz geändert – Geräte brauchen eine neue Konfiguration")
+		}
 	}
 	if err := a.St.SaveServer(sv); err != nil {
 		fail(w, err)

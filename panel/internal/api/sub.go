@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"vpnpanel/internal/engine"
@@ -17,6 +18,10 @@ var subTokenRe = regexp.MustCompile(`^[a-f0-9]{32}$`)
 // subscription liefert das Abo für v2RayTun & Co. (Base64-Liste der Links + Traffic-Header).
 func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 	tok = strings.TrimSuffix(tok, "/")
+	var ovpnPeer string // <token>/openvpn/<Zugang>: .ovpn-Profil (OpenVPN steht nicht in der Link-Liste)
+	if t, rest, ok := strings.Cut(tok, "/openvpn/"); ok {
+		tok, ovpnPeer = t, rest
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "nicht erlaubt", http.StatusMethodNotAllowed)
 		return
@@ -28,6 +33,10 @@ func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 	u, err := a.St.UserByToken(tok)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if ovpnPeer != "" {
+		a.openVPNProfile(w, r, u.ID, ovpnPeer)
 		return
 	}
 	// Offizielle sing-box-Apps: fertiges JSON-Profil statt Link-Liste („Remote Profile“)
@@ -64,6 +73,27 @@ func (a *API) subscription(w http.ResponseWriter, r *http.Request, tok string) {
 	h.Set("subscription-userinfo", fmt.Sprintf("upload=%d; download=%d; total=%d; expire=%d", u.PeriodUp, u.PeriodDown, total, u.ExpiresAt))
 	h.Set("content-disposition", `attachment; filename="`+asciiName(title)+`"`)
 	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
+	_, _ = w.Write([]byte(body))
+}
+
+// openVPNProfile: .ovpn-Datei eines OpenVPN-Zugangs des Nutzers (für den Import-Link von
+// OpenVPN Connect und zum Herunterladen). Nur aktive Zugänge.
+func (a *API) openVPNProfile(w http.ResponseWriter, r *http.Request, userID int64, peer string) {
+	id, err := strconv.ParseInt(peer, 10, 64)
+	if err != nil || id <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	name, body, err := a.E.OpenVPNProfile(userID, id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/x-openvpn-profile")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Disposition", `attachment; filename="`+asciiName(name)+`"`)
 	_, _ = w.Write([]byte(body))
 }
 

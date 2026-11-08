@@ -1,6 +1,6 @@
 # vpn-setup
 
-WireGuard-Netze (Stern, Geräte mit Netzen dahinter), VLESS/Reality und Hysteria2 mit Webinterface:
+WireGuard-Netze (Stern, Geräte mit Netzen dahinter), VLESS/Reality, Hysteria2 und OpenVPN mit Webinterface:
 Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
 
 ## Installation
@@ -34,7 +34,7 @@ Danach läuft das Webinterface auf **https://<IP>:9443**, dazu der Befehl `vpn h
 Die erste Anmeldung steht in `/etc/vpn/panel-admin.txt`.
 
 **Offene Ports:** TCP 443 und 9443, UDP 51820 (WireGuard), UDP 443 (Hysteria2, bei Port-Hopping
-zusätzlich der UDP-Bereich).
+zusätzlich der UDP-Bereich), UDP 1194 bzw. der eingestellte Port (OpenVPN).
 
 **Cloudflare (optional):** Für Abo- und Panel-Domain hinter Cloudflare das Origin-Zertifikat als
 `/etc/vpn/sub-cert.pem` und `/etc/vpn/sub-key.pem` ablegen (muss beide Domains abdecken) und
@@ -78,6 +78,32 @@ ip6tables -t nat -A PREROUTING -i vmbr0 -d 2001:41d0:203:4a76::10 -p udp --dport
 
 Links bekommen `mport=20000-50000` (NekoBox, v2rayN); Hiddify erhält im Abo automatisch die
 Form `host:443,20000-50000`. Apps ohne Unterstützung nutzen weiter den normalen Port.
+
+## OpenVPN
+
+Für Geräte, die nur OpenVPN können (Router, Firewalls wie OPNsense/pfSense, Firmen-PCs mit
+OpenVPN Connect). Jeder OpenVPN-Server läuft als eigene Instanz (`vpn-openvpn@ovpn<ID>`,
+Konfiguration in `/etc/openvpn/vpn/`), Vorgabe UDP 1194, Tunnelnetz `10.66.0.0/24` und `fd66:66:66::/64`.
+
+- Eigene CA pro Server (ECDSA P-256), ein Zertifikat pro Zugang, `tls-crypt`: ohne Profil antwortet
+  der Server gar nicht.
+- Gesperrte, deaktivierte oder gelöschte Zugänge weist der Server sofort ab (`ccd-exclusive`) und trennt
+  laufende Verbindungen. „Neue Schlüssel“ beim Zugang macht das alte Profil ungültig, beim Server alle.
+- Profil: unter Zugänge → Konfiguration als `.ovpn`-Datei, als Download-Link oder als QR-Code für
+  OpenVPN Connect. OpenVPN steht nicht im Abo (die Abo-Apps können es nicht).
+- Geschwindigkeitslimits gelten wie bei WireGuard (tc auf `ovpn<ID>`).
+
+Im Container braucht OpenVPN `/dev/net/tun`. Auf dem Proxmox-Host in `/etc/pve/lxc/<ID>.conf`
+ergänzen und den Container neu starten, außerdem den Port weiterleiten:
+
+```
+lxc.cgroup2.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+```
+
+```bash
+iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 1194 -j DNAT --to-destination 10.10.10.3:1194
+```
 
 ## Abo (Hiddify, v2rayN, NekoBox)
 

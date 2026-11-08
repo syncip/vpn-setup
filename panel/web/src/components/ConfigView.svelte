@@ -23,7 +23,8 @@
       cc = r;
       // Zuerst der QR-Code dieses Zugangs (Protokoll), der Abo-Link nur auf Wunsch
       const f = r.files?.find((x) => x.qr);
-      if (f) show(f.content, `${f.name} – in der WireGuard-App scannen`);
+      if (r.import_url) show(r.import_url, 'In OpenVPN Connect scannen bzw. öffnen');
+      else if (f) show(f.content, `${f.name} – in der WireGuard-App scannen`);
       else if (r.links?.[0]) show(r.links[0].url, `Einzel-Link ${r.links[0].label}`);
       else if (r.sub_url) show(r.sub_url, 'Abo-Link – in v2RayTun & Co. als Abo hinzufügen');
       else show(null, '');
@@ -80,6 +81,24 @@
             <button class="btn sm icon" title="Kopieren" onclick={() => cp(l.url)}><Icon name="copy" size={15} /></button>
           </div>
         {/each}
+      </div>
+    {/if}
+
+    {#if cc.profile_url}
+      <div class="stack-sm">
+        <span class="label">Profil per Link (nur solange der Zugang aktiv ist)</span>
+        <div class="link">
+          <span class="badge accent">OpenVPN Connect</span>
+          <code class="grow ellipsis">{cc.import_url}</code>
+          <button class="btn sm icon" class:primary={qrFor === cc.import_url} title="QR-Code" onclick={() => show(cc.import_url, 'In OpenVPN Connect scannen bzw. öffnen')}><Icon name="qr" size={15} /></button>
+          <button class="btn sm icon" title="Kopieren" onclick={() => cp(cc.import_url)}><Icon name="copy" size={15} /></button>
+        </div>
+        <div class="link">
+          <span class="badge accent">.ovpn</span>
+          <code class="grow ellipsis">{cc.profile_url}</code>
+          <button class="btn sm icon" class:primary={qrFor === cc.profile_url} title="QR-Code (Download im Browser)" onclick={() => show(cc.profile_url, 'Download-Link – im Browser öffnen, Datei mit OpenVPN öffnen')}><Icon name="qr" size={15} /></button>
+          <button class="btn sm icon" title="Kopieren" onclick={() => cp(cc.profile_url)}><Icon name="copy" size={15} /></button>
+        </div>
       </div>
     {/if}
 

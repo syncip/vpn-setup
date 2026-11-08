@@ -91,7 +91,7 @@ func (e *Engine) Global() proto.Global {
 		hook = "http://" + e.Cfg.HookAddr + "/hook"
 	}
 	return proto.Global{ServerHost: e.Setting("server_host"), OutIf: e.Setting("out_interface"), XrayAPI: e.Setting("xray_api"),
-		DataDir: e.Cfg.DataDir, HookURL: hook}
+		DataDir: e.Cfg.DataDir, HookURL: hook, PublicPort: atoi(e.Setting("public_port"), 443)}
 }
 
 func (e *Engine) Env() *proto.Env {
@@ -520,6 +520,29 @@ func (e *Engine) ClientConfig(peerID int64) (*proto.ClientConfig, error) {
 		}
 	}
 	return nil, store.ErrNotFound
+}
+
+// OpenVPNProfile: .ovpn-Datei eines aktiven OpenVPN-Zugangs, der dem Nutzer gehört.
+func (e *Engine) OpenVPNProfile(userID, peerID int64) (name, body string, err error) {
+	snap, err := e.Snapshot()
+	if err != nil {
+		return "", "", err
+	}
+	pb := snap.Peers[peerID]
+	if pb == nil || pb.User.ID != userID || !pb.Active {
+		return "", "", store.ErrNotFound
+	}
+	for _, sb := range snap.Servers {
+		if sb.Server.ID == pb.Peer.ServerID && sb.Server.Protocol == "openvpn" {
+			d, _ := proto.Get("openvpn")
+			cc, err := d.ClientConfig(e.Env(), sb, pb)
+			if err != nil || len(cc.Files) == 0 {
+				return "", "", store.ErrNotFound
+			}
+			return cc.Files[0].Name, cc.Files[0].Content, nil
+		}
+	}
+	return "", "", store.ErrNotFound
 }
 
 // SubLinks: alle Links eines Nutzers für das Abo.

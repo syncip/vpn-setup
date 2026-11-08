@@ -170,7 +170,9 @@ func (e *Engine) sampleLive() {
 		}
 		p.Online = s.Online || now.Sub(ls.active[id]) < liveIdle
 		if p.Online {
-			if ls.since[id] == 0 {
+			if s.Since > 0 && s.Since <= now.Unix() { // Dienst kennt den Beginn der Verbindung
+				ls.since[id] = s.Since
+			} else if ls.since[id] == 0 {
 				ls.since[id] = now.Unix()
 			}
 			p.Since = ls.since[id]

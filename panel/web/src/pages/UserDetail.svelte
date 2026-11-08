@@ -119,7 +119,7 @@
   const subSummary = $derived.by(() => {
     const n = {};
     for (const p of d?.peers || []) {
-      if (!p.enabled || !p.active || (p.protocol === 'wireguard' && p.kind !== 'client')) continue;
+      if (!p.enabled || !p.active || p.protocol === 'openvpn' || (p.protocol === 'wireguard' && p.kind !== 'client')) continue;
       n[p.protocol] = (n[p.protocol] || 0) + 1;
     }
     return Object.entries(n).map(([k, c]) => `${c}× ${protocol(k)?.label || k}`).join(' · ');
@@ -322,7 +322,7 @@
       <div class="stack grow">
         <div>
           <h2>Abo-Link</h2>
-          <p class="muted small">Enthält alle aktiven Zugänge dieses Nutzers{subSummary ? ` (${subSummary})` : ''}: VLESS, Hysteria2 und WireGuard-Geräte „Handy / Laptop“. In Hiddify, v2rayNG, v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an. Hinweis: Hiddify (sing-box) kann VLESS mit aktuellem Xray nicht nutzen – dort Hysteria2 oder WireGuard wählen.</p>
+          <p class="muted small">Enthält alle aktiven Zugänge dieses Nutzers{subSummary ? ` (${subSummary})` : ''}: VLESS, Hysteria2 und WireGuard-Geräte „Handy / Laptop“. In Hiddify, v2rayNG, v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an. Hinweis: Hiddify (sing-box) kann VLESS mit aktuellem Xray nicht nutzen – dort Hysteria2 oder WireGuard wählen. OpenVPN steht nicht im Abo – jedes OpenVPN-Profil wird einzeln unter „Zugänge“ → „Konfiguration“ eingerichtet.</p>
         </div>
         <div class="input-group">
           <input class="input mono" readonly value={d.sub_url} />
@@ -341,7 +341,7 @@
             </div>
           </div>
         {/if}
-        <div class="help">Wurde der Link weitergegeben oder ist er bekannt geworden: „Neuen Link erzeugen“. Der alte Link funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen. Apps, die WireGuard nicht aus dem Abo übernehmen, richtest du über „Zugänge“ → „Konfiguration“ ein.</div>
+        <div class="help">Wurde der Link weitergegeben oder ist er bekannt geworden: „Neuen Link erzeugen“. Der alte Link (auch die OpenVPN-Profil-Links) funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen. Apps, die WireGuard nicht aus dem Abo übernehmen, richtest du über „Zugänge“ → „Konfiguration“ ein.</div>
       </div>
     </div>
   {:else if tab === 'settings'}

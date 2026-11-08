@@ -100,6 +100,9 @@
             <dt>Internet</dt><dd>{s.settings.internet ? 'über diesen Server' : 'nein (nur Netzwerk)'}</dd>
           {:else if s.protocol === 'vless'}
             <dt>Tarnziele</dt><dd>{(s.settings.targets || []).flatMap((t) => t.server_names).join(', ')}</dd>
+          {:else if s.protocol === 'openvpn'}
+            <dt>Tunnelnetz</dt><dd class="mono">{s.settings.net4}{s.settings.net6 ? ` · ${s.settings.net6}` : ''}</dd>
+            <dt>Internet</dt><dd>{s.settings.internet ? 'über diesen Server' : 'nein (nur Tunnelnetz)'}</dd>
           {:else if s.protocol === 'hysteria2'}
             <dt>Tarnung</dt><dd>{s.settings.masquerade || 'keine'}{s.settings.obfs ? ' · Salamander' : ''}</dd>
           {/if}
@@ -123,7 +126,7 @@
   {/each}
 </div>
 {#if loaded && !servers.length}
-  <div class="card empty"><h3>Noch keine Server</h3><p>Lege einen WireGuard- oder VLESS-Server an.</p><button class="btn primary" onclick={openNew}>Server hinzufügen</button></div>
+  <div class="card empty"><h3>Noch keine Server</h3><p>Lege einen WireGuard-, VLESS-, Hysteria2- oder OpenVPN-Server an.</p><button class="btn primary" onclick={openNew}>Server hinzufügen</button></div>
 {/if}
 
 <div class="notice" style="margin-top:18px">

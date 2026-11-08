@@ -94,6 +94,7 @@ type Dry struct {
 	log  []string
 	// Inputs: letzte stdin-Eingabe pro Befehl (für Tests, z. B. iptables-restore)
 	Inputs map[string]string
+	Stdin  []string // alle stdin-Eingaben der Reihe nach
 }
 
 func (d *Dry) DryRun() bool { return true }
@@ -125,6 +126,7 @@ func (d *Dry) RunInput(input, name string, args ...string) (string, error) {
 			d.Inputs = map[string]string{}
 		}
 		d.Inputs[name] = input
+		d.Stdin = append(d.Stdin, input)
 		d.mu.Unlock()
 	}
 	d.add(line)
