@@ -49,12 +49,17 @@ func peerOn(p *store.Peer) bool { return online(p.LastSeen) || liveOnline(p.ID) 
 
 // ---------- Meta & Übersicht ----------
 
+// checkUpdate: „Jetzt prüfen“ im Dashboard.
+func (a *API) checkUpdate(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, a.E.CheckUpdate(a.Version))
+}
+
 func (a *API) meta(w http.ResponseWriter, r *http.Request) {
 	var infos []proto.Info
 	for _, d := range proto.All() {
 		infos = append(infos, d.Info())
 	}
-	writeJSON(w, map[string]any{"protocols": infos, "version": a.Version, "dry_run": a.E.Sys.DryRun(),
+	writeJSON(w, map[string]any{"protocols": infos, "version": a.Version, "update": a.E.Update(a.Version), "dry_run": a.E.Sys.DryRun(),
 		"server_host": a.E.Setting("server_host"), "sub_host": a.E.Setting("sub_host")})
 }
 

@@ -135,7 +135,7 @@ systemctl stop vpnpanel 2>/dev/null || true
 echo ">> Pakete installieren"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx openvpn
+  wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx openvpn   iputils-ping conntrack
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnginx-mod-stream || true
 
 echo ">> Forwarding aktivieren"
@@ -148,6 +148,8 @@ sysctl -p /etc/sysctl.d/99-vpn.conf >/dev/null
 mkdir -p /etc/wireguard && chmod 700 /etc/wireguard
 # OpenVPN: eigene Instanzen des Panels (vpn-openvpn@ovpn<ID>), Debians Vorlagen bleiben ungenutzt
 mkdir -p /etc/openvpn/vpn && chmod 755 /etc/openvpn/vpn  # OpenVPN liest das ccd-Verzeichnis als „nobody“
+# Ausgänge (externe VPNs für Proxy/Gruppen): bereinigte Konfigurationen mit Zugangsdaten
+mkdir -p /etc/vpn/exits && chmod 700 /etc/vpn/exits
 
 # Installer erst herunterladen, dann ausführen – bei bash -c "$(curl …)" würde ein
 # fehlgeschlagener Download trotz set -e unbemerkt durchrutschen.

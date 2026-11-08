@@ -9,6 +9,8 @@
   import Servers from './pages/Servers.svelte';
   import Plans from './pages/Plans.svelte';
   import Settings from './pages/Settings.svelte';
+  import Proxy from './pages/Proxy.svelte';
+  import IPLists from './pages/IPLists.svelte';
   import { session, meta, toasts, route, go } from './lib/state.svelte.js';
   import { get, post } from './lib/api.js';
 
@@ -35,6 +37,8 @@
     { path: '/users', label: 'Nutzer', icon: 'users' },
     { path: '/network', label: 'Netzwerk', icon: 'network' },
     { path: '/servers', label: 'Server', icon: 'server' },
+    { path: '/proxy', label: 'Proxy', icon: 'route' },
+    { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
     { path: '/plans', label: 'Tarife & Limits', icon: 'tag' },
     { path: '/settings', label: 'Einstellungen', icon: 'settings' },
   ];
@@ -80,6 +84,10 @@
         <div>
           <div class="strong">VPN-Panel</div>
           <div class="tiny host">{meta.server_host}</div>
+          <div class="tiny ver">
+            v{meta.version}
+            {#if meta.update?.available}<a class="upd" href={meta.update.url} target="_blank" rel="noopener noreferrer" title="Neue Version {meta.update.latest}">Update {meta.update.latest}</a>{/if}
+          </div>
         </div>
       </div>
       <nav>
@@ -111,6 +119,10 @@
         <Network id={Number(parts[1]) || 0} view={parts[2] || 'map'} />
       {:else if section === '/servers'}
         <Servers />
+      {:else if section === '/proxy'}
+        <Proxy />
+      {:else if section === '/iplists'}
+        <IPLists />
       {:else if section === '/plans'}
         <Plans />
       {:else if section === '/settings'}
@@ -132,6 +144,21 @@
 <style>
   .boot {
     min-height: 100vh;
+  }
+  .ver {
+    opacity: 0.7;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .upd {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 999px;
+    padding: 0 7px;
+    font-weight: 600;
+    opacity: 1;
+    text-decoration: none;
   }
   .layout {
     display: flex;

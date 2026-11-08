@@ -5,5 +5,5 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 (cd web && npm ci && npm run build)
 go test ./...
 mkdir -p dist
-GOOS=linux GOARCH=${GOARCH:-amd64} CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "dist/vpnpanel-linux-${GOARCH:-amd64}" .
+GOOS=linux GOARCH=${GOARCH:-amd64} CGO_ENABLED=0 go build -trimpath -ldflags="-s -w ${VERSION:+-X main.version=${VERSION#v}}" -o "dist/vpnpanel-linux-${GOARCH:-amd64}" .
 echo "Fertig: $(pwd)/dist/vpnpanel-linux-${GOARCH:-amd64}"

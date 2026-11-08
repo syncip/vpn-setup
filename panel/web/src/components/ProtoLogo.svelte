@@ -4,10 +4,11 @@
   import vless from '../assets/logos/vless.svg';
   import hysteria2 from '../assets/logos/hysteria2.svg';
   import openvpn from '../assets/logos/openvpn.svg';
+  import proxy from '../assets/logos/proxy.svg';
   import { PROTO_LABEL } from '../lib/format.js';
 
   let { id, size = 20, label = false } = $props();
-  const LOGOS = { wireguard, vless, hysteria2, openvpn };
+  const LOGOS = { wireguard, vless, hysteria2, openvpn, proxy };
   const name = $derived(PROTO_LABEL[id] || id);
 </script>
 

@@ -87,7 +87,7 @@ export function limitsSummary(l) {
 
 export const fmtNum = (n) => (Number(n) || 0).toLocaleString('de-DE', { maximumFractionDigits: 2 });
 
-export const PROTO_LABEL = { wireguard: 'WireGuard', vless: 'VLESS', hysteria2: 'Hysteria2', openvpn: 'OpenVPN' };
+export const PROTO_LABEL = { wireguard: 'WireGuard', vless: 'VLESS', hysteria2: 'Hysteria2', openvpn: 'OpenVPN', proxy: 'Proxy' };
 
 // copy kopiert in die Zwischenablage; Fallback für Browser ohne Clipboard-API (z. B. ohne HTTPS).
 export async function copy(text) {

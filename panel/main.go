@@ -26,6 +26,7 @@ import (
 	"vpnpanel/internal/engine"
 	_ "vpnpanel/internal/proto/hysteria2"
 	_ "vpnpanel/internal/proto/openvpn"
+	_ "vpnpanel/internal/proto/proxy"
 	"vpnpanel/internal/proto/shaping"
 	_ "vpnpanel/internal/proto/vless"
 	_ "vpnpanel/internal/proto/wireguard"
@@ -34,7 +35,8 @@ import (
 	"vpnpanel/internal/webui"
 )
 
-var version = "1.0.0"
+// version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
+var version = "0.7.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -122,6 +124,9 @@ func serve(args []string) {
 		if err := seedDemo(e); err != nil {
 			log.Printf("Demo-Daten: %v", err)
 		}
+		if err := seedDemoExits(e); err != nil {
+			log.Printf("Demo-Ausgänge: %v", err)
+		}
 	}
 	ensureAdmin(e, o)
 
@@ -134,6 +139,8 @@ func serve(args []string) {
 	done := make(chan struct{})
 	go func() { e.Run(stop); close(done) }()
 	go e.RunLive(stop)
+	go e.RunUpdateCheck(stop, version)
+	go e.RunExits(stop)
 
 	secure := o.cert != "" || !o.dev
 	a := api.New(e, webui.FS(), secure, version)

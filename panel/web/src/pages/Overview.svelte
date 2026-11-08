@@ -4,15 +4,17 @@
   import TrafficPanel from '../components/TrafficPanel.svelte';
   import LivePanel from '../components/LivePanel.svelte';
   import PageHead from '../components/PageHead.svelte';
-  import { get } from '../lib/api.js';
-  import { bytes, date } from '../lib/format.js';
-  import { protocol } from '../lib/state.svelte.js';
+  import { get, post, run } from '../lib/api.js';
+  import { bytes, date, ago } from '../lib/format.js';
+  import { protocol, meta } from '../lib/state.svelte.js';
 
   let d = $state(null);
   let refresh = $state(0);
   let err = $state('');
 
+  let ex = $state(null);
   async function load() {
+    get('/exits').then((x) => (ex = x)).catch(() => {});
     try {
       d = await get('/overview');
       err = '';
@@ -25,6 +27,15 @@
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   });
+
+  let upChecking = $state(false);
+  async function checkUpdate() {
+    upChecking = true;
+    const r = await run(() => post('/update/check'));
+    upChecking = false;
+    if (r) meta.update = r;
+  }
+  const GSTATE = { ok: ['ok', 'OK'], failover: ['warn', 'Ausweich'], blocked: ['bad', 'gesperrt'], direct: ['warn', 'direkt'], waiting: ['muted', 'prüft'] };
 
   const topMax = $derived(Math.max(1, ...(d?.top || []).map((t) => t.up + t.down)));
   const alertTone = { blocked: 'bad', expired: 'bad', throttled: 'warn', limit: 'warn', expiring: 'warn' };
@@ -49,6 +60,41 @@
   {/if}
 
   <LivePanel />
+
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card card-pad stat">
+      <div class="pill-icon"><Icon name={meta.update?.available ? 'download' : 'check'} /></div>
+      <div class="grow">
+        <div class="muted small">Version</div>
+        <div class="big">v{meta.version}</div>
+        <div class="tiny muted">
+          {#if meta.update?.disabled}Update-Prüfung ausgeschaltet
+          {:else if meta.update?.available}<a href={meta.update.url} target="_blank" rel="noopener noreferrer"><b>Neue Version {meta.update.latest} verfügbar</b></a> – Einspielen wie in der README beschrieben
+          {:else if meta.update?.error}Prüfung fehlgeschlagen: {meta.update.error}
+          {:else if meta.update?.checked}Aktuell (geprüft {ago(meta.update.checked)})
+          {:else}Noch nicht geprüft{/if}
+        </div>
+      </div>
+      {#if !meta.update?.disabled}<button class="btn sm" onclick={checkUpdate} disabled={upChecking}><Icon name="refresh" size={14} /> Jetzt prüfen</button>{/if}
+    </div>
+    <a class="card card-pad stat link-card" href="#/proxy">
+      <div class="pill-icon"><Icon name="route" /></div>
+      <div class="grow">
+        <div class="muted small">Ausgangsgruppen</div>
+        {#if ex?.groups?.length}
+          <div class="groups">
+            {#each ex.groups as g}
+              {@const st = GSTATE[g.status?.state] || ['muted', g.enabled ? 'prüft' : 'aus']}
+              {@const act = ex.exits.find((e) => e.id === g.status?.active)}
+              <div class="small"><span class="badge {st[0]}">{st[1]}</span> <b>{g.name}</b> <span class="muted">→ {act ? act.name : 'kein Ausgang'}{act?.status?.loc ? ` (${act.status.loc})` : ''}</span></div>
+            {/each}
+          </div>
+        {:else}
+          <div class="tiny muted">Keine – im Menü Proxy lassen sich externe VPNs als Ausgang einrichten.</div>
+        {/if}
+      </div>
+    </a>
+  </div>
 
   <div class="grid cols-4" style="margin-top:16px">
     <div class="card card-pad stat">
@@ -155,6 +201,16 @@
 {/if}
 
 <style>
+  .link-card {
+    color: inherit;
+    text-decoration: none;
+  }
+  .groups {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+  }
   .stat {
     display: flex;
     gap: 14px;

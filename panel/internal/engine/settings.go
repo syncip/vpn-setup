@@ -33,7 +33,11 @@ func ValidateSetting(k, v string) (string, error) {
 		if !ifaceRe.MatchString(v) {
 			return "", fmt.Errorf("Schnittstelle ungültig")
 		}
-	case "trust_cloudflare":
+	case "exit_speedtest":
+		if n, err := strconv.Atoi(v); err != nil || n < 0 {
+			return "", fmt.Errorf("%s: bitte eine Zahl ab 0", k)
+		}
+	case "trust_cloudflare", "update_check":
 		if v != "0" && v != "1" {
 			v = "0"
 		}

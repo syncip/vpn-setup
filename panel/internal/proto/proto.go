@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"sort"
 
 	"golang.org/x/crypto/curve25519"
@@ -67,6 +68,60 @@ type Global struct {
 	// Client: Art der App, die ein Abo abruft („singbox“ = Hiddify/sing-box, „v2raytun“ = v2RayTun), leer = unbekannt.
 	// Treiber können Links daran anpassen (z. B. Port-Hopping im Host-Teil statt mport).
 	Client string
+	// Groups: Ausgangsgruppen (externe VPNs) – Verbindungen mit Mark laufen über den aktiven Ausgang.
+	Groups map[int64]GroupRoute
+	// ACLs: Sperr-/Freigabelisten je Server-ID (nil = keine Einschränkung). Die Engine setzt sie per
+	// iptables auf den Ports aus Ports() durch; Treiber mit geteiltem Port (VLESS) über SelfACL selbst.
+	ACLs map[int64]*ACL
+}
+
+// ACL: Wer darf sich mit einem Server verbinden?
+type ACL struct {
+	Deny      []netip.Prefix
+	Allow     []netip.Prefix
+	AllowOnly bool // es gibt eine Freigabeliste → nur deren Adressen
+}
+
+// Allowed: darf diese Client-Adresse verbinden?
+func (a *ACL) Allowed(ip netip.Addr) bool {
+	if a == nil {
+		return true
+	}
+	ip = ip.Unmap()
+	for _, p := range a.Deny {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	if !a.AllowOnly {
+		return true
+	}
+	for _, p := range a.Allow {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// SelfACL: Treiber setzt die Listen selbst durch (z. B. VLESS hinter dem gemeinsamen Port 443).
+type SelfACL interface {
+	SelfACL() bool
+}
+
+// GroupRoute: wie ein Treiber Verkehr über eine Ausgangsgruppe schickt.
+type GroupRoute struct {
+	ID      int64
+	Name    string
+	Enabled bool
+	Mark    uint32   // SO_MARK für Sockets
+	DNS     []string // DNS-Server, die über die Gruppe abgefragt werden
+}
+
+// GroupSwitcher: optional – wird aufgerufen, wenn eine Gruppe den Ausgang wechselt
+// (z. B. bestehende Proxy-Verbindungen trennen, damit sie über den neuen Ausgang aufgebaut werden).
+type GroupSwitcher interface {
+	GroupSwitched(groupID int64)
 }
 
 type Env struct {

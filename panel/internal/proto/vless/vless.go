@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
@@ -294,6 +295,7 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 			"streamSettings": map[string]any{"sockopt": map[string]any{"mark": markBase + id}}})
 		rules = append(rules, map[string]any{"type": "field", "user": byUser[id], "outboundTag": tag})
 	}
+	rules = aclRules(env, ins, rules)
 	cfg := map[string]any{
 		"log":   map[string]any{"loglevel": "warning"},
 		"api":   map[string]any{"tag": "api", "listen": env.Global.XrayAPI, "services": []string{"StatsService"}},
@@ -466,6 +468,60 @@ func (Driver) ShareLinks(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerB
 		out = append(out, l.URL)
 	}
 	return out
+}
+
+// SelfACL: VLESS teilt sich Port 443 mit Panel und Abo – die IP-Listen setzt Xray durch
+// (Routing nach Quelladresse, die über das PROXY-Protocol von nginx bekannt ist).
+func (Driver) SelfACL() bool { return true }
+
+// aclRules stellt die Regeln der IP-Listen vor die übrigen Routing-Regeln.
+func aclRules(env *proto.Env, ins []inbound, rules []map[string]any) []map[string]any {
+	if len(env.Global.ACLs) == 0 {
+		return rules
+	}
+	tags := map[int64][]string{}
+	var ids []int64
+	for _, in := range ins {
+		id := in.sb.Server.ID
+		if tags[id] == nil {
+			ids = append(ids, id)
+		}
+		tags[id] = append(tags[id], in.tag)
+	}
+	strs := func(p []netip.Prefix) []string {
+		out := make([]string, len(p))
+		for i, x := range p {
+			out[i] = x.String()
+		}
+		return out
+	}
+	var out []map[string]any
+	for _, id := range ids {
+		a := env.Global.ACLs[id]
+		if a == nil {
+			continue
+		}
+		if len(a.Deny) > 0 {
+			out = append(out, map[string]any{"type": "field", "inboundTag": tags[id], "source": strs(a.Deny), "outboundTag": "block"})
+		}
+		if !a.AllowOnly {
+			continue
+		}
+		if len(a.Allow) > 0 {
+			allow := strs(a.Allow)
+			for _, r := range rules { // Drosselung gilt auch für freigegebene Adressen
+				c := map[string]any{}
+				for k, v := range r {
+					c[k] = v
+				}
+				c["inboundTag"], c["source"] = tags[id], allow
+				out = append(out, c)
+			}
+			out = append(out, map[string]any{"type": "field", "inboundTag": tags[id], "source": allow, "outboundTag": "direct"})
+		}
+		out = append(out, map[string]any{"type": "field", "inboundTag": tags[id], "outboundTag": "block"})
+	}
+	return append(out, rules...)
 }
 
 func (Driver) Ports(srv *store.Server) []proto.Port {

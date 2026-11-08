@@ -2,11 +2,21 @@
   import Icon from './Icon.svelte';
   import ListInput from './ListInput.svelte';
   import TargetsInput from './TargetsInput.svelte';
+  import { get } from '../lib/api.js';
 
   // Formular aus Feldbeschreibungen der Protokolltreiber.
   // fields: [{key,label,type,default,options,help,advanced,kinds,placeholder}]
   let { fields = [], values = $bindable({}), kind = '', peers = [] } = $props();
   let showAdv = $state(false);
+
+  // Ausgangsgruppen für Felder vom Typ „exitgroup“ (Proxy)
+  let groups = $state(null);
+  $effect(() => {
+    if (groups === null && fields.some((f) => f.type === 'exitgroup')) {
+      groups = [];
+      get('/exits').then((d) => (groups = d.groups)).catch(() => {});
+    }
+  });
 
   const visible = $derived(fields.filter((f) => !f.kinds?.length || f.kinds.includes(kind)));
   const basic = $derived(visible.filter((f) => !f.advanced && shown(f)));
@@ -40,6 +50,12 @@
         <select id="f-{f.key}" class="input" bind:value={values[f.key]}>
           {#each f.options as o}<option value={o.value}>{o.label}</option>{/each}
         </select>
+      {:else if f.type === 'exitgroup'}
+        <select id="f-{f.key}" class="input" bind:value={values[f.key]}>
+          <option value={0}>Direkt über den Server</option>
+          {#each groups || [] as g}<option value={g.id}>{g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
+        </select>
+        {#if groups && !groups.length}<div class="help">Noch keine Ausgangsgruppen – im Menü <a href="#/proxy">Proxy</a> anlegen.</div>{/if}
       {:else if f.type === 'number'}
         <input id="f-{f.key}" class="input" type="number" value={values[f.key] ?? ''} oninput={(e) => num(e, f.key)} placeholder={f.placeholder || ''} />
       {:else if f.type === 'cidrlist' || f.type === 'textlist'}

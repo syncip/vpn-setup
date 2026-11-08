@@ -59,3 +59,14 @@ func TestLive(t *testing.T) {
 		}
 	}
 }
+
+func TestNewerVersion(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{{"v0.7.1", "0.7.0", true}, {"v0.7.0", "0.7.0", false}, {"v0.6.9", "0.7.0", false}, {"v1.0", "0.9.9", true}, {"v0.10.0", "0.9.0", true}, {"latest", "0.7.0", false}, {"v0.8.0-rc1", "0.7.0", true}} {
+		if got := newerVersion(c.a, c.b); got != c.want {
+			t.Errorf("%s > %s: %v", c.a, c.b, got)
+		}
+	}
+}

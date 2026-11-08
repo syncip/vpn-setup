@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"vpnpanel/internal/exits"
 	"vpnpanel/internal/proto"
 	"vpnpanel/internal/proto/shaping"
 	"vpnpanel/internal/store"
@@ -35,12 +36,14 @@ type Engine struct {
 	errMu   sync.Mutex
 
 	live     liveState
+	upd      updateState
+	Exits    *exits.Manager
 	liveKick chan struct{}
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
 	return &Engine{St: st, Sys: sys, Cfg: cfg, applyCh: make(chan struct{}, 1), lastErr: map[string]string{},
-		liveKick: make(chan struct{}, 1)}
+		liveKick: make(chan struct{}, 1), Exits: exits.New()}
 }
 
 // ---------- Einstellungen ----------
@@ -58,6 +61,8 @@ var settingDefaults = map[string]string{
 	"public_port":         "443",
 	"trust_cloudflare":    "1",
 	"session_hours":       "168",
+	"update_check":        "1",   // 0 = nicht bei GitHub nach neuen Versionen fragen
+	"exit_speedtest":      "360", // Minuten zwischen Geschwindigkeitstests der Ausgänge, 0 = aus
 }
 
 func (e *Engine) Setting(k string) string { return e.St.GetSetting(k, settingDefaults[k]) }
@@ -91,7 +96,7 @@ func (e *Engine) Global() proto.Global {
 		hook = "http://" + e.Cfg.HookAddr + "/hook"
 	}
 	return proto.Global{ServerHost: e.Setting("server_host"), OutIf: e.Setting("out_interface"), XrayAPI: e.Setting("xray_api"),
-		DataDir: e.Cfg.DataDir, HookURL: hook, PublicPort: atoi(e.Setting("public_port"), 443)}
+		DataDir: e.Cfg.DataDir, HookURL: hook, PublicPort: atoi(e.Setting("public_port"), 443), Groups: e.groupRoutes(), ACLs: e.acls()}
 }
 
 func (e *Engine) Env() *proto.Env {
@@ -203,8 +208,11 @@ func (e *Engine) applyLocked() error {
 	e.live.mu.Lock()
 	e.live.snap = nil // Live-Anzeige: Namen/Zugänge neu laden
 	e.live.mu.Unlock()
-	env := e.Env()
 	var errs []string
+	if err := e.applyExits(); err != nil {
+		errs = append(errs, "Ausgänge: "+err.Error())
+	}
+	env := e.Env()
 	for _, d := range proto.All() {
 		id := d.Info().ID
 		if err := d.Apply(env, snap.ByProto[id]); err != nil {
@@ -213,6 +221,12 @@ func (e *Engine) applyLocked() error {
 		} else {
 			e.setErr(id, "")
 		}
+	}
+	if err := e.applyACL(snap, env.Global.ACLs); err != nil {
+		errs = append(errs, "IP-Listen: "+err.Error())
+		e.setErr("acl", err.Error())
+	} else {
+		e.setErr("acl", "")
 	}
 	if err := shaping.Apply(e.Sys, env.Global.OutIf, env.Shape, env.GetState, env.SetState, e.Log); err != nil {
 		e.Log("warn", "Geschwindigkeitsbegrenzung: "+err.Error())

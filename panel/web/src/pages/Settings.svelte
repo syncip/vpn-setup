@@ -121,6 +121,7 @@
     { key: 'sub_update_interval', label: 'Abo-Aktualisierung (Stunden)', help: 'Wie oft die App das Abo neu lädt.', num: true },
     { key: 'traffic_retention', label: 'Verlauf aufbewahren (Tage)', num: true },
     { key: 'session_hours', label: 'Anmeldung gültig (Stunden)', num: true },
+    { key: 'exit_speedtest', label: 'Geschwindigkeitstest der Ausgänge (Minuten)', help: '0 = aus. Jeder Test lädt 5 MB über den Ausgang (Menü Proxy).', num: true },
   ];
   let showAdv = $state(false);
 </script>
@@ -140,6 +141,7 @@
         <div class="field"><label for="s-{f.key}">{f.label}</label><input id="s-{f.key}" class="input" bind:value={s[f.key]} />{#if f.help}<div class="help">{f.help}</div>{/if}</div>
       {/each}
       <label class="switch"><input type="checkbox" checked={s.trust_cloudflare === '1'} onchange={(e) => (s.trust_cloudflare = e.currentTarget.checked ? '1' : '0')} /><span class="track"></span> Echte Besucher-IP von Cloudflare übernehmen (CF-Connecting-IP)</label>
+      <label class="switch"><input type="checkbox" checked={s.update_check !== '0'} onchange={(e) => (s.update_check = e.currentTarget.checked ? '1' : '0')} /><span class="track"></span> Nach neuen Versionen suchen (fragt alle 12 Stunden bei GitHub nach, ohne Daten mitzuschicken)</label>
       <button type="button" class="btn ghost sm" style="align-self:flex-start" onclick={() => (showAdv = !showAdv)}><Icon name={showAdv ? 'chevron-down' : 'chevron'} size={15} /> Erweitert</button>
       {#if showAdv}
         <div class="grid cols-2">

@@ -60,6 +60,10 @@ var migrations = []string{
 	 CREATE TABLE sessions (id TEXT PRIMARY KEY, admin_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE, created INTEGER NOT NULL,
 	   expires INTEGER NOT NULL, last_used INTEGER NOT NULL, ip TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '');
 	 CREATE TABLE events (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, level TEXT NOT NULL, msg TEXT NOT NULL);`,
+	// Ausgänge (externe VPNs), Ausgangsgruppen, IP-Listen
+	`CREATE TABLE objects (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+	   data TEXT NOT NULL DEFAULT '{}', secrets TEXT NOT NULL DEFAULT '{}', created INTEGER NOT NULL);
+	 CREATE INDEX objects_kind ON objects(kind);`,
 }
 
 func (s *Store) migrate() error {

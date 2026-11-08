@@ -2,6 +2,7 @@ package main
 
 import (
 	"math/rand"
+	"strconv"
 	"time"
 
 	"vpnpanel/internal/engine"
@@ -54,10 +55,10 @@ func seedDemo(e *engine.Engine) error {
 
 	now := time.Now()
 	type dev struct {
-		srv            *store.Server
-		name, kind     string
-		settings       store.M
-		online         bool
+		srv        *store.Server
+		name, kind string
+		settings   store.M
+		online     bool
 	}
 	users := []struct {
 		name   string
@@ -141,4 +142,43 @@ func seedDemo(e *engine.Engine) error {
 	}
 	e.Log("info", "Demo-Daten angelegt")
 	return nil
+}
+
+// seedDemoExits: Beispiel-Ausgänge, eine Gruppe, ein Proxy und eine IP-Liste (nur Testmodus).
+func seedDemoExits(e *engine.Engine) error {
+	if o, _ := e.St.Objects("exit"); len(o) > 0 {
+		return nil
+	}
+	key := func() string { k, _, _ := proto.X25519(); return proto.B64(k) }
+	pub := func() string { _, p, _ := proto.X25519(); return proto.B64(p) }
+	var ids []int64
+	for i, loc := range []string{"USA Ost", "USA West", "Niederlande"} {
+		conf := "[Interface]\nPrivateKey = " + key() + "\nAddress = 100.64.0." + strconv.Itoa(i+2) + "/32\nDNS = 10.255.255.1\nPostUp = echo entfernt\n\n[Peer]\nPublicKey = " +
+			pub() + "\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn" + strconv.Itoa(i+1) + ".example.net:443\n"
+		o := &store.Object{Kind: "exit", Name: "Anbieter " + loc, Enabled: true, Data: store.M{"type": "wireguard", "slot": i + 1, "removed": []string{"DNS", "PostUp"}},
+			Secrets: store.M{"config": conf}}
+		if err := e.St.SaveObject(o); err != nil {
+			return err
+		}
+		ids = append(ids, o.ID)
+	}
+	g := &store.Object{Kind: "group", Name: "USA", Enabled: true, Data: store.M{"slot": 1, "exits": ids[:2], "on_fail": "block", "max_loss": 20, "max_rtt": 400}}
+	if err := e.St.SaveObject(g); err != nil {
+		return err
+	}
+	px := &store.Server{Name: "Proxy USA", Protocol: "proxy", Enabled: true, Settings: store.M{"group": float64(g.ID), "socks_port": float64(11080), "http_port": float64(18080)}}
+	if err := e.InitServer(px); err != nil {
+		return err
+	}
+	if err := e.St.SaveServer(px); err != nil {
+		return err
+	}
+	if users, _ := e.St.Users(); len(users) > 0 {
+		p := &store.Peer{UserID: users[0].ID, ServerID: px.ID, Name: "Fernseher", Enabled: true, Settings: store.M{}, Secrets: store.M{}}
+		if err := e.InitPeer(px, p); err == nil {
+			_ = e.St.SavePeer(p)
+		}
+	}
+	return e.St.SaveObject(&store.Object{Kind: "iplist", Name: "Gesperrt", Enabled: true,
+		Data: store.M{"mode": "block", "all": true, "entries": []string{"192.0.2.0/24", "198.51.100.66/32"}}})
 }

@@ -54,6 +54,7 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/admins/{id}", a.auth(a.deleteAdmin))
 
 	api.HandleFunc("GET /api/meta", a.auth(a.meta))
+	api.HandleFunc("POST /api/update/check", a.auth(a.checkUpdate))
 	api.HandleFunc("GET /api/overview", a.auth(a.overview))
 
 	api.HandleFunc("GET /api/users", a.auth(a.listUsers))
@@ -84,6 +85,20 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("POST /api/plans", a.auth(a.createPlan))
 	api.HandleFunc("PUT /api/plans/{id}", a.auth(a.updatePlan))
 	api.HandleFunc("DELETE /api/plans/{id}", a.auth(a.deletePlan))
+
+	api.HandleFunc("GET /api/exits", a.auth(a.listExits))
+	api.HandleFunc("POST /api/exits", a.auth(a.createExit))
+	api.HandleFunc("PUT /api/exits/{id}", a.auth(a.updateExit))
+	api.HandleFunc("DELETE /api/exits/{id}", a.auth(a.deleteExit))
+	api.HandleFunc("POST /api/exits/check", a.auth(a.checkExits))
+	api.HandleFunc("POST /api/groups", a.auth(a.createGroup))
+	api.HandleFunc("PUT /api/groups/{id}", a.auth(a.updateGroup))
+	api.HandleFunc("DELETE /api/groups/{id}", a.auth(a.deleteGroup))
+	api.HandleFunc("POST /api/groups/{id}/switch", a.auth(a.switchGroup))
+	api.HandleFunc("GET /api/iplists", a.auth(a.listIPLists))
+	api.HandleFunc("POST /api/iplists", a.auth(a.createIPList))
+	api.HandleFunc("PUT /api/iplists/{id}", a.auth(a.updateIPList))
+	api.HandleFunc("DELETE /api/iplists/{id}", a.auth(a.deleteIPList))
 
 	api.HandleFunc("GET /api/settings", a.auth(a.getSettings))
 	api.HandleFunc("PUT /api/settings", a.auth(a.putSettings))

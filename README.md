@@ -105,6 +105,58 @@ lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
 iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 1194 -j DNAT --to-destination 10.10.10.3:1194
 ```
 
+## Proxy und Ausgänge (externe VPNs)
+
+Menü **Proxy**: SOCKS5- und HTTP-Proxy mit Benutzername und Passwort, z. B. für Fernseher und Apps.
+Der Verkehr läuft direkt über den Server oder über eine **Ausgangsgruppe** – also über externe
+VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anbieter) hochgeladen wird.
+
+- **Ausgänge:** Hochgeladene Konfigurationen werden bereinigt: übernommen werden nur Schlüssel, Adresse,
+  Gegenstelle und Verschlüsselung. Skripte (`PostUp`, `up`/`down`), Routen, DNS-Änderungen,
+  `redirect-gateway`, Plugins und Verweise auf fremde Dateien fallen weg (die Oberfläche zeigt, was
+  entfernt wurde). Jeder Ausgang bekommt eine Schnittstelle `ex<ID>` ohne Route in der Haupttabelle –
+  der Server selbst bleibt unverändert erreichbar. Eingehende Verbindungen über einen Ausgang werden
+  verworfen, TCP-MSS wird angepasst. Nur IPv4.
+- **Gruppen:** mehrere Ausgänge in fester Reihenfolge. Alle 30 Sekunden prüft der Server jeden Ausgang
+  (Ping, HTTPS-Abruf über den Tunnel → öffentliche IP und Land; auf Wunsch ein Geschwindigkeitstest mit
+  5 MB, Einstellung `exit_speedtest`). Überschreitet der aktive Ausgang die Grenzen (Verlust,
+  Antwortzeit, Mindesttempo), übernimmt der nächste. Zurück geht es, wenn der bevorzugte Ausgang
+  10 Minuten stabil war. Fallen alle aus: **sperren** (kein Verkehr) oder **direkt** über den Server.
+  Von Hand umschalten macht den gewählten Ausgang zum bevorzugten; Ausgang 1 wählen = normale Reihenfolge.
+- **DNS** der Proxy-Nutzer wird über den aktiven Ausgang aufgelöst (DNS-Server je Gruppe).
+- **Proxy-Zugänge** hängen wie alle Zugänge am Nutzer (Limits, Drosselung, Statistik, Sperre).
+  Geräte ohne Passwort-Unterstützung (viele Fernseher): beim Zugang „Anmeldung per IP“ mit der festen
+  öffentlichen Adresse des Anschlusses.
+- Über den Proxy sind lokale Ziele (Container, Proxmox-Host, private Netze, Tailscale) und Port 25
+  (Mailversand) gesperrt. Nach 10 falschen Anmeldungen in einer Minute wird die Adresse 5 Minuten
+  abgewiesen.
+- Die Proxy-Verbindung selbst ist **unverschlüsselt** (Benutzername/Passwort können mitgelesen werden;
+  HTTPS-Inhalte bleiben verschlüsselt).
+
+Ports auf dem Proxmox-Host weiterleiten (Vorgabe SOCKS5 1080, HTTP 8080, beide TCP):
+
+```bash
+iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 1080 -j DNAT --to-destination 10.10.10.3:1080
+iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 8080 -j DNAT --to-destination 10.10.10.3:8080
+```
+
+OpenVPN-Ausgänge brauchen wie der OpenVPN-Server `/dev/net/tun` (siehe oben).
+
+## IP-Listen
+
+Menü **IP-Listen**: Sperrlisten (diese Adressen nie) und Freigabelisten (nur diese Adressen), je Liste
+für alle Dienste oder ausgewählte Server. Gibt es für einen Dienst eine Freigabeliste, kommen nur deren
+Adressen hinein; Sperrlisten gelten zusätzlich. Durchgesetzt per iptables/ip6tables (Kette `VPNACL`,
+bestehende Verbindungen werden über conntrack neu bewertet); VLESS teilt sich Port 443 mit Panel und
+Abo und regelt es deshalb in Xray. Webinterface und Abo-Links sind nie betroffen.
+
+## Version und Updates
+
+Die Seitenleiste und die Übersicht zeigen die Version. Das Panel fragt alle 12 Stunden bei GitHub nach
+dem neuesten Release (ohne Daten mitzuschicken) und zeigt ein verfügbares Update an; abschaltbar in den
+Einstellungen. Eingespielt wird ein Update wie die Installation (Programm und Script kopieren,
+`bash vpn-setup.sh`).
+
 ## Abo (Hiddify, v2rayN, NekoBox)
 
 Das Abo eines Nutzers enthält alle aktiven Zugänge: VLESS (ein Eintrag je Tarnziel), Hysteria2 und
