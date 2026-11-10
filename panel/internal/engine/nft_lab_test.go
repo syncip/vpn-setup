@@ -110,7 +110,7 @@ func labQuery(name, server string) {
 		_ = b.StartQuestions()
 		_ = b.Question(dnsmessage.Question{Name: dnsmessage.MustNewName(name), Type: t, Class: dnsmessage.ClassINET})
 		q, _ := b.Finish()
-		c, err := net.DialTimeout("udp4", server+":53", 3*time.Second)
+		c, err := net.DialTimeout("udp", net.JoinHostPort(server, "53"), 3*time.Second)
 		if err != nil {
 			return nil
 		}
@@ -217,6 +217,7 @@ func TestNftLab(t *testing.T) {
 	run(t, "ip", "netns", "exec", "labdev", "ip", "addr", "add", labDev6+"/64", "dev", "vb0", "nodad")
 	run(t, "ip", "netns", "exec", "labdev", "ip", "link", "set", "vb0", "up")
 	run(t, "ip", "netns", "exec", "labdev", "ip", "route", "add", "default", "via", labSrv)
+	run(t, "ip", "netns", "exec", "labdev", "ip", "-6", "route", "add", "default", "via", labSrv6)
 	run(t, "ip", "link", "add", "vp0", "type", "veth", "peer", "name", "vq0")
 	run(t, "ip", "link", "set", "vq0", "netns", "labprov")
 	run(t, "ip", "addr", "add", labOut+"/24", "dev", "vp0")
@@ -249,12 +250,13 @@ func TestNftLab(t *testing.T) {
 		}
 		return "FEHLER"
 	}
-	dns := func(name string) string {
-		c := exec.Command("ip", "netns", "exec", "labdev", os.Args[0], name, "192.0.2.53") // diesen DNS-Server gibt es nicht
+	dnsVia := func(name, server string) string {
+		c := exec.Command("ip", "netns", "exec", "labdev", os.Args[0], name, server)
 		c.Env = append(os.Environ(), "LAB_HELPER=dns")
 		out, _ := c.Output()
 		return string(out)
 	}
+	dns := func(name string) string { return dnsVia(name, "192.0.2.53") } // diesen DNS-Server gibt es nicht
 	for i := 0; i < 30 && get(labT1) != labDev; i++ {
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -308,6 +310,13 @@ func TestNftLab(t *testing.T) {
 	expect("fremder Name", labT1, labDev)
 	if out := run(t, "nft", "list", "set", "inet", nftTable, "d13"); !strings.Contains(out, labT2) || !strings.Contains(out, "expires") {
 		t.Errorf("Set d13:\n%s", out)
+	}
+	// DNS über IPv6 (IPv6-DNS-Server im Gerät) wird genauso umgeleitet; DoH-Server gibt es nicht
+	if got := dnsVia("cdn.netflix.test.", "2001:db8::53"); got != "A="+labT2+" AAAA=0" {
+		t.Errorf("DNS-Umleitung über IPv6: %q", got)
+	}
+	if got := dns("dns.google."); got != "A= AAAA=0" {
+		t.Errorf("DoH-Server nicht ausgeblendet: %q", got)
 	}
 	// Neuladen (andere Regel dazu) behält gelernte Adressen
 	apply("Domain + Netz", &proto.Policy{Key: "c2", Rules: []proto.RouteRule{{ID: 13, Domains: []string{"netflix.test"}, Group: 5},

@@ -153,7 +153,9 @@ func TestRoutes(t *testing.T) {
 		"set l" + id64(tl.ID) + "_4 {", "elements = { 198.18.5.0/24 }",
 		"set d" + id64(rGlobal.ID) + " {", "flags timeout",
 		// DNS-Umleitung nur für Geräte mit Domain-Regeln, IPv6-Sperre nur bei „alles“
-		"udp dport 53 redirect to :5399", "tcp dport 853 reject with tcp reset",
+		"ip saddr @dnssrc udp dport 53 redirect to :5399", "ip saddr @dnssrc tcp dport 853 reject with tcp reset",
+		// auch DNS über IPv6 wird umgeleitet (Geräte mit IPv6-DNS-Server)
+		"set dnssrc6 {", "ip6 saddr @dnssrc6 udp dport 53 redirect to :5399", "ip6 saddr @dnssrc6 tcp dport 853 reject with tcp reset",
 		"ip6 saddr @all6 ip6 daddr != fc00::/7 reject with icmpv6 admin-prohibited",
 	} {
 		if !strings.Contains(nft, want) {
@@ -333,7 +335,7 @@ func TestDNSGate(t *testing.T) {
 	defer func() { dnsUpstream = oldUp }()
 
 	pol := &proto.Policy{Key: "x", Rules: []proto.RouteRule{{ID: 7, Domains: []string{"netflix.com"}, Group: 0}, {ID: 8, All: true, Group: 0}}}
-	e.dns.configure(e, []srcPolicy{{netip.MustParsePrefix("10.8.0.2/32"), pol}}, &routing{})
+	e.dns.configure(e, []srcPolicy{{netip.MustParsePrefix("10.8.0.2/32"), pol}, {netip.MustParsePrefix("fd42::2/128"), pol}}, &routing{})
 	query := func(name string, typ dnsmessage.Type) []byte {
 		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 4711, RecursionDesired: true})
 		_ = b.StartQuestions()
@@ -366,6 +368,18 @@ func TestDNSGate(t *testing.T) {
 	var p dnsmessage.Parser
 	if h, err := p.Start(resp); err != nil || !h.Response || h.ID != 4711 || h.RCode != dnsmessage.RCodeSuccess {
 		t.Fatalf("AAAA-Antwort: %+v %v", h, err)
+	}
+	// dasselbe Gerät über IPv6 (IPv6-DNS-Server im Gerät eingetragen)
+	if got := answerAddrs(e.dns.handle(e, netip.MustParseAddr("fd42::2"), query("api.netflix.com.", dnsmessage.TypeA), false)); len(got) != 1 {
+		t.Errorf("Anfrage über IPv6: %v", got)
+	}
+	// Namen bekannter DoH-Server gibt es nicht → Browser bleiben bei normalem DNS
+	for _, n := range []string{"chrome.cloudflare-dns.com.", "dns.google.", "use-application-dns.net."} {
+		resp = e.dns.handle(e, dev, query(n, dnsmessage.TypeA), false)
+		var dp dnsmessage.Parser
+		if h, err := dp.Start(resp); err != nil || h.RCode != dnsmessage.RCodeNameError {
+			t.Errorf("%s: %+v %v", n, h, err)
+		}
 	}
 	// andere Namen werden nur durchgereicht
 	n = len(dry.Stdin)

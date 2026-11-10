@@ -177,9 +177,15 @@ So wird es je Protokoll umgesetzt:
 
 - **Domains bei WireGuard/OpenVPN:** Der Kernel sieht nur Adressen. Für Geräte mit Domain-Regeln leitet
   der Server deshalb deren DNS-Anfragen (Port 53) an einen eingebauten Umleiter, der die Adressen der
-  passenden Namen lernt (24 Stunden) – unabhängig davon, welcher DNS-Server im Gerät eingetragen ist.
-  DNS über TLS (Port 853) wird für diese Geräte abgewiesen, damit sie auf normales DNS zurückfallen.
-  Geräte bzw. Browser mit DNS über HTTPS (DoH) umgehen das – dort DoH ausschalten oder Netze/Listen verwenden.
+  passenden Namen lernt (24 Stunden) – unabhängig davon, welcher DNS-Server im Gerät eingetragen ist,
+  auch bei DNS über IPv6. Für Namen aus Regeln gibt der Umleiter keine IPv6-Adressen heraus, damit das
+  Gerät IPv4 nimmt (nur das kann über Ausgänge laufen).
+  DNS über TLS (Port 853) wird für diese Geräte abgewiesen, und die Namen bekannter DoH-Server
+  (Cloudflare, Google, Quad9 …) gibt es für sie nicht – Browser, die DoH von selbst einschalten
+  (Chrome, Firefox in der Standardeinstellung), fallen so auf normales DNS zurück. Wer DoH oder ein
+  „Privates DNS“ mit festem Anbieter ausdrücklich erzwingt, muss es ausschalten oder Netze/Listen verwenden.
+  Hat das Gerät den Namen schon vor dem Anlegen der Regel aufgelöst, greift sie erst, wenn dessen
+  DNS-Zwischenspeicher abläuft (meist Minuten; VPN kurz trennen und neu verbinden hilft).
 - **IPv6:** Ausgänge können nur IPv4. Läuft bei einem Gerät *alles* über eine Gruppe, wird IPv6 ins
   Internet für dieses Gerät gesperrt (sonst ginge es am Ausgang vorbei); für Domains aus Regeln gibt es
   keine IPv6-Adressen. Ziellisten und Netze zählen nur mit ihren IPv4-Einträgen.

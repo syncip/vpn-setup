@@ -195,8 +195,9 @@
         <label for="rt-dom">Domains</label>
         <textarea id="rt-dom" class="input mono" rows="3" bind:value={f.domains} placeholder={'netflix.com\nnflxvideo.net'}></textarea>
         <div class="help">
-          Eine pro Zeile, Unterdomains sind eingeschlossen. Bei WireGuard und OpenVPN erkennt der Server die Ziele an den DNS-Anfragen des Geräts – Geräte mit
-          verschlüsseltem DNS (DoH, z. B. im Browser aktiviert) umgehen das.
+          Eine pro Zeile, Unterdomains sind eingeschlossen. Bei WireGuard und OpenVPN erkennt der Server die Ziele an den DNS-Anfragen des Geräts. Eine neue
+          Regel greift, sobald das Gerät den Namen neu auflöst (VPN kurz trennen und verbinden hilft). Fest erzwungenes verschlüsseltes DNS (DoH, „Privates
+          DNS“ mit Anbieter) umgeht das.
         </div>
       </div>
       <div class="field">

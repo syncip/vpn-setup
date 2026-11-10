@@ -177,13 +177,16 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 	// ---------- Ziel-Regeln für weitergeleiteten Verkehr ----------
 	if len(srcs) > 0 {
 		done := map[string]bool{}
-		var src4, dns4, all6 []string
+		var src4, dns4, dns6, all6 []string
 		for _, s := range srcs {
 			pol := s.pol
 			allGroup, hasAll := pol.AllGroup()
 			if !s.pfx.Addr().Is4() {
 				if hasAll && allGroup != 0 {
 					all6 = append(all6, s.pfx.String())
+				}
+				if pol.HasDomains() {
+					dns6 = append(dns6, s.pfx.String())
 				}
 				continue
 			}
@@ -229,13 +232,20 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 		fmt.Fprintf(&sets, "\tmap src4 {\n\t\ttype ipv4_addr : verdict\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(src4, ",\n\t\t\t"))
 		chains.WriteString("\tchain vp_pre {\n\t\ttype filter hook prerouting priority mangle; policy accept;\n" +
 			"\t\tfib daddr type local return\n\t\tip daddr @private4 return\n\t\tip saddr vmap @src4\n\t}\n")
-		var fwd strings.Builder
+		var fwd, nat strings.Builder
 		if len(dns4) > 0 {
 			fmt.Fprintf(&sets, "\tset dnssrc {\n\t\ttype ipv4_addr\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(dns4, ", "))
-			fmt.Fprintf(&chains, "\tchain vp_dns {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n"+
-				"\t\tip saddr @dnssrc udp dport 53 redirect to :%d\n\t\tip saddr @dnssrc tcp dport 53 redirect to :%d\n\t}\n", dnsPort, dnsPort)
+			fmt.Fprintf(&nat, "\t\tip saddr @dnssrc udp dport 53 redirect to :%d\n\t\tip saddr @dnssrc tcp dport 53 redirect to :%d\n", dnsPort, dnsPort)
 			// DNS über TLS abweisen – Geräte (z. B. Android „Privates DNS: automatisch“) fallen dann auf normales DNS zurück
 			fwd.WriteString("\t\tip saddr @dnssrc tcp dport 853 reject with tcp reset\n")
+		}
+		if len(dns6) > 0 { // DNS-Anfragen über IPv6 gehören genauso zum Umleiter
+			fmt.Fprintf(&sets, "\tset dnssrc6 {\n\t\ttype ipv6_addr\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(dns6, ", "))
+			fmt.Fprintf(&nat, "\t\tip6 saddr @dnssrc6 udp dport 53 redirect to :%d\n\t\tip6 saddr @dnssrc6 tcp dport 53 redirect to :%d\n", dnsPort, dnsPort)
+			fwd.WriteString("\t\tip6 saddr @dnssrc6 tcp dport 853 reject with tcp reset\n")
+		}
+		if nat.Len() > 0 {
+			fmt.Fprintf(&chains, "\tchain vp_dns {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n%s\t}\n", nat.String())
 		}
 		if len(all6) > 0 {
 			fmt.Fprintf(&sets, "\tset all6 {\n\t\ttype ipv6_addr\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(all6, ", "))

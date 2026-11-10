@@ -109,7 +109,7 @@ func (g *dnsGate) configure(e *Engine, srcs []srcPolicy, rt *routing) {
 	g.srcs = nil
 	rules := map[int64]bool{}
 	for _, s := range srcs {
-		if s.pfx.Addr().Is4() && s.pol.HasDomains() {
+		if s.pol.HasDomains() { // IPv4- und IPv6-Adressen der Geräte
 			g.srcs = append(g.srcs, s)
 			for _, r := range s.pol.Rules {
 				if len(r.Domains) > 0 {
@@ -126,12 +126,12 @@ func (g *dnsGate) configure(e *Engine, srcs []srcPolicy, rt *routing) {
 	}
 	need := len(g.srcs) > 0 && (!e.Sys.DryRun() || dnsListen != fmt.Sprintf(":%d", dnsPort))
 	if need && g.udp == nil {
-		pc, err := net.ListenPacket("udp4", dnsListen)
+		pc, err := net.ListenPacket("udp", dnsListen) // IPv4 und IPv6
 		if err != nil {
 			e.setErr("dns", "DNS-Umleiter für Domain-Regeln: "+err.Error())
 			return
 		}
-		ln, err := net.Listen("tcp4", pc.LocalAddr().String())
+		ln, err := net.Listen("tcp", pc.LocalAddr().String())
 		if err != nil {
 			pc.Close()
 			e.setErr("dns", "DNS-Umleiter für Domain-Regeln: "+err.Error())
@@ -310,6 +310,17 @@ func writeFrame(w io.Writer, b []byte) error {
 	return err
 }
 
+// dohHosts: Namen bekannter DoH-Server (und die Prüf-Domain, mit der Firefox DoH abschaltet).
+var dohHosts = []string{
+	"use-application-dns.net",
+	"cloudflare-dns.com", "one.one.one.one", "dns.google", "dns.google.com", "dns64.dns.google",
+	"dns.quad9.net", "dns9.quad9.net", "dns10.quad9.net", "dns11.quad9.net", "dns12.quad9.net",
+	"doh.opendns.com", "doh.familyshield.opendns.com", "doh.umbrella.com", "dns.nextdns.io", "doh.cleanbrowsing.org",
+	"dns.adguard-dns.com", "dns.adguard.com", "dns-unfiltered.adguard.com", "doh.dns.sb", "dns.mullvad.net", "doh.mullvad.net",
+	"private.canadianshield.cira.ca", "doh.xfinity.com", "odvr.nic.cz", "doh.libredns.gr", "dns.switch.ch", "doh.ffmuc.net",
+	"dns.digitale-gesellschaft.ch", "freedns.controld.com", "dns.controld.com", "doh.quickline.ch", "dnsforge.de",
+}
+
 // dnsUpstream: DNS-Server für Anfragen, die nicht über eine Gruppe laufen (Tests ersetzen sie).
 var dnsUpstream = []string{"1.1.1.1:53", "9.9.9.9:53"}
 
@@ -329,11 +340,10 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 		return nil
 	}
 	name := strings.ToLower(strings.TrimSuffix(q.Name.String(), "."))
-	rule, matched := pol.MatchDomain(name)
-	if matched && q.Type == dnsmessage.TypeAAAA {
-		// keine IPv6-Adressen für Ziele einer Regel – Ausgänge können nur IPv4
+	// empty: Antwort ohne Einträge
+	empty := func(code dnsmessage.RCode) []byte {
 		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: hdr.ID, Response: true, RecursionDesired: hdr.RecursionDesired,
-			RecursionAvailable: true, RCode: dnsmessage.RCodeSuccess})
+			RecursionAvailable: true, RCode: code})
 		b.EnableCompression()
 		if b.StartQuestions() != nil || b.Question(q) != nil {
 			return nil
@@ -343,6 +353,17 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 			return nil
 		}
 		return out
+	}
+	// Verschlüsseltes DNS (DoH) ginge am Umleiter vorbei. Browser schalten es von selbst ein, wenn der
+	// eingetragene DNS-Server es anbietet (z. B. 1.1.1.1) – finden sie den DoH-Server nicht, nehmen sie
+	// normales DNS. Deshalb gibt es für diese Geräte die Namen bekannter DoH-Server nicht.
+	if proto.DomainMatch(dohHosts, name) {
+		return empty(dnsmessage.RCodeNameError)
+	}
+	rule, matched := pol.MatchDomain(name)
+	if matched && q.Type == dnsmessage.TypeAAAA {
+		// keine IPv6-Adressen für Ziele einer Regel – Ausgänge können nur IPv4
+		return empty(dnsmessage.RCodeSuccess)
 	}
 	group := int64(0)
 	if matched {
