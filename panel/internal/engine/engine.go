@@ -39,6 +39,11 @@ type Engine struct {
 	upd      updateState
 	Exits    *exits.Manager
 	liveKick chan struct{}
+
+	lists listState  // Online-Listen (lists.go)
+	acl   aclState   // wirksame Sperr-/Freigabelisten (acl.go)
+	rt    routeState // Ziel-Regeln (routes.go)
+	dns   dnsGate    // DNS-Umleiter für Domain-Regeln (dns.go)
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
@@ -95,8 +100,10 @@ func (e *Engine) Global() proto.Global {
 	if e.Cfg.HookAddr != "" {
 		hook = "http://" + e.Cfg.HookAddr + "/hook"
 	}
+	rt := e.routing()
 	return proto.Global{ServerHost: e.Setting("server_host"), OutIf: e.Setting("out_interface"), XrayAPI: e.Setting("xray_api"),
-		DataDir: e.Cfg.DataDir, HookURL: hook, PublicPort: atoi(e.Setting("public_port"), 443), Groups: e.groupRoutes(), ACLs: e.acls()}
+		DataDir: e.Cfg.DataDir, HookURL: hook, PublicPort: atoi(e.Setting("public_port"), 443), Groups: e.groupRoutes(), ACLs: e.acls(),
+		Policies: rt.Policies, ServerPolicies: rt.ServerPolicies, TargetLists: rt.TargetLists}
 }
 
 func (e *Engine) Env() *proto.Env {
@@ -212,6 +219,8 @@ func (e *Engine) applyLocked() error {
 	if err := e.applyExits(); err != nil {
 		errs = append(errs, "Ausgänge: "+err.Error())
 	}
+	e.pruneRoutes(snap)
+	rt := e.compileRoutes(snap)
 	env := e.Env()
 	for _, d := range proto.All() {
 		id := d.Info().ID
@@ -222,8 +231,8 @@ func (e *Engine) applyLocked() error {
 			e.setErr(id, "")
 		}
 	}
-	if err := e.applyACL(snap, env.Global.ACLs); err != nil {
-		errs = append(errs, "IP-Listen: "+err.Error())
+	if err := e.applyNft(env, snap, rt, e.aclPlan()); err != nil {
+		errs = append(errs, "Firewall (IP-Listen, Ziel-Regeln): "+err.Error())
 		e.setErr("acl", err.Error())
 	} else {
 		e.setErr("acl", "")

@@ -236,6 +236,8 @@ type peerRT struct {
 	since      int64
 	lastIP     string
 	bUp, bDown bucket
+	pol        *proto.Policy   // Ziel-Regeln dieses Zugangs (nil = direkt über den Server)
+	transport  *http.Transport // für einfache HTTP-Anfragen (hält Verbindungen zu Zielen offen)
 }
 
 type tracked struct {
@@ -243,6 +245,13 @@ type tracked struct {
 	peer             *peerRT
 	ip               netip.Addr
 	inst             *instance
+	group            int64 // Ausgangsgruppe der Verbindung (0 = direkt, -1 = einfache HTTP-Anfragen, je Ziel verschieden)
+}
+
+func (t *tracked) setGroup(g int64) {
+	mgr.Lock()
+	t.group = g
+	mgr.Unlock()
 }
 
 func (t *tracked) close() {
@@ -255,17 +264,13 @@ func (t *tracked) close() {
 type instance struct {
 	id        int64
 	name      string
-	cfg       serverCfg
-	group     int64
-	route     proto.GroupRoute
-	acl       *proto.ACL
-	users     map[string]*peerRT
-	sources   []*peerRT
-	socks     net.Listener
-	http      net.Listener
-	transport *http.Transport
-	err       string
-	resolver  *net.Resolver
+	cfg     serverCfg
+	acl     *proto.ACL
+	users   map[string]*peerRT
+	sources []*peerRT
+	socks   net.Listener
+	http    net.Listener
+	err     string
 }
 
 var mgr = struct {
@@ -276,6 +281,10 @@ var mgr = struct {
 	perIP map[netip.Addr]int
 	total int
 	self  []netip.Prefix // öffentliche Adressen des Servers (nie als Ziel)
+	// Ausgangsgruppen, Ziellisten und DNS je Gruppe (Stand des letzten Apply)
+	groups    map[int64]proto.GroupRoute
+	lists     map[int64][]netip.Prefix
+	resolvers map[int64]*net.Resolver
 }{inst: map[int64]*instance{}, peers: map[int64]*peerRT{}, conns: map[*tracked]struct{}{}, perIP: map[netip.Addr]int{}}
 
 func listenAddr(env *proto.Env, port int) string {
@@ -293,6 +302,28 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 	if selfOK || len(self) > len(mgr.self) {
 		mgr.self = self
 	}
+	// Gruppen: geänderte Markierung/DNS → Verbindungen über diese Gruppe neu aufbauen lassen
+	regroup := map[int64]bool{}
+	for id, g := range env.Global.Groups {
+		if old, ok := mgr.groups[id]; ok && (old.Mark != g.Mark || old.Enabled != g.Enabled || strings.Join(old.DNS, ",") != strings.Join(g.DNS, ",")) {
+			regroup[id] = true
+		}
+	}
+	for id := range mgr.groups {
+		if _, ok := env.Global.Groups[id]; !ok {
+			regroup[id] = true
+		}
+	}
+	mgr.groups, mgr.lists = env.Global.Groups, env.Global.TargetLists
+	res := map[int64]*net.Resolver{}
+	for id, g := range mgr.groups {
+		if r := mgr.resolvers[id]; r != nil && !regroup[id] {
+			res[id] = r
+		} else if len(g.DNS) > 0 {
+			res[id] = exits.Resolver(g.Mark, g.DNS)
+		}
+	}
+	mgr.resolvers = res
 	var errs []string
 	want := map[int64]bool{}
 	seenPeers := map[int64]bool{}
@@ -310,27 +341,8 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		}
 		old := in.cfg
 		in.name, in.cfg = sv.Name, c
-		// Ausgang (Gruppe) geändert → alle Verbindungen neu aufbauen lassen
-		g := groupOf(c)
-		route := env.Global.Groups[g]
-		rerouted := in.group != g || in.route.Mark != route.Mark || in.route.Enabled != route.Enabled
-		in.group, in.route = g, route
-		dns := route.DNS
-		if g != 0 && len(dns) > 0 {
-			in.resolver = exits.Resolver(route.Mark, dns)
-		} else {
-			in.resolver = net.DefaultResolver
-		}
 		in.acl = env.Global.ACLs[sv.ID]
-		if in.transport == nil || rerouted {
-			if in.transport != nil {
-				in.transport.CloseIdleConnections()
-			}
-			inst := in
-			in.transport = &http.Transport{Proxy: nil, DisableCompression: true, MaxIdleConns: 64, IdleConnTimeout: 60 * time.Second,
-				ResponseHeaderTimeout: 60 * time.Second, TLSHandshakeTimeout: 15 * time.Second,
-				DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) { return inst.dial(ctx, addr) }}
-		}
+		rerouted := map[*peerRT]bool{} // Ziel-Regeln geändert → Verbindungen des Zugangs neu aufbauen lassen
 		// Zugänge
 		in.users = map[string]*peerRT{}
 		in.sources = nil
@@ -343,6 +355,21 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 			}
 			seenPeers[p.ID] = true
 			rt.srv = sv.ID
+			pol := env.Global.Policies[p.ID]
+			oldKey, newKey := "", ""
+			if rt.pol != nil {
+				oldKey = rt.pol.Key
+			}
+			if pol != nil {
+				newKey = pol.Key
+			}
+			if oldKey != newKey {
+				rerouted[rt] = true
+				if rt.transport != nil {
+					rt.transport.CloseIdleConnections()
+				}
+			}
+			rt.pol = pol
 			rt.user, rt.pass = proto.Str(p.Secrets, "username"), proto.Str(p.Secrets, "password")
 			rt.active = pb.Active
 			rt.bDown.setRate(pb.RateDown)
@@ -396,7 +423,7 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 			if t.inst != in {
 				continue
 			}
-			if rerouted || !t.peer.active || mgr.peers[t.peer.id] != t.peer || t.peer.srv != in.id || !in.acl.Allowed(t.ip) ||
+			if rerouted[t.peer] || regroup[t.group] || !t.peer.active || mgr.peers[t.peer.id] != t.peer || t.peer.srv != in.id || !in.acl.Allowed(t.ip) ||
 				(t.client.LocalAddr() != nil && !listenerOwns(in, t.client.LocalAddr())) {
 				t.close()
 			}
@@ -409,8 +436,11 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		in.shutdown()
 		delete(mgr.inst, id)
 	}
-	for id := range mgr.peers {
+	for id, rt := range mgr.peers {
 		if !seenPeers[id] {
+			if rt.transport != nil {
+				rt.transport.CloseIdleConnections()
+			}
 			delete(mgr.peers, id)
 		}
 	}
@@ -441,9 +471,6 @@ func (in *instance) shutdown() {
 	if in.http != nil {
 		_ = in.http.Close()
 	}
-	if in.transport != nil {
-		in.transport.CloseIdleConnections()
-	}
 	for t := range mgr.conns {
 		if t.inst == in {
 			t.close()
@@ -456,13 +483,13 @@ func (in *instance) shutdown() {
 func (Driver) GroupSwitched(groupID int64) {
 	mgr.Lock()
 	defer mgr.Unlock()
-	for _, in := range mgr.inst {
-		if in.group == groupID && in.transport != nil {
-			in.transport.CloseIdleConnections()
+	for _, rt := range mgr.peers {
+		if rt.transport != nil {
+			rt.transport.CloseIdleConnections()
 		}
 	}
 	for t := range mgr.conns {
-		if t.inst.group == groupID {
+		if t.group == groupID {
 			t.close()
 		}
 	}
@@ -707,58 +734,98 @@ func hostPrefix(a netip.Addr) netip.Prefix {
 	return p
 }
 
-func (in *instance) dial(ctx context.Context, addr string) (net.Conn, error) {
+// dialErr: Fehler beim Verbinden samt Gruppe, über die es gehen sollte (für die Meldung).
+type dialErr struct {
+	group int64
+	err   error
+}
+
+func (e *dialErr) Error() string { return e.err.Error() }
+func (e *dialErr) Unwrap() error { return e.err }
+
+// dial verbindet zum Ziel – je nach Ziel-Regeln des Zugangs direkt oder über eine Ausgangsgruppe.
+// group = gewählte Gruppe (0 = direkt).
+func (in *instance) dial(ctx context.Context, addr string, rt *peerRT) (c net.Conn, group int64, err error) {
+	c, group, err = in.dial0(ctx, addr, rt)
+	if err != nil {
+		err = &dialErr{group, err}
+	}
+	return
+}
+
+func (in *instance) dial0(ctx context.Context, addr string, rt *peerRT) (net.Conn, int64, error) {
 	host, ps, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	port, err := strconv.Atoi(ps)
 	if err != nil || port < 1 || port > 65535 {
-		return nil, errNotAllowed
+		return nil, 0, errNotAllowed
 	}
 	mgr.Lock()
-	cfg, route, group, res, self := in.cfg, in.route, in.group, in.resolver, mgr.self
+	cfg, self, pol, lists := in.cfg, mgr.self, rt.pol, mgr.lists
+	groups, resolvers := mgr.groups, mgr.resolvers
 	mgr.Unlock()
 	if port == 25 && cfg.BlockSMTP {
-		return nil, errNotAllowed
+		return nil, 0, errNotAllowed
 	}
-	var mark uint32
-	if group != 0 {
-		if !route.Enabled {
-			return nil, errNoRoute
+	resolver := func(g int64) *net.Resolver {
+		if r := resolvers[g]; g != 0 && r != nil {
+			return r
 		}
-		mark = route.Mark
+		return net.DefaultResolver
 	}
-	// Direkt über den Server gehen IPv4 und IPv6 (IPv4 bevorzugt); Ausgänge können nur IPv4.
+	// lookup: direkt über den Server IPv4 und IPv6 (IPv4 bevorzugt); Ausgänge können nur IPv4.
+	lookup := func(g int64) ([]netip.Addr, error) {
+		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		ips, err := resolver(g).LookupNetIP(rctx, "ip4", host)
+		if g == 0 {
+			if v6, err6 := resolver(g).LookupNetIP(rctx, "ip6", host); err6 == nil && len(v6) > 0 {
+				ips, err = append(ips, v6...), nil
+			}
+		}
+		if err == nil && len(ips) == 0 {
+			err = &net.DNSError{Err: "keine Adresse", Name: host, IsNotFound: true}
+		}
+		return ips, err
+	}
+	var group int64
 	var ips []netip.Addr
-	if a, err := netip.ParseAddr(host); err == nil {
+	if a, perr := netip.ParseAddr(host); perr == nil {
 		a = a.Unmap()
+		group, _ = pol.Match("", a, lists)
 		if a.Is6() && group != 0 {
-			return nil, errV6
+			return nil, group, errV6
 		}
 		ips = []netip.Addr{a}
 	} else {
-		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		ips, err = res.LookupNetIP(rctx, "ip4", host)
-		if group == 0 {
-			if v6, err6 := res.LookupNetIP(rctx, "ip6", host); err6 == nil && len(v6) > 0 {
-				ips = append(ips, v6...)
-				err = nil
+		// Erst nach dem Namen entscheiden; gibt es Regeln nach Adresse, den Namen auflösen und
+		// mit der Adresse neu entscheiden (bei anderem Ergebnis über die richtige Gruppe erneut auflösen).
+		group, _ = pol.Match(host, netip.Addr{}, lists)
+		if ips, err = lookup(group); err != nil {
+			return nil, group, err
+		}
+		if g2, _ := pol.Match(host, ips[0], lists); g2 != group {
+			group = g2
+			if ips, err = lookup(group); err != nil {
+				return nil, group, err
 			}
 		}
-		cancel()
-		if err != nil || len(ips) == 0 {
-			if err == nil {
-				err = &net.DNSError{Err: "keine Adresse", Name: host, IsNotFound: true}
-			}
-			return nil, err
+	}
+	var mark uint32
+	if group != 0 {
+		g, ok := groups[group]
+		if !ok || !g.Enabled {
+			return nil, group, errNoRoute
 		}
+		mark = g.Mark
 	}
 	d := exits.Dialer(mark)
 	var lastErr error = errNotAllowed
 	for _, a := range ips {
 		a = a.Unmap()
-		if blocked(a) || inPrefixes(self, a) {
+		if blocked(a) || inPrefixes(self, a) || (a.Is6() && group != 0) {
 			continue
 		}
 		nw := "tcp4"
@@ -767,11 +834,27 @@ func (in *instance) dial(ctx context.Context, addr string) (net.Conn, error) {
 		}
 		c, err := d.DialContext(ctx, nw, netip.AddrPortFrom(a, uint16(port)).String())
 		if err == nil {
-			return c, nil
+			return c, group, nil
 		}
 		lastErr = err
 	}
-	return nil, lastErr
+	return nil, group, lastErr
+}
+
+// httpTransport: Transport eines Zugangs für einfache HTTP-Anfragen (jede Verbindung wird nach
+// den Ziel-Regeln des Zugangs aufgebaut).
+func (in *instance) httpTransport(rt *peerRT) *http.Transport {
+	mgr.Lock()
+	defer mgr.Unlock()
+	if rt.transport == nil {
+		rt.transport = &http.Transport{Proxy: nil, DisableCompression: true, MaxIdleConns: 32, IdleConnTimeout: 60 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second, TLSHandshakeTimeout: 15 * time.Second,
+			DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+				c, _, err := in.dial(ctx, addr, rt)
+				return c, err
+			}}
+	}
+	return rt.transport
 }
 
 func inPrefixes(ps []netip.Prefix, a netip.Addr) bool {
@@ -785,12 +868,13 @@ func inPrefixes(ps []netip.Prefix, a netip.Addr) bool {
 
 // dialReason: verständlicher Grund für ein fehlgeschlagenes Verbinden (Antwort an den Client und Ereignis).
 func (in *instance) dialReason(target string, err error) (kind, msg string) {
-	mgr.Lock()
 	via := "direkt über den Server"
-	if in.group != 0 {
-		via = "über die Ausgangsgruppe „" + in.route.Name + "“"
+	var de *dialErr
+	if errors.As(err, &de) && de.group != 0 {
+		mgr.Lock()
+		via = "über die Ausgangsgruppe „" + mgr.groups[de.group].Name + "“"
+		mgr.Unlock()
 	}
-	mgr.Unlock()
 	var dnsErr *net.DNSError
 	switch {
 	case errors.Is(err, errNotAllowed):
@@ -1045,7 +1129,8 @@ func (in *instance) serveSOCKS(c net.Conn, ip netip.Addr) {
 	m.rt = rt
 	defer t.done()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	up, err := in.dial(ctx, net.JoinHostPort(host, strconv.Itoa(port)))
+	up, group, err := in.dial(ctx, net.JoinHostPort(host, strconv.Itoa(port)), rt)
+	t.setGroup(group)
 	cancel()
 	if err != nil {
 		kind, msg := in.dialReason(net.JoinHostPort(host, strconv.Itoa(port)), err)
@@ -1118,7 +1203,8 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 		client := m
 		if req.Method == http.MethodConnect {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			up, err := in.dial(ctx, req.Host)
+			up, group, err := in.dial(ctx, req.Host, rt)
+			t.setGroup(group)
 			cancel()
 			if err != nil {
 				_, msg := in.dialReason(req.Host, err)
@@ -1142,7 +1228,8 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 		for _, h := range []string{"Proxy-Authorization", "Proxy-Connection", "Connection", "Keep-Alive", "Te", "Trailer", "Upgrade"} {
 			req.Header.Del(h)
 		}
-		resp, err := in.transport.RoundTrip(req) // Körper kommt über br (gezählt)
+		t.setGroup(-1)
+		resp, err := in.httpTransport(rt).RoundTrip(req) // Körper kommt über br (gezählt)
 		if err != nil {
 			_, msg := in.dialReason(req.URL.Host, err)
 			writeStatusMsg(client, dialStatus(err), "", msg)
@@ -1298,8 +1385,12 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	}
 	info = append(info, [2]string{"Benutzername", user}, [2]string{"Passwort", pass})
 	exit := "direkt über den Server"
-	if g, ok := env.Global.Groups[groupOf(c)]; ok {
-		exit = "Ausgangsgruppe „" + g.Name + "“"
+	if pol := env.Global.Policies[pb.Peer.ID]; pol != nil {
+		if g, ok := env.Global.Groups[pol.Rules[0].Group]; len(pol.Rules) == 1 && pol.Rules[0].All && ok {
+			exit = "Ausgangsgruppe „" + g.Name + "“"
+		} else {
+			exit = fmt.Sprintf("nach Ziel-Regeln (%d)", len(pol.Rules))
+		}
 	}
 	info = append(info, [2]string{"Ausgang", exit})
 	if s := strList(pb.Peer.Settings["source_ips"]); len(s) > 0 {
@@ -1364,11 +1455,12 @@ func (Driver) Status(env *proto.Env, srv *store.Server) proto.Status {
 		}
 	}
 	detail := strings.Join(parts, ", ") + fmt.Sprintf(" – %d Verbindungen", n)
-	if in.group != 0 {
-		if !in.route.Enabled {
-			return proto.Status{Detail: "Ausgangsgruppe deaktiviert – Verbindungen werden abgewiesen"}
+	if g, ok := mgr.groups[groupOf(in.cfg)]; ok {
+		if !g.Enabled {
+			detail += " – Ausgangsgruppe „" + g.Name + "“ ist deaktiviert, Verkehr geht direkt"
+		} else {
+			detail += " – über „" + g.Name + "“"
 		}
-		detail += " – über „" + in.route.Name + "“"
 	}
 	return proto.Status{Running: true, Detail: detail}
 }

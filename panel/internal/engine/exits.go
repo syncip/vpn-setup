@@ -72,9 +72,17 @@ func (e *Engine) groupRoutes() map[int64]proto.GroupRoute {
 		return nil
 	}
 	m := map[int64]proto.GroupRoute{}
+	_, gst := e.Exits.Status()
 	for _, o := range objs {
 		g := exits.GroupFrom(o)
-		m[g.ID] = proto.GroupRoute{ID: g.ID, Name: g.Name, Enabled: g.Enabled && g.Slot > 0, Mark: exits.GroupMark(g.Slot), DNS: g.DNS}
+		r := proto.GroupRoute{ID: g.ID, Name: g.Name, Enabled: g.Enabled && g.Slot > 0, Mark: exits.GroupMark(g.Slot), DNS: g.DNS}
+		if st, ok := gst[g.ID]; ok {
+			r.State = st.State
+			if st.Active != 0 {
+				r.Dev = exits.IfName(st.Active)
+			}
+		}
+		m[g.ID] = r
 	}
 	return m
 }
@@ -91,6 +99,7 @@ func (e *Engine) RunExits(stop <-chan struct{}) {
 				s.GroupSwitched(gid)
 			}
 		}
+		e.RequestApply() // Dienste, die sich an den aktiven Ausgang binden (Hysteria2), neu einrichten
 	})
 	e.Exits.Run(stop, e.exitEnv, e.LoadExits, e.speedEvery)
 }

@@ -99,6 +99,11 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("POST /api/iplists", a.auth(a.createIPList))
 	api.HandleFunc("PUT /api/iplists/{id}", a.auth(a.updateIPList))
 	api.HandleFunc("DELETE /api/iplists/{id}", a.auth(a.deleteIPList))
+	api.HandleFunc("POST /api/iplists/{id}/refresh", a.auth(a.refreshIPList))
+	api.HandleFunc("GET /api/routes", a.auth(a.listRoutes))
+	api.HandleFunc("POST /api/routes", a.auth(a.createRoute))
+	api.HandleFunc("PUT /api/routes/{id}", a.auth(a.updateRoute))
+	api.HandleFunc("DELETE /api/routes/{id}", a.auth(a.deleteRoute))
 
 	api.HandleFunc("GET /api/settings", a.auth(a.getSettings))
 	api.HandleFunc("PUT /api/settings", a.auth(a.putSettings))

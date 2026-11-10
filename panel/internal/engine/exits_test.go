@@ -51,16 +51,16 @@ func TestExitsAndACL(t *testing.T) {
 	stdin := strings.Join(dry.Stdin, "\n----\n")
 	for _, want := range []string{
 		"-A VPNEX-IN -i ex1 -j DROP", "-A VPNEX-NAT -o ex1 -j MASQUERADE", "--clamp-mss-to-pmtu",
-		"-A VPNACL -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN",
-		"-A VPNACL -p udp -m udp --dport 51820 -j VPNACL-" + id64(wg.ID),
-		"-A VPNACL-" + id64(wg.ID) + " -s 203.0.113.0/24 -j DROP",
-		"-A VPNACL-" + id64(wg.ID) + " -s 2001:db8::/32 -j DROP",
+		"table inet vpnpanel {", "type filter hook input priority -10; policy accept;",
+		"udp dport 51820 jump acl_" + id64(wg.ID),
+		"set l" + id64(bl.ID) + "_4 {", "elements = { 203.0.113.0/24 }", "elements = { 2001:db8::/32 }",
+		"ip saddr @l" + id64(bl.ID) + "_4 drop", "ip6 saddr @l" + id64(bl.ID) + "_6 drop",
 	} {
 		if !strings.Contains(stdin, want) {
 			t.Errorf("fehlt: %s", want)
 		}
 	}
-	if strings.Contains(stdin, "VPNACL-"+id64(vl.ID)) {
+	if strings.Contains(stdin, "acl_"+id64(vl.ID)) {
 		t.Error("VLESS darf keine iptables-Kette bekommen (geteilter Port 443)")
 	}
 	log := strings.Join(dry.Log(), "\n")
@@ -96,7 +96,7 @@ func TestExitsAndACL(t *testing.T) {
 		t.Fatal(err)
 	}
 	log = strings.Join(dry.Log()[n:], "\n")
-	for _, want := range []string{"iptables -D INPUT -j VPNACL", "ip link del dev ex1", "ip -4 rule del priority 6002", "iptables -D INPUT -j VPNEX-IN"} {
+	for _, want := range []string{"nft delete table inet vpnpanel", "ip link del dev ex1", "ip -4 rule del priority 6002", "iptables -D INPUT -j VPNEX-IN"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("Abbau fehlt: %s", want)
 		}

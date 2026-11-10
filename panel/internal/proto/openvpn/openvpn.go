@@ -687,6 +687,9 @@ func applyFirewall(env *proto.Env, servers []*proto.ServerBundle) error {
 			}
 			if c.Internet && net != "" {
 				fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -o %s -s %s -j ACCEPT\n", iface, out, net)
+				if !v6 { // über Ausgänge (externe VPNs, Schnittstellen ex<ID>) – siehe Ziel-Regeln
+					fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -o ex+ -s %s -j ACCEPT\n", iface, net)
+				}
 				fmt.Fprintf(&nat, "-A VPNOV-NAT -s %s -o %s -j MASQUERADE\n", net, out)
 			}
 			fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -j DROP\n", iface)
@@ -898,4 +901,21 @@ func (Driver) Status(env *proto.Env, srv *store.Server) proto.Status {
 		return proto.Status{Detail: "OpenVPN läuft nicht"}
 	}
 	return proto.Status{Running: true, Detail: fmt.Sprintf("OpenVPN auf %s %d", strings.ToUpper(c.Transport), c.Port)}
+}
+
+// Sources: Adressen, von denen der Verkehr eines Geräts kommt (für Ziel-Regeln).
+func (Driver) Sources(env *proto.Env, sb *proto.ServerBundle) map[int64][]netip.Prefix {
+	out := map[int64][]netip.Prefix{}
+	for _, pb := range sb.Peers {
+		if !pb.Active {
+			continue
+		}
+		pc := loadPeer(pb.Peer)
+		for _, s := range []string{pc.Address4, pc.Address6} {
+			if a, err := netip.ParseAddr(s); err == nil {
+				out[pb.Peer.ID] = append(out[pb.Peer.ID], netip.PrefixFrom(a, a.BitLen()))
+			}
+		}
+	}
+	return out
 }

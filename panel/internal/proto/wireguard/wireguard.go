@@ -760,6 +760,9 @@ func applyFirewall(env *proto.Env, servers []*proto.ServerBundle) error {
 				if sc.Internet {
 					for _, s := range srcs {
 						fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o %s -s %s -j ACCEPT\n", iface, out, s)
+						if !v6 { // über Ausgänge (externe VPNs, Schnittstellen ex<ID>) – siehe Ziel-Regeln
+							fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o ex+ -s %s -j ACCEPT\n", iface, s)
+						}
 					}
 				}
 			}
@@ -1291,4 +1294,13 @@ func (Driver) Live(env *proto.Env, servers []*proto.ServerBundle) (map[int64]pro
 		}
 	}
 	return res, nil
+}
+
+// Sources: Adressen und Netze, von denen der Verkehr eines Geräts kommt (für Ziel-Regeln).
+func (Driver) Sources(env *proto.Env, sb *proto.ServerBundle) map[int64][]netip.Prefix {
+	out := map[int64][]netip.Prefix{}
+	for _, n := range nodes(sb, true) {
+		out[n.pb.Peer.ID] = n.all()
+	}
+	return out
 }

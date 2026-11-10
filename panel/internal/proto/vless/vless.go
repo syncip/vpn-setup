@@ -253,6 +253,14 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 	freedom := map[string]any{"domainStrategy": "UseIPv6v4"}
 	outbounds := []map[string]any{{"protocol": "freedom", "tag": "direct", "settings": freedom}, {"protocol": "blackhole", "tag": "block"}}
 	byUser := map[int64][]string{}
+	// Ziel-Regeln: Zugänge mit gleicher Regelfolge (und gleichem Tempo-Limit) bilden eine Klasse
+	type class struct {
+		pol    *proto.Policy
+		uid    int64 // Nutzer mit Tempo-Limit (0 = keins)
+		emails []string
+	}
+	classes := map[string]*class{}
+	var classKeys []string
 
 	var inbounds []map[string]any
 	for _, in := range ins {
@@ -262,9 +270,19 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 				continue
 			}
 			clients = append(clients, map[string]any{"id": proto.Str(pb.Peer.Secrets, "uuid"), "flow": in.cfg.Flow, "email": email(pb.Peer), "level": 0})
+			uid := int64(0)
 			if in.cfg.Shaping && (pb.RateDown > 0 || pb.RateUp > 0) {
 				limited[pb.User.ID] = lim{pb.RateDown, pb.RateUp}
 				byUser[pb.User.ID] = appendUnique(byUser[pb.User.ID], email(pb.Peer))
+				uid = pb.User.ID
+			}
+			if pol := env.Global.Policies[pb.Peer.ID]; pol != nil {
+				k := fmt.Sprintf("%s/%d", pol.Key, uid)
+				if classes[k] == nil {
+					classes[k] = &class{pol: pol, uid: uid}
+					classKeys = append(classKeys, k)
+				}
+				classes[k].emails = appendUnique(classes[k].emails, email(pb.Peer))
 			}
 		}
 		if clients == nil {
@@ -289,6 +307,64 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		uids = append(uids, id)
 	}
 	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	// Ziel-Regeln stehen vor den Tempo-Regeln: Ausgang je Gruppe (bei Tempo-Limit je Gruppe und
+	// Nutzer – die Markierung trägt oben die Gruppe, unten den Nutzer für die Drosselung).
+	sort.Strings(classKeys)
+	groupOut := map[string]bool{}
+	ipRules := false
+	outTag := func(group, uid int64) string {
+		g, ok := env.Global.Groups[group]
+		if group == 0 || !ok || !g.Enabled {
+			if uid != 0 {
+				return fmt.Sprintf("lim-%d", uid)
+			}
+			return "direct"
+		}
+		tag, mark := fmt.Sprintf("g%d", group), int64(g.Mark)
+		if uid != 0 {
+			tag, mark = fmt.Sprintf("g%d-lim%d", group, uid), int64(g.Mark)|(markBase+uid)
+		}
+		if !groupOut[tag] {
+			groupOut[tag] = true
+			// Ausgänge können nur IPv4 – Namen deshalb nur zu IPv4-Adressen auflösen
+			outbounds = append(outbounds, map[string]any{"protocol": "freedom", "tag": tag, "settings": map[string]any{"domainStrategy": "UseIPv4"},
+				"streamSettings": map[string]any{"sockopt": map[string]any{"mark": mark}}})
+		}
+		return tag
+	}
+	for _, k := range classKeys {
+		c := classes[k]
+		for _, r := range c.pol.Rules {
+			tag := outTag(r.Group, c.uid)
+			if r.All {
+				if r.Group != 0 { // IPv6-Ziele gingen sonst am Ausgang vorbei
+					rules = append(rules, map[string]any{"type": "field", "user": c.emails, "ip": []string{"::/0"}, "outboundTag": "block"})
+				}
+				rules = append(rules, map[string]any{"type": "field", "user": c.emails, "outboundTag": tag})
+				break
+			}
+			if len(r.Domains) > 0 {
+				ds := make([]string, len(r.Domains))
+				for i, d := range r.Domains {
+					ds[i] = "domain:" + d
+				}
+				rules = append(rules, map[string]any{"type": "field", "user": c.emails, "domain": ds, "outboundTag": tag})
+			}
+			var ips []string
+			for _, n := range r.Nets {
+				ips = append(ips, n.String())
+			}
+			for _, id := range r.Lists {
+				for _, n := range env.Global.TargetLists[id] {
+					ips = append(ips, n.String())
+				}
+			}
+			if len(ips) > 0 {
+				ipRules = true
+				rules = append(rules, map[string]any{"type": "field", "user": c.emails, "ip": ips, "outboundTag": tag})
+			}
+		}
+	}
 	for _, id := range uids {
 		tag := fmt.Sprintf("lim-%d", id)
 		outbounds = append(outbounds, map[string]any{"protocol": "freedom", "tag": tag, "settings": freedom,
@@ -296,6 +372,11 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		rules = append(rules, map[string]any{"type": "field", "user": byUser[id], "outboundTag": tag})
 	}
 	rules = aclRules(env, ins, rules)
+	routing := map[string]any{"rules": orEmpty(rules)}
+	if ipRules {
+		// Regeln nach Zieladresse brauchen die Adresse auch dann, wenn die App einen Namen schickt
+		routing["domainStrategy"] = "IPOnDemand"
+	}
 	cfg := map[string]any{
 		"log":   map[string]any{"loglevel": "warning"},
 		"api":   map[string]any{"tag": "api", "listen": env.Global.XrayAPI, "services": []string{"StatsService"}},
@@ -304,7 +385,7 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 			"statsUserOnline": true}}}, // merkt sich die Client-IPs (xray api statsonlineiplist)
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
-		"routing":   map[string]any{"rules": orEmpty(rules)},
+		"routing":   routing,
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	data = append(data, '\n')

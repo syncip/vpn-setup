@@ -66,7 +66,7 @@ func filters(dev, cls string, r Rule, ingress bool) [][]string {
 	var out [][]string
 	if r.Mark != 0 {
 		out = append(out, []string{"filter", "add", "dev", dev, "parent", "1:", "protocol", "all", "prio", "1",
-			"handle", strconv.FormatUint(uint64(r.Mark), 10), "fw", "flowid", cls})
+			"handle", fmt.Sprintf("0x%x/0xffffff", r.Mark), "fw", "flowid", cls})
 	}
 	for _, a := range r.Addrs {
 		a = a.Unmap()

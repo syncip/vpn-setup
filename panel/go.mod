@@ -6,6 +6,7 @@ require (
 	github.com/pires/go-proxyproto v0.16.0
 	github.com/pquerna/otp v1.5.0
 	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.61.0
 	modernc.org/sqlite v1.61.1
 )
 

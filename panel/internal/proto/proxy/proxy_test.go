@@ -410,7 +410,7 @@ func TestIPv6Targets(t *testing.T) {
 	}
 	// über eine Gruppe: Ausgänge können nur IPv4 → Antwort 8 und Ereignis mit Hinweis
 	f.env.Global.Groups = map[int64]proto.GroupRoute{5: {ID: 5, Name: "G", Enabled: true, Mark: 1 << 24}}
-	f.sb.Server.Settings["group"] = float64(5)
+	f.env.Global.Policies = map[int64]*proto.Policy{f.sb.Peers[0].Peer.ID: {Key: "t", Rules: []proto.RouteRule{{All: true, Group: 5}}}}
 	_ = (Driver{}).Apply(f.env, []*proto.ServerBundle{f.sb})
 	if code, _, c := connect(); code != 8 {
 		t.Fatalf("Gruppe IPv6: Antwort %d", code)

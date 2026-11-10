@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -209,7 +210,7 @@ func TestLab(t *testing.T) {
 	cleanup()
 	t.Cleanup(func() {
 		cleanup()
-		if out, _ := exec.Command("ip", "rule").Output(); strings.Contains(string(out), "lookup 3061") || strings.Contains(string(out), "lookup 2061") {
+		if out, _ := exec.Command("ip", "rule").Output(); strings.Contains(string(out), "lookup 3061") || strings.Contains(string(out), "lookup 2061") || strings.Contains(string(out), "lookup 2062") {
 			t.Errorf("Routing-Regeln nicht abgebaut:\n%s", out)
 		}
 		for _, f := range []string{"ex901.ovpn", "ex903.conf"} {
@@ -308,6 +309,8 @@ func TestLab(t *testing.T) {
 	// Proxy über die Gruppe
 	routes := map[int64]proto.GroupRoute{groupID: {ID: groupID, Name: "Lab", Enabled: true, Mark: exits.GroupMark(slot), DNS: []string{target}}}
 	pxEnv.Global.Groups = routes
+	// Zugang 10 (Proxy 1): alles über die Gruppe – so stellt es die Engine aus Regeln bzw. der Server-Einstellung zusammen
+	pxEnv.Global.Policies = map[int64]*proto.Policy{10: {Key: "lab", Rules: []proto.RouteRule{{All: true, Group: groupID}}}}
 	mk := func(id int64, group int64, socks, hp int) *proto.ServerBundle {
 		srv := &store.Server{ID: id, Name: fmt.Sprint("px", id), Protocol: "proxy", Enabled: true,
 			Settings: store.M{"socks_port": float64(socks), "http_port": float64(hp), "group": float64(group)}}
@@ -454,6 +457,30 @@ func TestLab(t *testing.T) {
 	}
 	if fi, err := os.Stat("/etc/vpn/exits/ex903.conf"); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("Rechte der WG-Konfiguration: %v %v", fi, err)
+	}
+	// An den Ausgang gebundene Sockets (so arbeitet Hysteria2: bindDevice) finden ihren Weg über die
+	// eigene Regel „oif ex903“ – in der Haupttabelle hat der Ausgang keine Route.
+	bound := &http.Client{Timeout: 6 * time.Second, Transport: &http.Transport{DisableKeepAlives: true,
+		DialContext: (&net.Dialer{Timeout: 5 * time.Second, Control: func(_, _ string, c syscall.RawConn) error {
+			var serr error
+			if err := c.Control(func(fd uintptr) {
+				serr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, "ex903")
+			}); err != nil {
+				return err
+			}
+			return serr
+		}}).DialContext}}
+	if resp, err := bound.Get("http://" + target + "/"); err != nil {
+		t.Errorf("an ex903 gebundener Socket: %v", err)
+	} else {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(b) != "src="+wgCli {
+			t.Errorf("an ex903 gebundener Socket: %q, erwartet src=%s", b, wgCli)
+		}
+	}
+	if out := sh(t, "ip", "rule"); !strings.Contains(out, "oif ex903 lookup 2062") {
+		t.Errorf("Regel für gebundene Sockets fehlt:\n%s", out)
 	}
 	// Firewall: beide Ausgänge nach innen dicht, NAT und MSS
 	for tb, want := range map[string][]string{

@@ -4,6 +4,7 @@
   import PageHead from '../components/PageHead.svelte';
   import Modal from '../components/Modal.svelte';
   import FieldForm from '../components/FieldForm.svelte';
+  import RouteRules from '../components/RouteRules.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { ago, clone, date, fmtNum } from '../lib/format.js';
@@ -179,7 +180,7 @@
   }
 </script>
 
-<PageHead title="Proxy" subtitle="SOCKS5/HTTP-Proxy und Ausgänge über externe VPNs (WireGuard- oder OpenVPN-Konfigurationen)">
+<PageHead title="Proxy & Ausgänge" subtitle="SOCKS5/HTTP-Proxy, Ausgänge über externe VPNs (WireGuard- oder OpenVPN-Konfigurationen) und Regeln, welcher Verkehr darüber läuft">
   <button class="btn" onclick={() => check(false)} disabled={checking || !d.exits.length}><Icon name="refresh" size={16} /> Jetzt prüfen</button>
   <button class="btn" onclick={() => check(true)} disabled={checking || !d.exits.length} title="Lädt 5 MB über jeden Ausgang"><Icon name="gauge" size={16} /> Geschwindigkeit messen</button>
 </PageHead>
@@ -209,6 +210,8 @@
     {/each}
   </div>
 </div>
+
+<RouteRules reload={d.groups.length + servers.length} />
 
 <!-- Gruppen -->
 <div class="section-head">

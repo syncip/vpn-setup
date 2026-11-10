@@ -135,7 +135,7 @@ systemctl stop vpnpanel 2>/dev/null || true
 echo ">> Pakete installieren"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx openvpn   iputils-ping conntrack
+  wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx openvpn   iputils-ping conntrack nftables
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnginx-mod-stream || true
 
 echo ">> Forwarding aktivieren"

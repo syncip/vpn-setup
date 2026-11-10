@@ -1,20 +1,22 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/netip"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"vpnpanel/internal/proto"
 	"vpnpanel/internal/store"
 )
 
-// IP-Listen: Sperrlisten (diese Adressen nie) und Freigabelisten (nur diese Adressen) je Server.
-// Durchsetzung: iptables/ip6tables in INPUT auf den Ports des Servers (Kette VPNACL, pro Server
-// eine Unterkette VPNACL-<ID>); VLESS (geteilter Port 443) regelt es selbst über Xray-Routing.
+// IP-Listen: Sperrlisten (diese Adressen nie) und Freigabelisten (nur diese Adressen) je Server,
+// dazu Ziellisten für Ziel-Regeln (siehe routes.go). Durchsetzung der Sperr-/Freigabelisten:
+// nftables (Tabelle „inet vpnpanel“, siehe nft.go) auf den Ports des Servers; VLESS (geteilter
+// Port 443) regelt es selbst über Xray-Routing. Listen können online nachgeladen werden (lists.go).
 
 const maxIPEntries = 20000
 
@@ -22,17 +24,23 @@ type IPList struct {
 	ID      int64
 	Name    string
 	Enabled bool
-	Mode    string // block | allow
+	Mode    string // block | allow | targets (Zielliste für Ziel-Regeln)
 	Entries []string
 	All     bool
 	Servers []int64
+	URL     string // Online-Liste: Adresse, von der zusätzlich geladen wird
+	Refresh int    // Stunden zwischen den Abrufen, 0 = nur von Hand
 }
 
 func IPListFrom(o *store.Object) *IPList {
 	l := &IPList{ID: o.ID, Name: o.Name, Enabled: o.Enabled}
 	l.Mode, _ = o.Data["mode"].(string)
-	if l.Mode != "allow" {
+	if l.Mode != "allow" && l.Mode != "targets" {
 		l.Mode = "block"
+	}
+	l.URL, _ = o.Data["url"].(string)
+	if f, ok := o.Data["refresh"].(float64); ok {
+		l.Refresh = int(f)
 	}
 	l.All, _ = o.Data["all"].(bool)
 	if v, ok := o.Data["entries"].([]any); ok {
@@ -114,28 +122,60 @@ func parsePrefix(s string) (netip.Prefix, error) {
 	return netip.PrefixFrom(a, a.BitLen()), nil
 }
 
-// acls: wirksame Regeln je Server-ID.
-func (e *Engine) acls() map[int64]*proto.ACL {
+// serverACL: Listen (IDs), die für einen Server gelten.
+type serverACL struct {
+	Deny, Allow []int64
+	AllowOnly   bool // es gibt eine Freigabeliste → nur deren Adressen
+}
+
+// aclPlan: wirksame Listen je Server – als Listen-IDs (für die Firewall, die pro Liste ein Set
+// anlegt) und zusammengeführt (für Treiber, die selbst prüfen: Proxy, VLESS).
+type aclPlan struct {
+	ByServer map[int64]*serverACL
+	Merged   map[int64]*proto.ACL
+	Lists    map[int64]*IPList // alle aktiven Sperr-/Freigabelisten
+}
+
+type aclState struct {
+	mu   sync.Mutex
+	sig  string
+	plan *aclPlan
+}
+
+// aclPlan berechnet die wirksamen Listen (zwischengespeichert, solange sich nichts ändert).
+func (e *Engine) aclPlan() *aclPlan {
 	objs, err := e.St.Objects("iplist")
 	if err != nil || len(objs) == 0 {
-		return nil
+		return &aclPlan{}
 	}
 	servers, err := e.St.Servers()
 	if err != nil {
-		return nil
+		return &aclPlan{}
 	}
-	out := map[int64]*proto.ACL{}
+	var sig strings.Builder
+	for _, sv := range servers {
+		fmt.Fprintf(&sig, "s%d,", sv.ID)
+	}
+	for _, o := range objs {
+		fmt.Fprintf(&sig, "|%d:%v:%v", o.ID, o.Enabled, o.Data)
+		if fi, err := os.Stat(e.listPath(o.ID)); err == nil {
+			fmt.Fprintf(&sig, ":%d:%d", fi.ModTime().UnixNano(), fi.Size())
+		}
+	}
+	key := hashStr(sig.String()) + strconv.Itoa(sig.Len())
+	e.acl.mu.Lock()
+	defer e.acl.mu.Unlock()
+	if e.acl.plan != nil && e.acl.sig == key {
+		return e.acl.plan
+	}
+	plan := &aclPlan{ByServer: map[int64]*serverACL{}, Merged: map[int64]*proto.ACL{}, Lists: map[int64]*IPList{}}
 	for _, o := range objs {
 		l := IPListFrom(o)
-		if !l.Enabled {
+		if !l.Enabled || l.Mode == "targets" {
 			continue
 		}
-		var pfx []netip.Prefix
-		for _, s := range l.Entries {
-			if p, err := netip.ParsePrefix(s); err == nil {
-				pfx = append(pfx, p)
-			}
-		}
+		plan.Lists[l.ID] = l
+		v4, v6 := e.listPrefixes(l)
 		targets := map[int64]bool{}
 		for _, id := range l.Servers {
 			targets[id] = true
@@ -144,149 +184,61 @@ func (e *Engine) acls() map[int64]*proto.ACL {
 			if !l.All && !targets[sv.ID] {
 				continue
 			}
-			a := out[sv.ID]
+			a, m := plan.ByServer[sv.ID], plan.Merged[sv.ID]
 			if a == nil {
-				a = &proto.ACL{}
-				out[sv.ID] = a
+				a, m = &serverACL{}, &proto.ACL{}
+				plan.ByServer[sv.ID], plan.Merged[sv.ID] = a, m
 			}
 			if l.Mode == "allow" {
-				a.AllowOnly = true
-				a.Allow = append(a.Allow, pfx...)
+				a.AllowOnly, m.AllowOnly = true, true
+				a.Allow = append(a.Allow, l.ID)
+				m.Allow = append(append(m.Allow, v4...), v6...)
 			} else {
-				a.Deny = append(a.Deny, pfx...)
+				a.Deny = append(a.Deny, l.ID)
+				m.Deny = append(append(m.Deny, v4...), v6...)
 			}
+		}
+	}
+	e.acl.sig, e.acl.plan = key, plan
+	return plan
+}
+
+// acls: wirksame Regeln je Server-ID (für die Treiber).
+func (e *Engine) acls() map[int64]*proto.ACL {
+	m := e.aclPlan().Merged
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// removeLegacyACL baut die iptables-Ketten älterer Versionen (bis 0.7) ab.
+func (e *Engine) removeLegacyACL() {
+	for _, fam := range []struct{ cmd, state string }{{"iptables", "state:acl:v4"}, {"ip6tables", "state:acl:v6"}} {
+		raw := e.St.GetSetting(fam.state, "")
+		if raw == "" {
+			continue
+		}
+		_, _ = e.Sys.Run(fam.cmd, "-D", "INPUT", "-j", "VPNACL")
+		_, _ = e.Sys.Run(fam.cmd, "-F", "VPNACL")
+		for _, c := range legacyChains(raw) {
+			_, _ = e.Sys.Run(fam.cmd, "-F", c)
+			_, _ = e.Sys.Run(fam.cmd, "-X", c)
+		}
+		_, _ = e.Sys.Run(fam.cmd, "-X", "VPNACL")
+		_ = e.St.SetSetting(fam.state, "")
+	}
+}
+
+// legacyChains liest die Kettennamen aus dem alten Zustand ({"c":["VPNACL-3",…],…}).
+func legacyChains(raw string) []string {
+	var out []string
+	for _, f := range strings.FieldsFunc(raw, func(r rune) bool { return r == '"' || r == ',' || r == '[' || r == ']' }) {
+		if strings.HasPrefix(f, "VPNACL-") {
+			out = append(out, f)
 		}
 	}
 	return out
-}
-
-// applyACL schreibt die iptables-Ketten (IPv4 und IPv6) für alle Server mit Listen.
-func (e *Engine) applyACL(snap *Snapshot, acls map[int64]*proto.ACL) error {
-	type portRule struct {
-		proto string
-		port  int
-	}
-	byServer := map[int64][]portRule{}
-	var ids []int64
-	for _, sb := range snap.Servers {
-		sv := sb.Server
-		a := acls[sv.ID]
-		if a == nil || !sv.Enabled {
-			continue
-		}
-		d, ok := proto.Get(sv.Protocol)
-		if !ok {
-			continue
-		}
-		if s, ok := d.(proto.SelfACL); ok && s.SelfACL() {
-			continue
-		}
-		for _, p := range d.Ports(sv) {
-			if p.To > 0 || p.Port <= 0 {
-				continue // Bereiche (Port-Hopping) werden auf den Hauptport umgeleitet
-			}
-			byServer[sv.ID] = append(byServer[sv.ID], portRule{p.Proto, p.Port})
-		}
-		if len(byServer[sv.ID]) > 0 {
-			ids = append(ids, sv.ID)
-		}
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	var errs []string
-	for _, fam := range []struct {
-		cmd, restore, state, ctFam string
-		v4                         bool
-	}{{"iptables", "iptables-restore", "acl:v4", "ipv4", true}, {"ip6tables", "ip6tables-restore", "acl:v6", "ipv6", false}} {
-		env := e.Env()
-		var prev struct {
-			Chains []string          `json:"c"`
-			Sig    map[string]string `json:"s"` // Port → Prüfsumme der Regeln
-		}
-		_ = json.Unmarshal([]byte(env.GetState(fam.state)), &prev)
-		if len(ids) == 0 {
-			if len(prev.Chains) == 0 {
-				continue
-			}
-			_, _ = e.Sys.Run(fam.cmd, "-D", "INPUT", "-j", "VPNACL")
-			_, _ = e.Sys.Run(fam.cmd, "-F", "VPNACL")
-			_, _ = e.Sys.Run(fam.cmd, "-X", "VPNACL")
-			for _, c := range prev.Chains {
-				_, _ = e.Sys.Run(fam.cmd, "-F", c)
-				_, _ = e.Sys.Run(fam.cmd, "-X", c)
-			}
-			env.SetState(fam.state, "")
-			continue
-		}
-		var b strings.Builder
-		b.WriteString("*filter\n:VPNACL - [0:0]\n")
-		var chains []string
-		for _, id := range ids {
-			c := fmt.Sprintf("VPNACL-%d", id)
-			chains = append(chains, c)
-			fmt.Fprintf(&b, ":%s - [0:0]\n", c)
-		}
-		b.WriteString("-A VPNACL -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n")
-		sig := map[string]string{}
-		for i, id := range ids {
-			a := acls[id]
-			var body strings.Builder
-			for _, p := range a.Deny {
-				if p.Addr().Is4() == fam.v4 {
-					fmt.Fprintf(&body, "-A %s -s %s -j DROP\n", chains[i], p)
-				}
-			}
-			if a.AllowOnly {
-				for _, p := range a.Allow {
-					if p.Addr().Is4() == fam.v4 {
-						fmt.Fprintf(&body, "-A %s -s %s -j RETURN\n", chains[i], p)
-					}
-				}
-				fmt.Fprintf(&body, "-A %s -j DROP\n", chains[i])
-			}
-			b.WriteString(body.String())
-			for _, pr := range byServer[id] {
-				fmt.Fprintf(&b, "-A VPNACL -p %s -m %s --dport %d -j %s\n", pr.proto, pr.proto, pr.port, chains[i])
-				sig[pr.proto+"/"+strconv.Itoa(pr.port)] = hashStr(body.String())
-			}
-		}
-		b.WriteString("COMMIT\n")
-		if _, err := e.Sys.RunInput(b.String(), fam.restore, "-n"); err != nil {
-			errs = append(errs, fam.cmd+": "+err.Error())
-			continue
-		}
-		if _, err := e.Sys.Run(fam.cmd, "-C", "INPUT", "-j", "VPNACL"); err != nil {
-			if _, err := e.Sys.Run(fam.cmd, "-I", "INPUT", "-j", "VPNACL"); err != nil {
-				errs = append(errs, fam.cmd+": "+err.Error())
-				continue
-			}
-		}
-		keep := map[string]bool{}
-		for _, c := range chains {
-			keep[c] = true
-		}
-		for _, c := range prev.Chains {
-			if !keep[c] {
-				_, _ = e.Sys.Run(fam.cmd, "-F", c)
-				_, _ = e.Sys.Run(fam.cmd, "-X", c)
-			}
-		}
-		// Bestehende Verbindungen neu bewerten, wenn sich die Regeln eines Ports geändert haben
-		// (sonst liefe z. B. eine gesperrte WireGuard-Verbindung über conntrack einfach weiter).
-		for k, v := range sig {
-			if prev.Sig[k] == v {
-				continue
-			}
-			pr, port, _ := strings.Cut(k, "/")
-			_, _ = e.Sys.Run("conntrack", "-D", "-f", fam.ctFam, "-p", pr, "--orig-port-dst", port)
-		}
-		prev.Chains, prev.Sig = chains, sig
-		js, _ := json.Marshal(prev)
-		env.SetState(fam.state, string(js))
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "; "))
-	}
-	return nil
 }
 
 func hashStr(s string) string {

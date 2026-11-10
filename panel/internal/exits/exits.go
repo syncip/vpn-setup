@@ -33,6 +33,7 @@ const (
 	probeTable = 2000 // + Slot des Ausgangs
 	groupTable = 3000 // + Slot der Gruppe
 	probePrio  = 6100
+	bindPrio   = 6200
 	groupPrio  = 6000
 )
 
@@ -270,6 +271,7 @@ type rule struct {
 	Prio  int    `json:"p"`
 	Mark  uint32 `json:"m"`
 	Table int    `json:"t"`
+	Oif   string `json:"o,omitempty"` // statt Markierung: Sockets, die an diese Schnittstelle gebunden sind
 }
 
 // Apply richtet Ausgänge, Routing-Regeln und Gruppen-Tabellen ein.
@@ -314,12 +316,15 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 	var rules []rule
 	for _, e := range exits {
 		if e.Enabled && e.Slot > 0 {
-			rules = append(rules, rule{probePrio + e.Slot, probeMark(e.Slot), probeTable + e.Slot})
+			rules = append(rules, rule{Prio: probePrio + e.Slot, Mark: probeMark(e.Slot), Table: probeTable + e.Slot})
+			// Dienste, die sich an den Ausgang binden (SO_BINDTODEVICE, z. B. Hysteria2), finden ihre
+			// Route nur über eine eigene Regel – in der Haupttabelle hat der Ausgang keine Route.
+			rules = append(rules, rule{Prio: bindPrio + e.Slot, Table: probeTable + e.Slot, Oif: IfName(e.ID)})
 		}
 	}
 	for _, g := range groups {
 		if g.Enabled && g.Slot > 0 {
-			rules = append(rules, rule{groupPrio + g.Slot, GroupMark(g.Slot), groupTable + g.Slot})
+			rules = append(rules, rule{Prio: groupPrio + g.Slot, Mark: GroupMark(g.Slot), Table: groupTable + g.Slot})
 		}
 	}
 	if err := syncRules(env, rules); err != nil {
@@ -517,8 +522,12 @@ func syncRules(env *Env, want []rule) error {
 			}
 		}
 		_, _ = sys.Run("ip", "-4", "rule", "del", "priority", strconv.Itoa(r.Prio))
-		if _, err := sys.Run("ip", "-4", "rule", "add", "priority", strconv.Itoa(r.Prio),
-			"fwmark", fmt.Sprintf("0x%x/0x%x", r.Mark, MarkMask), "lookup", strconv.Itoa(r.Table)); err != nil {
+		sel := []string{"fwmark", fmt.Sprintf("0x%x/0x%x", r.Mark, MarkMask)}
+		if r.Oif != "" {
+			sel = []string{"oif", r.Oif}
+		}
+		args := append(append([]string{"-4", "rule", "add", "priority", strconv.Itoa(r.Prio)}, sel...), "lookup", strconv.Itoa(r.Table))
+		if _, err := sys.Run("ip", args...); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}

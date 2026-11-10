@@ -503,6 +503,51 @@ func applyServer(env *proto.Env, sb *proto.ServerBundle) error {
 		}
 		cfg["bandwidth"] = b
 	}
+	// Ziel-Regeln (nur Server- und globale Regeln – Hysteria kann Nutzer nicht einzeln leiten):
+	// je Gruppe ein Ausgang, gebunden an die Schnittstelle des gerade aktiven Ausgangs.
+	if pol := env.Global.ServerPolicies[srv.ID]; pol != nil {
+		var outs []map[string]any
+		var acl []string
+		seen := map[string]bool{}
+		target := func(group int64) string {
+			g, ok := env.Global.Groups[group]
+			switch {
+			case group == 0 || !ok || !g.Enabled || (g.Dev == "" && g.State == "direct"):
+				return "direct"
+			case g.Dev == "": // alle Ausgänge gestört (bzw. noch nicht geprüft) → sperren
+				return "reject"
+			}
+			name := fmt.Sprintf("g%d", group)
+			if !seen[name] {
+				seen[name] = true
+				outs = append(outs, map[string]any{"name": name, "type": "direct", "direct": map[string]any{"mode": "4", "bindDevice": g.Dev}})
+			}
+			return name
+		}
+		for _, r := range pol.Rules {
+			t := target(r.Group)
+			if r.All {
+				acl = append(acl, t+"(all)")
+				break
+			}
+			for _, d := range r.Domains {
+				acl = append(acl, fmt.Sprintf("%s(suffix:%s)", t, d))
+			}
+			for _, n := range r.Nets {
+				acl = append(acl, fmt.Sprintf("%s(%s)", t, n))
+			}
+			for _, id := range r.Lists {
+				for _, n := range env.Global.TargetLists[id] {
+					acl = append(acl, fmt.Sprintf("%s(%s)", t, n))
+				}
+			}
+		}
+		acl = append(acl, "direct(all)")
+		if len(outs) > 0 {
+			cfg["outbounds"] = outs
+		}
+		cfg["acl"] = map[string]any{"inline": acl}
+	}
 	// JSON ist gültiges YAML – Hysteria liest die Datei mit einem YAML-Parser.
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	data = append([]byte("# Vom VPN-Panel erzeugt – Änderungen werden überschrieben.\n"), append(data, '\n')...)

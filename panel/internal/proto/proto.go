@@ -73,6 +73,12 @@ type Global struct {
 	// ACLs: Sperr-/Freigabelisten je Server-ID (nil = keine Einschränkung). Die Engine setzt sie per
 	// iptables auf den Ports aus Ports() durch; Treiber mit geteiltem Port (VLESS) über SelfACL selbst.
 	ACLs map[int64]*ACL
+	// Policies: Ziel-Regeln je Zugang (Peer-ID); ServerPolicies: nur Server- und globale Regeln je
+	// Server-ID (für Dienste, die Nutzer nicht einzeln leiten können, z. B. Hysteria2).
+	Policies       map[int64]*Policy
+	ServerPolicies map[int64]*Policy
+	// TargetLists: Inhalt der Ziellisten (nur IPv4), auf die Regeln verweisen.
+	TargetLists map[int64][]netip.Prefix
 }
 
 // ACL: Wer darf sich mit einem Server verbinden?
@@ -116,6 +122,10 @@ type GroupRoute struct {
 	Enabled bool
 	Mark    uint32   // SO_MARK für Sockets
 	DNS     []string // DNS-Server, die über die Gruppe abgefragt werden
+	// Dev: Schnittstelle des gerade aktiven Ausgangs ("" = keiner); State: ok | failover | blocked |
+	// direct ("" = noch nicht bewertet). Für Dienste, die sich an die Schnittstelle binden (Hysteria2).
+	Dev   string
+	State string
 }
 
 // GroupSwitcher: optional – wird aufgerufen, wenn eine Gruppe den Ausgang wechselt

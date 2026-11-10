@@ -37,7 +37,7 @@
     { path: '/users', label: 'Nutzer', icon: 'users' },
     { path: '/network', label: 'Netzwerk', icon: 'network' },
     { path: '/servers', label: 'Server', icon: 'server' },
-    { path: '/proxy', label: 'Proxy', icon: 'route' },
+    { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route' },
     { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
     { path: '/plans', label: 'Tarife & Limits', icon: 'tag' },
     { path: '/settings', label: 'Einstellungen', icon: 'settings' },

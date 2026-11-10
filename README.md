@@ -107,7 +107,7 @@ iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 1194 -j DNAT --to-destinat
 
 ## Proxy und Ausgänge (externe VPNs)
 
-Menü **Proxy**: SOCKS5- und HTTP-Proxy mit Benutzername und Passwort, z. B. für Fernseher und Apps.
+Menü **Proxy & Ausgänge**: SOCKS5- und HTTP-Proxy mit Benutzername und Passwort, z. B. für Fernseher und Apps.
 Der Verkehr läuft direkt über den Server oder über eine **Ausgangsgruppe** – also über externe
 VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anbieter) hochgeladen wird.
 
@@ -153,13 +153,57 @@ iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 8080 -j DNAT --to-destinat
 
 OpenVPN-Ausgänge brauchen wie der OpenVPN-Server `/dev/net/tun` (siehe oben).
 
+## Ziel-Regeln: Verkehr über Ausgänge leiten (alle Protokolle)
+
+Auf der Seite **Proxy & Ausgänge** legen **Ziel-Regeln** fest, welcher Verkehr über welche
+Ausgangsgruppe läuft – nicht nur beim Proxy, sondern auch bei WireGuard, OpenVPN, VLESS und Hysteria2.
+
+- **Gilt für:** alle, einen Server, einen Nutzer (alle seine Zugänge) oder ein einzelnes Gerät.
+- **Ziele:** alles – oder nur bestimmte Ziele: Domains (samt Unterdomains), IPv4-Netze und Ziellisten
+  (IP-Listen der Art „Zielliste“, auch als Online-Liste).
+- **Über:** eine Ausgangsgruppe – oder „direkt über den Server“ als Ausnahme (z. B. alles über Mullvad,
+  nur die Bank direkt).
+- **Rangfolge:** Gerät vor Nutzer vor Server vor „alle“; innerhalb einer Ebene Ziel-Regeln vor „alles“.
+  Die erste passende Regel gilt. Regeln mit deaktivierter Gruppe wirken nicht (Verkehr geht direkt).
+
+So wird es je Protokoll umgesetzt:
+
+| Protokoll | Umsetzung | Hinweise |
+|-----------|-----------|----------|
+| WireGuard, OpenVPN | nftables markiert Pakete je Quelle und Ziel, die Markierung wählt die Routing-Tabelle der Gruppe | Domains über die DNS-Anfragen des Geräts (siehe unten) |
+| VLESS | Xray-Routing je Zugang | Domains per Sniffing, sehr zuverlässig |
+| Hysteria2 | Ausgang wird an die Schnittstelle des aktiven Ausgangs gebunden, Ziele per Hysteria-ACL | nur Regeln für Server und „alle“ (Hysteria kann Nutzer nicht einzeln leiten); wechselt die Gruppe den Ausgang, startet der Dienst kurz neu |
+| Proxy | im Panel-Prozess je Zugang | die Server-Einstellung „Ausgang“ wirkt wie eine „alles“-Regel am Server |
+
+- **Domains bei WireGuard/OpenVPN:** Der Kernel sieht nur Adressen. Für Geräte mit Domain-Regeln leitet
+  der Server deshalb deren DNS-Anfragen (Port 53) an einen eingebauten Umleiter, der die Adressen der
+  passenden Namen lernt (24 Stunden) – unabhängig davon, welcher DNS-Server im Gerät eingetragen ist.
+  DNS über TLS (Port 853) wird für diese Geräte abgewiesen, damit sie auf normales DNS zurückfallen.
+  Geräte bzw. Browser mit DNS über HTTPS (DoH) umgehen das – dort DoH ausschalten oder Netze/Listen verwenden.
+- **IPv6:** Ausgänge können nur IPv4. Läuft bei einem Gerät *alles* über eine Gruppe, wird IPv6 ins
+  Internet für dieses Gerät gesperrt (sonst ginge es am Ausgang vorbei); für Domains aus Regeln gibt es
+  keine IPv6-Adressen. Ziellisten und Netze zählen nur mit ihren IPv4-Einträgen.
+- **Private Ziele** (andere VPN-Geräte, Heimnetze hinter Geräten, der Server selbst) laufen nie über Ausgänge.
+- **Drosselung:** Tempo-Limits von VLESS-Nutzern wirken nicht für Verkehr, der über Ausgänge läuft.
+- Fällt die Gruppe aus, gilt ihre Einstellung „sperren“ oder „direkt“ wie beim Proxy.
+
 ## IP-Listen
 
 Menü **IP-Listen**: Sperrlisten (diese Adressen nie) und Freigabelisten (nur diese Adressen), je Liste
 für alle Dienste oder ausgewählte Server. Gibt es für einen Dienst eine Freigabeliste, kommen nur deren
-Adressen hinein; Sperrlisten gelten zusätzlich. Durchgesetzt per iptables/ip6tables (Kette `VPNACL`,
-bestehende Verbindungen werden über conntrack neu bewertet); VLESS teilt sich Port 443 mit Panel und
-Abo und regelt es deshalb in Xray. Webinterface und Abo-Links sind nie betroffen.
+Adressen hinein; Sperrlisten gelten zusätzlich. Dazu **Ziellisten** für Ziel-Regeln (siehe oben).
+
+- **Online-Listen:** Jede Liste kann zusätzlich eine Adresse (http/https) haben, von der der Server
+  regelmäßig eine Textdatei lädt (eine Adresse oder ein Netz pro Zeile, Kommentare mit `#` oder `;`) –
+  z. B. Sperrlisten von FireHOL oder Spamhaus. Intervall: von Hand, stündlich bis wöchentlich. Bis
+  300 000 Einträge; nicht lesbare Zeilen werden übersprungen und gezählt. Schlägt ein Abruf fehl oder
+  ist die Antwort leer, bleibt der letzte Stand aktiv (neuer Versuch spätestens nach einer Stunde).
+  Geladen wird nur von öffentlichen Adressen.
+- **Durchsetzung:** eigene nftables-Tabelle `inet vpnpanel` (pro Liste ein Set – auch große Listen
+  kosten pro Paket nur eine Suche), geprüft auf den Ports des Dienstes; bestehende Verbindungen
+  gesperrter Adressen brechen sofort ab. VLESS teilt sich Port 443 mit Panel und Abo und regelt es
+  deshalb in Xray. Webinterface und Abo-Links sind nie betroffen. Braucht das Paket `nftables`
+  (installiert das Setup-Script; beim Update von 0.7 `vpn-setup.sh` erneut ausführen).
 
 ## Version und Updates
 

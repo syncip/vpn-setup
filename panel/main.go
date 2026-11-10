@@ -36,7 +36,7 @@ import (
 )
 
 // version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
-var version = "0.7.2"
+var version = "0.8.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -141,6 +141,7 @@ func serve(args []string) {
 	go e.RunLive(stop)
 	go e.RunUpdateCheck(stop, version)
 	go e.RunExits(stop)
+	go e.RunLists(stop)
 
 	secure := o.cert != "" || !o.dev
 	a := api.New(e, webui.FS(), secure, version)
