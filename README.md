@@ -187,6 +187,31 @@ So wird es je Protokoll umgesetzt:
 - **Drosselung:** Tempo-Limits von VLESS-Nutzern wirken nicht für Verkehr, der über Ausgänge läuft.
 - Fällt die Gruppe aus, gilt ihre Einstellung „sperren“ oder „direkt“ wie beim Proxy.
 
+## Netzwerk-Übersicht
+
+Menü **Netzwerk** → **Übersicht**: eine Karte über alle Server und Protokolle – links Nutzer und Geräte,
+dann die Server, die Ausgänge („Direkt“ und die Ausgangsgruppen mit ihren Ausgängen) und das Internet.
+
+- **Verkehr:** Linien zeigen, wer verbunden ist; fließt gerade Verkehr, bewegen sie sich und werden mit
+  der Menge dicker (alle 2 Sekunden aktualisiert). An Geräten, Servern, Gruppen und Ausgängen steht die
+  aktuelle Geschwindigkeit – bei Ausgängen aus den Zählern der Schnittstelle, also der tatsächliche Durchsatz.
+- **Wo hakt es?** Über der Karte stehen Auffälligkeiten: Server, die nicht laufen, Fehler beim Anwenden,
+  gestörte Ausgänge, Gruppen im Ausweich- oder Sperrzustand, Ziel-Regeln, die nicht wirken, fehlgeschlagene
+  Online-Listen sowie gesperrte, abgelaufene und gedrosselte Nutzer.
+- **Anklicken** eines Geräts, Nutzers, Servers oder einer Gruppe hebt dessen Weg hervor und zeigt Einzelheiten
+  (Weg nach außen samt der Ebene der Regel, bei WireGuard auch, welche Geräte es erreichen darf).
+- **Ziehen – Ausgang zuweisen:** Gerät, Nutzer oder Server auf eine Gruppe ziehen → der ganze Verkehr läuft
+  darüber; auf „Direkt“ ziehen → wieder direkt über den Server. Dahinter steht eine „alles“-Ziel-Regel der
+  jeweiligen Ebene (ersetzt die bisherige; Regeln für bestimmte Ziele bleiben). Erbt das Gerät sonst eine
+  weiter gefasste Regel, entsteht beim Ziehen auf „Direkt“ eine Ausnahme. Alles lässt sich danach unter
+  „Proxy & Ausgänge“ → Ziel-Regeln ansehen und ändern. Hysteria2-Geräte lassen sich nicht einzeln zuweisen
+  (den Server ziehen).
+- **Ziehen – Zugriff:** Ein WireGuard-Gerät auf ein anderes Gerät desselben Servers ziehen erlaubt den
+  Zugriff bzw. entzieht ihn, wenn er schon besteht. Der Zugriff des Geräts wird dabei auf „Ausgewählte
+  Geräte“ umgestellt (bisher erreichbare Geräte bleiben erreichbar). Vor jeder Änderung fragt die Seite nach.
+
+Die Reiter daneben zeigen wie bisher je WireGuard-Server die Geräte, die Sternkarte und die Zugriffsmatrix.
+
 ## IP-Listen
 
 Menü **IP-Listen**: Sperrlisten (diese Adressen nie) und Freigabelisten (nur diese Adressen), je Liste

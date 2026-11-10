@@ -3,6 +3,8 @@ package engine
 import (
 	"fmt"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"vpnpanel/internal/exits"
@@ -150,5 +152,65 @@ func (e *Engine) GroupUsers(groupID int64) []*store.Server {
 			}
 		}
 	}
+	return out
+}
+
+// ExitRate: aktueller Durchsatz eines Ausgangs (Bytes pro Sekunde), aus Sicht der Nutzer:
+// Down = vom Anbieter empfangen, Up = zum Anbieter gesendet.
+type ExitRate struct {
+	Up   float64 `json:"up"`
+	Down float64 `json:"down"`
+}
+
+type exitRateState struct {
+	mu   sync.Mutex
+	at   time.Time
+	prev map[int64][2]uint64 // rx, tx
+	last map[int64]ExitRate
+}
+
+// ExitRates liest die Zähler der Ausgangs-Schnittstellen und bildet die Rate seit dem letzten Aufruf
+// (frühestens nach einer Sekunde neu). Im Testmodus leer – die Oberfläche schätzt dann aus den Geräten.
+func (e *Engine) ExitRates() map[int64]ExitRate {
+	if e.Sys.DryRun() {
+		return map[int64]ExitRate{}
+	}
+	st := &e.exitRates
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	now := time.Now()
+	dt := now.Sub(st.at).Seconds()
+	if st.last != nil && dt < 1 {
+		return st.last
+	}
+	objs, _ := e.St.Objects("exit")
+	cur := map[int64][2]uint64{}
+	out := map[int64]ExitRate{}
+	read := func(dev, name string) (uint64, bool) {
+		b, err := e.Sys.ReadFile("/sys/class/net/" + dev + "/statistics/" + name)
+		if err != nil {
+			return 0, false
+		}
+		n, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+		return n, err == nil
+	}
+	for _, o := range objs {
+		if !o.Enabled {
+			continue
+		}
+		dev := exits.IfName(o.ID)
+		rx, ok1 := read(dev, "rx_bytes")
+		tx, ok2 := read(dev, "tx_bytes")
+		if !ok1 || !ok2 {
+			continue
+		}
+		cur[o.ID] = [2]uint64{rx, tx}
+		if p, ok := st.prev[o.ID]; ok && dt > 0 && dt < 120 && rx >= p[0] && tx >= p[1] {
+			out[o.ID] = ExitRate{Down: float64(rx-p[0]) / dt, Up: float64(tx-p[1]) / dt}
+		} else {
+			out[o.ID] = ExitRate{}
+		}
+	}
+	st.at, st.prev, st.last = now, cur, out
 	return out
 }

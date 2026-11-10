@@ -4,6 +4,7 @@
   import Modal from '../components/Modal.svelte';
   import PeerEditor from '../components/PeerEditor.svelte';
   import ConfigView from '../components/ConfigView.svelte';
+  import TopologyMap from '../components/TopologyMap.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, put, del, run } from '../lib/api.js';
   import { ago, bytes } from '../lib/format.js';
@@ -18,7 +19,8 @@
   const view = $derived(viewParam === 'matrix' ? 'matrix' : 'map');
 
   const mesh = $derived(servers.filter((s) => protocol(s.protocol)?.mesh));
-  const sid = $derived(id || mesh[0]?.id || 0);
+  // ohne Server in der Adresse: Übersicht über alle Server (Karte mit Verkehr und Wegen)
+  const sid = $derived(id);
 
   async function loadBase() {
     [servers, users] = await Promise.all([get('/servers'), get('/users')]);
@@ -31,6 +33,7 @@
   $effect(() => {
     sid;
     sel = 0;
+    net = null;
     loadNet();
   });
 
@@ -86,20 +89,22 @@
   }
 </script>
 
-<PageHead title="Netzwerk" subtitle="Geräte und Netze, die über WireGuard miteinander verbunden sind">
+<PageHead title="Netzwerk" subtitle={sid ? 'Geräte und Netze, die über WireGuard miteinander verbunden sind' : 'Wer verbunden ist, wohin der Verkehr gerade fließt und wo es hakt'}>
   {#if sid}<button class="btn primary" onclick={add}><Icon name="plus" size={16} /> Gerät hinzufügen</button>{/if}
 </PageHead>
 
-{#if !mesh.length && servers.length}
-  <div class="card empty"><h3>Kein WireGuard-Server</h3><p>Lege unter „Server“ einen WireGuard-Server an, um Geräte zu vernetzen.</p><a class="btn primary" href="#/servers">Zu den Servern</a></div>
-{:else if mesh.length}
-  {#if mesh.length > 1}
-    <div class="tabs">
-      {#each mesh as s}
-        <button class:active={s.id === sid} onclick={() => go(`/network/${s.id}${view === 'matrix' ? '/matrix' : ''}`)}><span class="dot" class:on={s.status?.running}></span> {s.name}</button>
-      {/each}
-    </div>
-  {/if}
+{#if mesh.length}
+  <div class="tabs">
+    <button class:active={!sid} onclick={() => go('/network')}><Icon name="network" size={14} /> Übersicht</button>
+    {#each mesh as s}
+      <button class:active={s.id === sid} onclick={() => go(`/network/${s.id}${view === 'matrix' ? '/matrix' : ''}`)}><span class="dot" class:on={s.status?.running}></span> {s.name}</button>
+    {/each}
+  </div>
+{/if}
+
+{#if !sid}
+  <TopologyMap />
+{:else}
 
   {#if net}
     <div class="grid cols-4 facts">

@@ -44,6 +44,8 @@ type Engine struct {
 	acl   aclState   // wirksame Sperr-/Freigabelisten (acl.go)
 	rt    routeState // Ziel-Regeln (routes.go)
 	dns   dnsGate    // DNS-Umleiter für Domain-Regeln (dns.go)
+
+	exitRates exitRateState // Durchsatz der Ausgänge (exits.go)
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {

@@ -151,6 +151,7 @@ func (a *API) live(w http.ResponseWriter, r *http.Request) {
 		"peers":   orEmptyA(peers),
 		"users":   orEmptyA(userRows),
 		"servers": orEmptyA(serverRows),
+		"exits":   a.E.ExitRates(),
 		"errors":  ld.Errors,
 	})
 }
