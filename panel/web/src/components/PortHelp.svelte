@@ -9,7 +9,7 @@
 
   const c4 = $derived(meta.lan4 || '<Container-IPv4>');
   const c6 = $derived(meta.lan6 || '<Container-IPv6>');
-  const PUB6 = '<öffentliche IPv6 für den Container>';
+  const PUB6 = $derived(meta.pub6 || '<öffentliche IPv6 für den Container>');
 
   function rule(p, v6, op) {
     const dport = p.to ? `${p.port}:${p.to}` : `${p.port}`;
@@ -48,7 +48,7 @@
   <pre>{ifaces}</pre>
   <p class="ph"><b>Sofort</b> (gilt bis zum Neustart) <button type="button" class="cp" onclick={() => cp(now)}><Icon name="copy" size={13} /> kopieren</button></p>
   <pre>{now}</pre>
-  <p class="muted">Platzhalter in spitzen Klammern ersetzen. Die IPv6-Zeilen nur, wenn der Container eine eigene öffentliche IPv6 hat. Zusätzlich muss Weiterleitung auf dem Host an sein (<code>net.ipv4.ip_forward=1</code>).</p>
+  <p class="muted">{meta.pub6 || !meta.lan6 ? 'Platzhalter in spitzen Klammern ersetzen. ' : ''}{#if meta.pub6}Öffentliche IPv6 {meta.pub6} aus der Server-Adresse ({meta.server_host}) übernommen{meta.lan6 ? `, interne ${meta.lan6} vom Container` : ''}. {/if}Die IPv6-Zeilen nur, wenn der Container eine eigene öffentliche IPv6 hat. Zusätzlich muss Weiterleitung auf dem Host an sein (<code>net.ipv4.ip_forward=1</code>).</p>
 {:else}
   <p>Für diesen Dienst muss auf dem Host kein Port weitergeleitet werden.</p>
 {/if}

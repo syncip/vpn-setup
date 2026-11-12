@@ -321,6 +321,7 @@ func seedDemoDNS(e *engine.Engine) error {
 			en.Name, en.Action = ok[r.Intn(len(ok))], "cached"
 		default:
 			en.Name, en.Action, en.MS = ok[r.Intn(len(ok))], "ok", 8+r.Intn(60)
+			en.Upstream = []string{"127.0.0.1:5335", "127.0.0.1:5335", "1.1.1.1:53", "9.9.9.9:53"}[r.Intn(4)]
 		}
 		es = append(es, en)
 	}

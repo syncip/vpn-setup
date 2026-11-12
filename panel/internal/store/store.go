@@ -74,6 +74,8 @@ var migrations = []string{
 	`CREATE TABLE exit_traffic (exit_id INTEGER NOT NULL, hour INTEGER NOT NULL, up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
 	   PRIMARY KEY (exit_id, hour));
 	 CREATE INDEX exit_traffic_hour ON exit_traffic(hour);`,
+	// DNS-Protokoll: welcher DNS-Server (bzw. Unbound) geantwortet hat
+	`ALTER TABLE dns_log ADD COLUMN upstream TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate() error {

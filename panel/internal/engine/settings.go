@@ -37,7 +37,7 @@ func ValidateSetting(k, v string) (string, error) {
 		if n, err := strconv.Atoi(v); err != nil || n < 0 {
 			return "", fmt.Errorf("%s: bitte eine Zahl ab 0", k)
 		}
-	case "trust_cloudflare", "update_check", "dns_enabled", "private_block", "dns_public", "dns_auto":
+	case "trust_cloudflare", "update_check", "dns_enabled", "private_block", "dns_public", "dns_auto", "dns_tls":
 		if v != "0" && v != "1" {
 			v = "0"
 		}
@@ -82,6 +82,22 @@ func ValidateSetting(k, v string) (string, error) {
 		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 168 {
 			return "", fmt.Errorf("Automatischer Test: alle 1 bis 168 Stunden")
 		}
+	case "dns_tls_host":
+		v = strings.ToLower(strings.Trim(strings.TrimSpace(v), "."))
+		if v != "" && (!hostnameRe.MatchString(v) || strings.Count(v, ".") < 2) {
+			return "", fmt.Errorf("DNS-Name: eine eigene Subdomain wie dns.example.org angeben")
+		}
+		return v, nil
+	case "dns_dot_port":
+		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("DoT-Port: 1 bis 65535")
+		}
+	case "dns_acme_email":
+		v = strings.TrimSpace(v)
+		if v != "" && (!strings.Contains(v, "@") || strings.ContainsAny(v, " <>\n")) {
+			return "", fmt.Errorf("E-Mail-Adresse ungültig")
+		}
+		return v, nil
 	case "dns_auto_count":
 		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 4 {
 			return "", fmt.Errorf("Automatischer Test: 1 bis 4 Server übernehmen")

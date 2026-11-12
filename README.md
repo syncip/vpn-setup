@@ -293,7 +293,27 @@ um – deshalb nach dem Update die Config neu laden.
   Alle anderen Anfragen werden verworfen, aber mit IP, Hostname (Rückwärtsauflösung), Anzahl und letzter
   Domain angezeigt – so sieht man, ob das eigene Gerät ankommt oder Fremde es versuchen; mit einem Klick
   freigeben. Ein offener DNS-Server für alle wird bewusst nicht angeboten (DNS-Verstärkungsangriffe).
-  Auf dem Proxmox-Host UDP und TCP 53 an den Container weiterleiten (die Seite zeigt die Befehle).
+  Auf dem Proxmox-Host UDP und TCP 53 an den Container weiterleiten (die Seite zeigt die Befehle,
+  mit der internen IPv6 des Containers und der öffentlichen IPv6 aus der Server-Adresse).
+- **DoH und DoT** (Reiter „Ohne VPN“): Jedes freigegebene Gerät bekommt eine Kennung und damit eigene
+  Adressen – `https://<kennung>.dns.example.org/dns-query` (Browser, iOS, Router) und
+  `<kennung>.dns.example.org` (Android „Privates DNS“, Port 853). Das funktioniert von jedem Netz aus,
+  ohne feste IP; feste Adressen sind dann optional. Mit **Adresse merken** darf die Adresse, von der ein
+  Gerät per DoH/DoT fragt, 24 Stunden lang auch normales DNS nutzen (z. B. der Fernseher im selben
+  Heimnetz). DoH läuft über nginx auf Port 443, DoT direkt am Panel (TCP 853 auf dem Host weiterleiten).
+  Das **Zertifikat** für `dns.example.org` und `*.dns.example.org` holt das Panel bei Let's Encrypt über
+  die DNS-Prüfung mit der Cloudflare-API und erneuert es 30 Tage vor Ablauf; fehlende A-/AAAA-Einträge
+  (ohne Cloudflare-Proxy) legt es an. Das API-Token (Recht „Zone → DNS → Bearbeiten“) steht nur auf dem
+  Server: `CF_API_TOKEN=…` in `/etc/vpn/secrets.env` (vom Setup angelegt, Rechte 600, wird nie
+  überschrieben).
+- **SmartDNS** (je Filterprofil): Domains wie `netflix.com` laufen über eine Ausgangsgruppe (Vorlagen für
+  Netflix, Disney+, Prime Video, Max, BBC iPlayer u. a.). Für VPN-Geräte wirkt das wie eine Ziel-Regel.
+  Geräte ohne VPN (Port 53, DoH, DoT) bekommen für diese Namen die Adresse des Servers; nginx reicht die
+  HTTPS-Verbindungen anhand des Namens an das Panel, das sie über die Gruppe weiterleitet (Ende-zu-Ende
+  verschlüsselt, nur Port 443 – HTTP und QUIC nicht). Die Seite zeigt Verbindungen und Fehler je Domain.
+- **Live** (Übersicht): Anfragen je Sekunde der letzten 1–10 Minuten (beantwortet, Speicher, gesperrt),
+  aktive Geräte, Antwortzeit und welcher DNS-Server bzw. Unbound wie oft geantwortet hat. Das Protokoll
+  vermerkt den antwortenden Server je Anfrage; die Übersicht zeigt die Anteile je Zeitraum.
 - VLESS, Hysteria2 und Proxy nutzen den Panel-DNS (noch) nicht.
 
 ## IP-Listen

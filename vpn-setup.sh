@@ -212,6 +212,16 @@ VPNPANEL_DIRECT=${PANEL_DIRECT}
 EOF
 chmod 600 /etc/vpn/panel.env
 
+# Geheimnisse, die nicht in die Datenbank gehören (z. B. Cloudflare-API-Token für das DoH/DoT-Zertifikat).
+# Wird nie überschrieben; das Panel liest die Datei bei Bedarf.
+if [[ ! -f /etc/vpn/secrets.env ]]; then
+  cat > /etc/vpn/secrets.env <<'EOF'
+# Cloudflare-API-Token (Recht „Zone → DNS → Bearbeiten“) für das Let's-Encrypt-Zertifikat von DoH/DoT:
+# CF_API_TOKEN=
+EOF
+fi
+chmod 600 /etc/vpn/secrets.env
+
 cat > /etc/systemd/system/vpnpanel.service <<'EOF'
 [Unit]
 Description=VPN-Panel (WireGuard, VLESS, Webinterface)

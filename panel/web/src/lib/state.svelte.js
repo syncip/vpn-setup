@@ -1,7 +1,7 @@
 // Globaler Zustand: Anmeldung, Metadaten (Protokolle), Benachrichtigungen, Route.
 
 export const session = $state({ user: null, checked: false });
-export const meta = $state({ protocols: [], version: '', dry_run: false, server_host: '', sub_host: '', lan4: '', lan6: '' });
+export const meta = $state({ protocols: [], version: '', dry_run: false, server_host: '', sub_host: '', lan4: '', lan6: '', pub4: '', pub6: '' });
 export const toasts = $state([]);
 export const route = $state({ path: location.hash.slice(1) || '/' });
 

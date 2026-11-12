@@ -60,32 +60,62 @@ func (a *API) meta(w http.ResponseWriter, r *http.Request) {
 	for _, d := range proto.All() {
 		infos = append(infos, d.Info())
 	}
-	lan4, lan6 := lanAddrs()
+	lan4, lan6 := lanAddrs(a.E.Setting("out_interface"))
+	p4, p6 := a.E.PublicAddrs()
+	pub4, pub6 := "", ""
+	if p4.IsValid() {
+		pub4 = p4.String()
+	}
+	if p6.IsValid() {
+		pub6 = p6.String()
+	}
 	writeJSON(w, map[string]any{"protocols": infos, "version": a.Version, "update": a.E.Update(a.Version), "dry_run": a.E.Sys.DryRun(),
-		"server_host": a.E.Setting("server_host"), "sub_host": a.E.Setting("sub_host"), "lan4": lan4, "lan6": lan6})
+		"server_host": a.E.Setting("server_host"), "sub_host": a.E.Setting("sub_host"), "lan4": lan4, "lan6": lan6, "pub4": pub4, "pub6": pub6})
 }
 
-// lanAddrs: Adressen des Containers auf eth0 – Ziel der Portweiterleitungen auf dem Host (für die Hilfe in der Oberfläche).
-func lanAddrs() (v4, v6 string) {
-	ifc, err := net.InterfaceByName("eth0")
+// lanAddrs: Adressen des Containers auf der ausgehenden Schnittstelle – Ziel der Portweiterleitungen
+// auf dem Host (für die Hilfe in der Oberfläche). Bei IPv6 gewinnt eine fest eingetragene Adresse
+// (z. B. fd10:10:10::3) vor einer aus der MAC gebildeten (SLAAC, „…ff:fe…“).
+func lanAddrs(dev string) (v4, v6 string) {
+	if dev == "" {
+		dev = "eth0"
+	}
+	ifc, err := net.InterfaceByName(dev)
 	if err != nil {
 		return "", ""
 	}
 	addrs, _ := ifc.Addrs()
+	best := -1
 	for _, a := range addrs {
 		ipn, ok := a.(*net.IPNet)
-		if !ok || ipn.IP.IsLinkLocalUnicast() {
+		if !ok || ipn.IP.IsLinkLocalUnicast() || ipn.IP.IsLoopback() {
 			continue
 		}
 		if ipn.IP.To4() != nil {
 			if v4 == "" {
 				v4 = ipn.IP.String()
 			}
-		} else if v6 == "" {
-			v6 = ipn.IP.String()
+			continue
+		}
+		if sc := v6Score(ipn.IP); sc > best {
+			best, v6 = sc, ipn.IP.String()
 		}
 	}
 	return v4, v6
+}
+
+// v6Score: feste Adressen vor SLAAC (EUI-64 mit ff:fe in der Mitte), private (ULA) vor öffentlichen –
+// der Host leitet an die Adresse im internen Netz weiter.
+func v6Score(ip net.IP) int {
+	ip = ip.To16()
+	sc := 0
+	if !(ip[11] == 0xff && ip[12] == 0xfe) {
+		sc += 2
+	}
+	if ip[0]&0xfe == 0xfc {
+		sc++
+	}
+	return sc
 }
 
 type userRow struct {

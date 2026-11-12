@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -32,6 +33,8 @@ type DNSClient struct {
 	Addrs   []string // IP-Adressen, Netze, Hostnamen (DynDNS)
 	Profile int64    // Filterprofil: 0 = das globale, -1 = ohne Filter
 	Note    string
+	Token   string // Kennung für DoH/DoT (<token>.<dns-host>)
+	Learn   bool   // Adresse merken: wer per DoH/DoT fragt, darf 24 h auch normales DNS (Port 53)
 }
 
 func DNSClientFrom(o *store.Object) *DNSClient {
@@ -42,7 +45,20 @@ func DNSClientFrom(o *store.Object) *DNSClient {
 		c.Profile = n
 	}
 	c.Note, _ = o.Data["note"].(string)
+	c.Token, _ = o.Secrets["token"].(string)
+	c.Learn, _ = o.Data["learn"].(bool)
 	return c
+}
+
+// NewClientToken: zufällige Kennung (Kleinbuchstaben/Ziffern – taugt als DNS-Name).
+func NewClientToken() string {
+	const abc = "abcdefghijkmnpqrstuvwxyz23456789"
+	b := make([]byte, 12)
+	_, _ = cryptorand.Read(b)
+	for i := range b {
+		b[i] = abc[int(b[i])%len(abc)]
+	}
+	return string(b)
 }
 
 var hostnameRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$`)
@@ -80,9 +96,6 @@ func ParseClientAddrs(in []string) ([]string, error) {
 			}
 		}
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("mindestens eine Adresse oder einen Hostnamen angeben")
-	}
 	if len(out) > 20 {
 		return nil, fmt.Errorf("höchstens 20 Adressen je Gerät")
 	}
@@ -91,10 +104,18 @@ func ParseClientAddrs(in []string) ([]string, error) {
 
 // extSrc: freigegebener Absender, aufgelöst.
 type extSrc struct {
-	pfx  netip.Prefix
-	id   int64
-	name string
-	filt *dnsFilter
+	pfx   netip.Prefix
+	id    int64
+	name  string
+	filt  *dnsFilter
+	token string
+	learn bool
+}
+
+// learnRec: per DoH/DoT gemerkte Adresse eines freigegebenen Geräts.
+type learnRec struct {
+	id    int64
+	until int64
 }
 
 // hostRes: aufgelöster DynDNS-Name.
@@ -125,6 +146,10 @@ type dnsExt struct {
 	rdns   map[netip.Addr]hostRes
 	loaded bool
 	dirty  bool
+	// DoH/DoT
+	tokens  map[string]extSrc
+	byID    map[int64]extSrc
+	learned map[netip.Addr]learnRec
 }
 
 func (x *dnsExt) isPublic() bool {
@@ -192,6 +217,9 @@ func (e *Engine) extSources(force bool) []extSrc {
 		case c.Profile == 0:
 			filt = byScope["global"]
 		}
+		if c.Token != "" {
+			out = append(out, extSrc{id: c.ID, name: c.Name, filt: filt, token: c.Token, learn: c.Learn})
+		}
 		for _, a := range c.Addrs {
 			var pfxs []netip.Prefix
 			if p, err := netip.ParsePrefix(a); err == nil {
@@ -204,7 +232,7 @@ func (e *Engine) extSources(force bool) []extSrc {
 				}
 			}
 			for _, p := range pfxs {
-				out = append(out, extSrc{pfx: p, id: c.ID, name: c.Name, filt: filt})
+				out = append(out, extSrc{pfx: p, id: c.ID, name: c.Name, filt: filt, learn: c.Learn})
 			}
 		}
 	}
@@ -217,9 +245,47 @@ func (e *Engine) configureExt() {
 	srcs := e.extSources(false)
 	x.mu.Lock()
 	x.public = e.dnsPublic()
-	x.srcs = srcs
+	x.setSrcs(srcs)
 	e.loadExt()
 	x.mu.Unlock()
+}
+
+// setSrcs trennt Adress- und Kennungs-Einträge (Aufrufer hält x.mu).
+func (x *dnsExt) setSrcs(srcs []extSrc) {
+	x.srcs = nil
+	x.tokens, x.byID = map[string]extSrc{}, map[int64]extSrc{}
+	for _, s := range srcs {
+		if s.token != "" {
+			x.tokens[s.token] = s
+			x.byID[s.id] = s
+			continue
+		}
+		x.srcs = append(x.srcs, s)
+		if _, ok := x.byID[s.id]; !ok {
+			x.byID[s.id] = s
+		}
+	}
+}
+
+// extByToken: Richtlinie für eine DoH/DoT-Kennung (nil = unbekannt). Mit „Adresse merken“ darf die
+// Absenderadresse danach 24 Stunden auch normales DNS nutzen (z. B. der Fernseher hinter demselben Router).
+func (e *Engine) extByToken(token string, src netip.Addr) *srcPolicy {
+	x := &e.dnsx
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	s, ok := x.tokens[token]
+	if !ok {
+		return nil
+	}
+	if s.learn && src.IsValid() && src.IsGlobalUnicast() && !src.IsPrivate() {
+		if x.learned == nil {
+			x.learned = map[netip.Addr]learnRec{}
+		}
+		if len(x.learned) < 2000 {
+			x.learned[src] = learnRec{id: s.id, until: time.Now().Add(24 * time.Hour).Unix()}
+		}
+	}
+	return &srcPolicy{pfx: netip.PrefixFrom(src, src.BitLen()), peer: -s.id, filt: s.filt, dns: true}
 }
 
 // refreshExtHosts löst DynDNS-Namen neu auf (jede Minute geprüft, alle 5 Minuten fällig).
@@ -230,7 +296,13 @@ func (e *Engine) refreshExtHosts() {
 	srcs := e.extSources(false)
 	x := &e.dnsx
 	x.mu.Lock()
-	x.srcs = srcs
+	x.setSrcs(srcs)
+	now := time.Now().Unix()
+	for a, l := range x.learned {
+		if l.until < now {
+			delete(x.learned, a)
+		}
+	}
 	dirty := x.dirty
 	x.dirty = false
 	x.mu.Unlock()
@@ -240,16 +312,24 @@ func (e *Engine) refreshExtHosts() {
 }
 
 // extSourceOf: freigegebener Absender für eine Adresse (nil = fremd).
-func (e *Engine) extSourceOf(a netip.Addr) *srcPolicy {
+func (e *Engine) extSourceOf(a netip.Addr) *srcPolicy { return e.extSource(a, true) }
+
+// extSource: wie extSourceOf; needPublic=false für DoH/DoT (gilt auch ohne „DNS von außen“).
+func (e *Engine) extSource(a netip.Addr, needPublic bool) *srcPolicy {
 	x := &e.dnsx
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if !x.public {
+	if needPublic && !x.public {
 		return nil
 	}
 	for _, s := range x.srcs {
 		if s.pfx.Contains(a) {
 			return &srcPolicy{pfx: s.pfx, peer: -s.id, filt: s.filt, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
+		}
+	}
+	if l, ok := x.learned[a]; ok && l.until > time.Now().Unix() {
+		if s, ok := x.byID[l.id]; ok && s.learn {
+			return &srcPolicy{pfx: netip.PrefixFrom(a, a.BitLen()), peer: -s.id, filt: s.filt, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
 		}
 	}
 	return nil
@@ -363,6 +443,9 @@ type ExtClient struct {
 	Resolved []ExtHostRes `json:"resolved"` // DynDNS-Namen → Adressen
 	Profile  int64        `json:"profile"`
 	Note     string       `json:"note"`
+	Token    string       `json:"token"`
+	Learn    bool         `json:"learn"`
+	Learned  []string     `json:"learned"` // per DoH/DoT gemerkte Adressen
 	Queries  int          `json:"queries"`
 	Blocked  int          `json:"blocked"`
 	Last     int64        `json:"last"`
@@ -410,7 +493,14 @@ func (e *Engine) DNSExternal() DNSExternal {
 	for _, o := range objs {
 		c := DNSClientFrom(o)
 		row := ExtClient{ID: c.ID, Name: c.Name, Enabled: c.Enabled, Addrs: orEmpty(c.Addrs), Profile: c.Profile, Note: c.Note,
-			Resolved: []ExtHostRes{}, Sources: []string{}}
+			Resolved: []ExtHostRes{}, Sources: []string{}, Token: c.Token, Learn: c.Learn, Learned: []string{}}
+		now := time.Now().Unix()
+		for a, l := range x.learned {
+			if l.id == c.ID && l.until > now {
+				row.Learned = append(row.Learned, a.String())
+			}
+		}
+		sort.Strings(row.Learned)
 		for _, a := range c.Addrs {
 			if _, err := netip.ParsePrefix(a); err == nil {
 				continue
@@ -517,4 +607,27 @@ func (e *Engine) reverseNames(addrs []netip.Addr) map[netip.Addr]string {
 	}
 	wg.Wait()
 	return out
+}
+
+// PublicAddrs: öffentliche Adressen des Servers (aus der Einstellung server_host: IP oder Name,
+// dessen A-/AAAA-Einträge aufgelöst werden). Ziel für SmartDNS-Antworten und die Portweiterleitungs-Hilfe.
+func (e *Engine) PublicAddrs() (v4, v6 netip.Addr) {
+	h := e.Setting("server_host")
+	if h == "" {
+		return
+	}
+	var addrs []netip.Addr
+	if a, err := netip.ParseAddr(h); err == nil {
+		addrs = []netip.Addr{a.Unmap()}
+	} else {
+		addrs = e.resolveHost(h, false).Addrs
+	}
+	for _, a := range addrs {
+		if a.Is4() && !v4.IsValid() {
+			v4 = a
+		} else if a.Is6() && !v6.IsValid() {
+			v6 = a
+		}
+	}
+	return
 }

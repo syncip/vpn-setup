@@ -68,6 +68,45 @@ type DNSProfile struct {
 	Assign   []string // global | server:<id> | user:<id> | peer:<id>
 	BlockDoH bool     // verschlüsseltes DNS (DoH/DoT) der Geräte sperren
 	NXDomain bool     // gesperrte Namen mit „gibt es nicht“ beantworten statt 0.0.0.0
+	Smart    []SmartRoute
+}
+
+// SmartRoute: SmartDNS – diese Domains laufen über eine Ausgangsgruppe (z. B. Netflix über „USA“).
+// VPN-Geräte: wie eine Ziel-Regel. Geräte ohne VPN: Der DNS antwortet mit der Adresse des Servers,
+// der die HTTPS-Verbindung anhand des Namens (SNI) über die Gruppe weiterreicht.
+type SmartRoute struct {
+	Group   int64    `json:"group"`
+	Domains []string `json:"domains"`
+}
+
+// ParseSmart liest die SmartDNS-Einträge eines Profils (doppelte und ungültige Domains fallen weg).
+func ParseSmart(v any) []SmartRoute {
+	var out []SmartRoute
+	arr, _ := v.([]any)
+	for _, x := range arr {
+		m, _ := x.(map[string]any)
+		if m == nil {
+			continue
+		}
+		r := SmartRoute{}
+		switch g := m["group"].(type) {
+		case float64:
+			r.Group = int64(g)
+		case int64:
+			r.Group = g
+		}
+		seen := map[string]bool{}
+		for _, d := range strs(m["domains"]) {
+			if c := cleanDomain(d); c != "" && !seen[c] {
+				seen[c] = true
+				r.Domains = append(r.Domains, c)
+			}
+		}
+		if r.Group > 0 && len(r.Domains) > 0 {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func DNSProfileFrom(o *store.Object) *DNSProfile {
@@ -79,6 +118,7 @@ func DNSProfileFrom(o *store.Object) *DNSProfile {
 		p.BlockDoH = b
 	}
 	p.NXDomain, _ = o.Data["nxdomain"].(bool)
+	p.Smart = ParseSmart(o.Data["smart"])
 	return p
 }
 
@@ -103,6 +143,9 @@ func (s domainSet) match(name string) (string, bool) {
 		name = name[i+1:]
 	}
 }
+
+// CleanDomain: wie cleanDomain (für die API).
+func CleanDomain(d string) string { return cleanDomain(d) }
 
 // cleanDomain: Kleinbuchstaben, ohne „*.“ und Punkte am Rand; "" = kein gültiger Name.
 func cleanDomain(d string) string {
@@ -488,6 +531,25 @@ type dnsFilter struct {
 	allow    domainSet
 	BlockDoH bool
 	NXDomain bool
+	Smart    []SmartRoute
+	smart    map[string]int64 // Domain → Gruppe
+}
+
+// smartMatch: Läuft der Name per SmartDNS über eine Gruppe? (Unterdomains zählen mit.)
+func (f *dnsFilter) smartMatch(name string) (group int64, domain string, ok bool) {
+	if f == nil || len(f.smart) == 0 {
+		return 0, "", false
+	}
+	for n := name; ; {
+		if g, ok := f.smart[n]; ok {
+			return g, n, true
+		}
+		i := strings.IndexByte(n, '.')
+		if i < 0 {
+			return 0, "", false
+		}
+		n = n[i+1:]
+	}
 }
 
 // verdict: Was passiert mit dem Namen? action: "" (normal), "blocked", "rewritten"; detail = Grund.
@@ -563,7 +625,15 @@ func (e *Engine) dnsProfileFilters() (byScope map[string]*dnsFilter, byID map[in
 		if err != nil {
 			rules = &DNSRules{Rewrite: map[string][]netip.Addr{}}
 		}
-		f := &dnsFilter{ID: p.ID, Name: p.Name, Rules: rules, block: domainSet{}, allow: domainSet{}, BlockDoH: p.BlockDoH, NXDomain: p.NXDomain}
+		f := &dnsFilter{ID: p.ID, Name: p.Name, Rules: rules, block: domainSet{}, allow: domainSet{}, BlockDoH: p.BlockDoH, NXDomain: p.NXDomain,
+			Smart: p.Smart, smart: map[string]int64{}}
+		for _, sr := range p.Smart {
+			for _, d := range sr.Domains {
+				if _, ok := f.smart[d]; !ok {
+					f.smart[d] = sr.Group
+				}
+			}
+		}
 		for _, d := range rules.Block {
 			f.block[d] = struct{}{}
 		}

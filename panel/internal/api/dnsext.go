@@ -12,6 +12,22 @@ import (
 // DNS für Geräte ohne VPN: Freigaben (Objekt „dnsclient“) und wer von außen fragt.
 
 func (a *API) dnsExternal(w http.ResponseWriter, r *http.Request) {
+	// Freigaben von vor DoH/DoT bekommen ihre Kennung nachträglich
+	if objs, err := a.St.Objects("dnsclient"); err == nil {
+		added := false
+		for _, o := range objs {
+			if tok, _ := o.Secrets["token"].(string); tok == "" {
+				if o.Secrets == nil {
+					o.Secrets = store.M{}
+				}
+				o.Secrets["token"] = engine.NewClientToken()
+				added = a.St.SaveObject(o) == nil || added
+			}
+		}
+		if added {
+			a.E.RequestApply()
+		}
+	}
 	profiles := []map[string]any{}
 	if objs, err := a.St.Objects("dnsprofile"); err == nil {
 		for _, o := range objs {
@@ -24,7 +40,9 @@ func (a *API) dnsExternal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{"external": a.E.DNSExternal(), "profiles": profiles, "dns_enabled": a.E.Setting("dns_enabled") == "1",
-		"out_interface": a.E.Setting("out_interface"), "dry_run": a.E.Sys.DryRun()})
+		"out_interface": a.E.Setting("out_interface"), "dry_run": a.E.Sys.DryRun(), "tls": a.E.EncDNSState(), "smart": a.E.SmartState(),
+		"settings": map[string]string{"tls": a.E.Setting("dns_tls"), "tls_host": a.E.Setting("dns_tls_host"), "dot_port": a.E.Setting("dns_dot_port"),
+			"acme_email": a.E.Setting("dns_acme_email")}})
 }
 
 func (a *API) saveDNSClient(w http.ResponseWriter, r *http.Request, o *store.Object) {
@@ -34,6 +52,8 @@ func (a *API) saveDNSClient(w http.ResponseWriter, r *http.Request, o *store.Obj
 		Addrs   []string `json:"addrs"`
 		Profile *int64   `json:"profile"`
 		Note    *string  `json:"note"`
+		Learn   *bool    `json:"learn"`
+		NewTok  bool     `json:"new_token"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -80,6 +100,15 @@ func (a *API) saveDNSClient(w http.ResponseWriter, r *http.Request, o *store.Obj
 			n = n[:300]
 		}
 		o.Data["note"] = n
+	}
+	if in.Learn != nil {
+		o.Data["learn"] = *in.Learn
+	}
+	if o.Secrets == nil {
+		o.Secrets = store.M{}
+	}
+	if tok, _ := o.Secrets["token"].(string); tok == "" || in.NewTok {
+		o.Secrets["token"] = engine.NewClientToken()
 	}
 	if err := a.St.SaveObject(o); err != nil {
 		fail(w, err)

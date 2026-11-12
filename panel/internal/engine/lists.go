@@ -302,6 +302,9 @@ func (e *Engine) RunLists(stop <-chan struct{}) {
 		}
 		e.refreshExtHosts()
 		e.RunDNSAuto(false)
+		if e.encDNSOn() && !e.Sys.DryRun() {
+			_ = e.RenewEncCert(false)
+		}
 		if ch1, ch2 := e.refreshLists(time.Now()), e.refreshDNSLists(time.Now()); ch1 || ch2 {
 			e.RequestApply()
 		}

@@ -18,6 +18,8 @@ type DNSEntry struct {
 	MS     int    `json:"ms"`
 	Via    int64  `json:"via"`    // Ausgangsgruppe (0 = direkt)
 	Detail string `json:"detail"` // z. B. Liste oder Regel, die gesperrt hat
+	// Upstream: DNS-Server, der geantwortet hat (Adresse:Port; "" = Speicher, Sperre, eigene Antwort)
+	Upstream string `json:"upstream"`
 }
 
 // AddDNSLog schreibt mehrere Einträge in einem Rutsch.
@@ -29,13 +31,13 @@ func (s *Store) AddDNSLog(es []DNSEntry) error {
 	if err != nil {
 		return err
 	}
-	st, err := tx.Prepare(`INSERT INTO dns_log (ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+	st, err := tx.Prepare(`INSERT INTO dns_log (ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail, upstream) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 	for _, e := range es {
-		if _, err := st.Exec(e.TS, e.PeerID, e.UserID, e.Client, e.Name, e.QType, e.Action, e.RCode, e.MS, e.Via, e.Detail); err != nil {
+		if _, err := st.Exec(e.TS, e.PeerID, e.UserID, e.Client, e.Name, e.QType, e.Action, e.RCode, e.MS, e.Via, e.Detail, e.Upstream); err != nil {
 			st.Close()
 			tx.Rollback()
 			return err
@@ -104,7 +106,7 @@ func (s *Store) DNSLog(f DNSLogFilter) ([]DNSEntry, error) {
 		f.Limit = 200
 	}
 	where, args := f.where()
-	rows, err := s.db.Query(`SELECT id, ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail FROM dns_log`+where+
+	rows, err := s.db.Query(`SELECT id, ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail, upstream FROM dns_log`+where+
 		` ORDER BY id DESC LIMIT ?`, append(args, f.Limit)...)
 	if err != nil {
 		return nil, err
@@ -113,7 +115,7 @@ func (s *Store) DNSLog(f DNSLogFilter) ([]DNSEntry, error) {
 	out := []DNSEntry{}
 	for rows.Next() {
 		var e DNSEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.PeerID, &e.UserID, &e.Client, &e.Name, &e.QType, &e.Action, &e.RCode, &e.MS, &e.Via, &e.Detail); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.PeerID, &e.UserID, &e.Client, &e.Name, &e.QType, &e.Action, &e.RCode, &e.MS, &e.Via, &e.Detail, &e.Upstream); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -128,6 +130,8 @@ type DNSCount struct {
 	Client string `json:"client,omitempty"`
 	Count  int    `json:"count"`
 	Bl     int    `json:"blocked,omitempty"`
+	MS     int    `json:"ms,omitempty"` // mittlere Antwortzeit (DNS-Server)
+	Fail   int    `json:"fail,omitempty"`
 }
 
 // DNSStats: Auswertung ab einem Zeitpunkt.
@@ -154,6 +158,7 @@ type DNSStats struct {
 	Via       []DNSCount `json:"via"`        // Anfragen je Ausgangsgruppe (PeerID = Gruppe)
 	TopNX     []DNSCount `json:"top_nx"`     // häufigste Namen ohne Antwort
 	BlockedBy []DNSCount `json:"blocked_by"` // Geräte mit den meisten Sperren
+	Upstreams []DNSCount `json:"upstreams"`  // Name = DNS-Server, Count = beantwortete Anfragen, MS = Ø Antwortzeit
 }
 
 // DNSStats wertet das Protokoll aus (peerID 0 = alle Geräte).
@@ -219,7 +224,7 @@ func (s *Store) DNSStats(since, peerID int64) (*DNSStats, error) {
 }
 
 func (s *Store) dnsMoreStats(st *DNSStats, cond string, args []any) error {
-	st.QTypes, st.Reasons, st.Via, st.TopNX, st.BlockedBy = []DNSCount{}, []DNSCount{}, []DNSCount{}, []DNSCount{}, []DNSCount{}
+	st.QTypes, st.Reasons, st.Via, st.TopNX, st.BlockedBy, st.Upstreams = []DNSCount{}, []DNSCount{}, []DNSCount{}, []DNSCount{}, []DNSCount{}, []DNSCount{}
 	if err := s.db.QueryRow(`SELECT COALESCE(SUM(rcode=3 AND action!='blocked'),0), COALESCE(SUM(rcode=2),0), COUNT(DISTINCT name), COUNT(DISTINCT peer_id) FROM dns_log`+cond, args...).
 		Scan(&st.NXDomain, &st.ServFail, &st.Domains, &st.Clients); err != nil {
 		return err
@@ -266,6 +271,10 @@ func (s *Store) dnsMoreStats(st *DNSStats, cond string, args []any) error {
 		return err
 	}
 	if err := q(`SELECT name, COUNT(*) AS n FROM dns_log`+cond+` AND rcode=3 AND action!='blocked' GROUP BY name ORDER BY n DESC LIMIT 10`, nameScan, &st.TopNX); err != nil {
+		return err
+	}
+	if err := q(`SELECT upstream, COUNT(*) AS n, CAST(COALESCE(AVG(ms),0) AS INTEGER), SUM(action='error') FROM dns_log`+cond+` AND upstream != '' GROUP BY upstream ORDER BY n DESC LIMIT 20`,
+		func(c *DNSCount) []any { return []any{&c.Name, &c.Count, &c.MS, &c.Fail} }, &st.Upstreams); err != nil {
 		return err
 	}
 	return q(`SELECT peer_id, MAX(client), COUNT(*) AS n FROM dns_log`+cond+` AND action='blocked' GROUP BY peer_id ORDER BY n DESC LIMIT 10`,

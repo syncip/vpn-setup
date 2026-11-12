@@ -170,6 +170,9 @@ func (e *Engine) routing() *routing {
 func (e *Engine) RouteNotes() map[int64]string { return e.routing().Skipped }
 
 // compileRoutes stellt die Regelfolgen aller Zugänge zusammen.
+// SmartRuleID: Kennung einer SmartDNS-Zeile als Ziel-Regel (weit weg von den IDs echter Regeln).
+func SmartRuleID(profile int64, idx int) int64 { return 1_000_000_000 + profile*100 + int64(idx) }
+
 func (e *Engine) compileRoutes(snap *Snapshot) *routing {
 	rt := &routing{Policies: map[int64]*proto.Policy{}, ServerPolicies: map[int64]*proto.Policy{}, TargetLists: map[int64][]netip.Prefix{},
 		ByKey: map[string]*proto.Policy{}, Skipped: map[int64]string{}}
@@ -246,6 +249,17 @@ func (e *Engine) compileRoutes(snap *Snapshot) *routing {
 		}
 		if g, ok := groups[gid]; gid != 0 && ok && g.Enabled {
 			add(fmt.Sprintf("server:%d", sb.Server.ID), entry{fmt.Sprintf("sg%d-%d", sb.Server.ID, gid), proto.RouteRule{All: true, Group: gid}})
+		}
+	}
+	// SmartDNS aus den Filterprofilen: für jedes Gerät mit Profil wie eine Ziel-Regel am Gerät
+	// (das Profil gilt je Gerät – Gerät vor Nutzer vor Server vor „alle“).
+	filters := e.compileDNSFilters(snap)
+	for pid, f := range filters {
+		for i, sr := range f.Smart {
+			if g, ok := groups[sr.Group]; !ok || !g.Enabled {
+				continue
+			}
+			add(fmt.Sprintf("peer:%d", pid), entry{fmt.Sprintf("s%d-%d", f.ID, i), proto.RouteRule{ID: SmartRuleID(f.ID, i), Group: sr.Group, Domains: sr.Domains}})
 		}
 	}
 	for k := range byScope { // Ziel-Regeln vor „alles“, sonst nach ID

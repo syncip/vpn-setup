@@ -7,12 +7,12 @@
   import SearchInput from './SearchInput.svelte';
   import { confirmDialog } from './Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
-  import { ago, fmtNum, copy } from '../lib/format.js';
+  import { ago, fmtNum, copy, bytes } from '../lib/format.js';
   import { toast } from '../lib/state.svelte.js';
 
   let { onchange } = $props();
 
-  let d = $state({ external: { public: false, clients: [], seen: [], self: '', self_ips: [] }, profiles: [], dns_enabled: true, out_interface: 'eth0', dry_run: false });
+  let d = $state({ external: { public: false, clients: [], seen: [], self: '', self_ips: [] }, profiles: [], dns_enabled: true, out_interface: 'eth0', dry_run: false, tls: {}, smart: { hits: [] }, settings: {} });
   let loaded = $state(false);
   async function load() {
     d = await get('/dns/clients');
@@ -42,19 +42,62 @@
     }
   }
 
+  // ---------- DoH/DoT ----------
+  const T = $derived(d.tls || {});
+  let tf = $state(null); // Formular (null = nicht geöffnet)
+  function editTLS() {
+    tf = { tls_host: d.settings.tls_host || '', dot_port: Number(d.settings.dot_port) || 853, acme_email: d.settings.acme_email || '' };
+  }
+  async function saveTLS(on) {
+    const body = tf ? { tls_host: tf.tls_host.trim(), dot_port: Number(tf.dot_port) || 853, acme_email: tf.acme_email.trim() } : {};
+    if (on !== undefined) body.tls = on;
+    if (await run(() => put('/dns/settings', body), on === false ? 'DoH/DoT ausgeschaltet' : 'Gespeichert')) {
+      await load();
+      tf = null;
+      onchange?.();
+    }
+  }
+  let tfInit = false;
+  $effect(() => {
+    if (loaded && !tfInit) {
+      tfInit = true;
+      if (!d.settings.tls_host) editTLS();
+    }
+  });
+  let renewing = $state(false);
+  async function renew() {
+    renewing = true;
+    await run(() => post('/dns/tls/renew', {}), 'Zertifikat wird geholt – das dauert 1–3 Minuten');
+    renewing = false;
+    load();
+  }
+  $effect(() => {
+    if (!T.issuing) return;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  });
+  const dohURL = (c) => `https://${c.token}.${T.host}/dns-query`;
+  const dotHost = (c) => `${c.token}.${T.host}`;
+  const days = (ts) => Math.round((ts - Date.now() / 1000) / 86400);
+  let linkFor = $state(null);
+  async function newToken(c) {
+    if (!(await confirmDialog({ title: 'Neue Kennung?', text: 'Die bisherigen DoH-/DoT-Links von „' + c.name + '“ funktionieren danach nicht mehr – am Gerät neu eintragen.', ok: 'Neu erzeugen' }))) return;
+    if (await run(() => put(`/dns/clients/${c.id}`, { new_token: true }), 'Neue Kennung erzeugt')) load();
+  }
+
   // ---------- Gerät freigeben ----------
   let open = $state(false);
   let busy = $state(false);
   let f = $state({});
   function edit(c, addr) {
     f = c
-      ? { id: c.id, name: c.name, addrs: c.addrs.join('\n'), profile: c.profile, note: c.note, enabled: c.enabled }
-      : { id: 0, name: '', addrs: addr || '', profile: 0, note: '', enabled: true };
+      ? { id: c.id, name: c.name, addrs: c.addrs.join('\n'), profile: c.profile, note: c.note, enabled: c.enabled, learn: c.learn }
+      : { id: 0, name: '', addrs: addr || '', profile: 0, note: '', enabled: true, learn: false };
     open = true;
   }
   async function save() {
     busy = true;
-    const body = { name: f.name, addrs: [f.addrs], profile: Number(f.profile), note: f.note, enabled: f.enabled };
+    const body = { name: f.name, addrs: [f.addrs], profile: Number(f.profile), note: f.note, enabled: f.enabled, learn: f.learn };
     const ok = await run(() => (f.id ? put(`/dns/clients/${f.id}`, body) : post('/dns/clients', body)), 'Gespeichert');
     busy = false;
     if (ok) {
@@ -87,7 +130,7 @@
     return showAll ? rows : rows.slice(0, 50);
   });
   const cp = (t) => copy(t).then(() => toast('Kopiert'));
-  const valid = $derived(f.name?.trim() && f.addrs?.trim());
+  const valid = $derived(f.name?.trim() && (f.addrs?.trim() || T.on));
 </script>
 
 <div class="grid cols-2 top">
@@ -138,6 +181,113 @@
 
 <div class="card" style="margin-top:14px">
   <div class="card-head">
+    <h2>
+      <Icon name="lock" size={16} /> Verschlüsselt: DoH und DoT
+      <Info title="DNS-over-HTTPS / DNS-over-TLS" wide>
+        <p>Jedes freigegebene Gerät bekommt eine eigene <b>Kennung</b>. Damit funktioniert der Panel-DNS von überall – ohne feste IP, im Mobilfunk und in fremden WLANs:</p>
+        <ul>
+          <li><b>Android</b> (Einstellungen → Netzwerk → Privates DNS): <code>&lt;kennung&gt;.{T.host || 'dns.example.org'}</code></li>
+          <li><b>Browser</b> (Chrome, Firefox, Brave → Sicheres DNS → eigener Anbieter), <b>iOS/macOS</b> (z. B. per Profil), <b>Router</b> mit DoH: <code>https://&lt;kennung&gt;.{T.host || 'dns.example.org'}/dns-query</code></li>
+        </ul>
+        <p><b>Adresse merken</b> (je Gerät): Wer per DoH/DoT fragt, darf 24 Stunden lang auch normales DNS (Port 53) nutzen – so funktioniert z. B. der Fernseher hinter demselben Router, ohne feste IP einzutragen. Dafür muss „DNS von außen“ an sein.</p>
+        <p><b>Zertifikat:</b> Das Panel holt bei Let's Encrypt eines für den Namen und alle Kennungen (<code>*.name</code>). Geprüft wird über einen DNS-Eintrag, den das Panel über die Cloudflare-API anlegt und wieder löscht; fehlende A-/AAAA-Einträge für den Namen und <code>*.name</code> legt es ebenfalls an (ohne Cloudflare-Proxy – DoT geht nicht über den Proxy). Erneuert wird automatisch 30 Tage vor Ablauf. Mit dem Einschalten akzeptierst du die Nutzungsbedingungen von Let's Encrypt.</p>
+        <p><b>API-Token</b> (Cloudflare → Profil → API-Tokens → „DNS bearbeiten“ für die Zone) gehört <i>nicht</i> ins Panel, sondern auf den Server: Zeile <code>CF_API_TOKEN=…</code> in <code>{T.token_file || '/etc/vpn/secrets.env'}</code> (Rechte 600). Das Panel liest die Datei bei Bedarf, ein Neustart ist nicht nötig.</p>
+      </Info>
+    </h2>
+    {#if T.host && !tf}
+      <label class="switch" title={T.on ? 'An' : 'Aus'}><input type="checkbox" checked={d.settings.tls === '1'} disabled={!d.dns_enabled} onchange={(e) => saveTLS(e.currentTarget.checked)} /><span class="track"></span></label>
+    {/if}
+  </div>
+  <div class="card-pad stack" style="gap:10px;padding-top:0">
+    {#if tf}
+      <div class="grid cols-3" style="gap:10px">
+        <div class="field">
+          <label for="tls-host">DNS-Name <Info title="DNS-Name" text="Eine eigene Subdomain deiner Cloudflare-Zone, z. B. dns.example.org. Die Kennungen werden Unterdomains davon (abc123.dns.example.org). „Nur DNS“ (graue Wolke), nicht über den Cloudflare-Proxy." /></label>
+          <input id="tls-host" class="input mono" bind:value={tf.tls_host} placeholder="dns.example.org" />
+        </div>
+        <div class="field">
+          <label for="tls-port">DoT-Port</label>
+          <input id="tls-port" class="input" type="number" min="1" max="65535" bind:value={tf.dot_port} />
+        </div>
+        <div class="field">
+          <label for="tls-mail">E-Mail für Let's Encrypt <span class="muted">(optional)</span></label>
+          <input id="tls-mail" class="input" bind:value={tf.acme_email} placeholder="Hinweise zum Ablauf" />
+        </div>
+      </div>
+      <div class="row" style="gap:8px">
+        <button class="btn primary" onclick={() => saveTLS(d.settings.tls === '1' || !d.settings.tls_host ? true : undefined)} disabled={!tf.tls_host.trim() || !d.dns_enabled}>{d.settings.tls_host ? 'Speichern' : 'Einschalten'}</button>
+        {#if d.settings.tls_host}<button class="btn" onclick={() => (tf = null)}>Abbrechen</button>{/if}
+        {#if !d.dns_enabled}<span class="small warn-text">Erst den Panel-DNS einschalten.</span>{/if}
+      </div>
+    {:else}
+      <div class="row wrap" style="gap:8px">
+        <span class="mono strong">{T.host}</span>
+        <button class="btn sm ghost" onclick={editTLS}><Icon name="edit" size={13} /> Ändern</button>
+        <span class="grow"></span>
+        {#if T.on}
+          <span class="badge {T.doh ? 'ok' : 'muted'}">DoH (443) {T.doh ? 'bereit' : 'aus'}</span>
+          <span class="badge {T.dot ? 'ok' : 'muted'}">DoT ({T.dot_port}) {T.dot ? 'bereit' : 'aus'}</span>
+          {#if T.q_doh || T.q_dot}<span class="tiny muted">{fmtNum(T.q_doh)} DoH- · {fmtNum(T.q_dot)} DoT-Anfragen{T.denied ? ` · ${fmtNum(T.denied)} abgewiesen` : ''}</span>{/if}
+        {/if}
+      </div>
+      {#if T.on}
+        <div class="certline small">
+          <Icon name={T.has_cert && !T.cert.self_signed ? 'check' : 'alert'} size={15} />
+          {#if T.issuing}
+            <span>Zertifikat wird geholt … <span class="muted">{T.step}</span></span>
+          {:else if T.has_cert}
+            <span>Zertifikat {T.cert.self_signed ? 'selbstsigniert (Testmodus)' : `von ${T.cert.issuer}`} für <span class="mono">{T.cert.names.join(', ')}</span> · gültig bis {new Date(T.cert.not_after * 1000).toLocaleDateString('de-DE')} <span class="muted">({days(T.cert.not_after)} Tage)</span></span>
+          {:else}
+            <span class="warn-text">Noch kein Zertifikat – DoH/DoT laufen erst danach.</span>
+          {/if}
+          <span class="grow"></span>
+          <button class="btn sm" onclick={renew} disabled={renewing || T.issuing || !T.token_set}><Icon name="refresh" size={13} /> {T.has_cert ? 'Jetzt erneuern' : 'Zertifikat holen'}</button>
+        </div>
+        {#if !T.token_set}
+          <div class="notice warn small">
+            <Icon name="alert" size={16} />
+            <span>Cloudflare-API-Token fehlt. Auf dem Server <code>CF_API_TOKEN=…</code> in <code>{T.token_file}</code> eintragen (Rechte: „Zone → DNS → Bearbeiten“ für die Zone von {T.host}), dann „Zertifikat holen“.</span>
+          </div>
+        {/if}
+        {#if T.error && !T.issuing}<div class="notice bad small"><Icon name="alert" size={16} /><span>{T.error}</span></div>{/if}
+        <div class="tiny muted">
+          Auf dem Proxmox-Host zusätzlich TCP {T.dot_port} weiterleiten <Info title="Port für DoT" wide><PortHelp ports={[{ proto: 'tcp', port: T.dot_port || 853, note: 'DNS-over-TLS' }]} /></Info> · DoH läuft über Port 443 (nginx). Links je Gerät stehen unten.
+        </div>
+      {:else}
+        <div class="muted small">Aus – {d.dns_enabled ? 'Schalter oben rechts.' : 'erst den Panel-DNS einschalten.'}</div>
+      {/if}
+    {/if}
+  </div>
+</div>
+
+{#if d.smart?.domains || d.smart?.hits?.length}
+  <div class="card" style="margin-top:14px">
+    <div class="card-head">
+      <h2>
+        <Icon name="route" size={16} /> SmartDNS-Proxy
+        <Info title="SmartDNS für Geräte ohne VPN" text="Für SmartDNS-Domains der Filterprofile antwortet der Panel-DNS Geräten ohne VPN mit der Adresse des Servers. nginx reicht diese HTTPS-Verbindungen (Port 443) an den Proxy, der sie über die Ausgangsgruppe weiterleitet. Zahlen seit dem Start des Dienstes." />
+      </h2>
+      <span class="badge {d.smart.running ? 'ok' : 'muted'}">{d.smart.running ? 'läuft' : d.dry_run ? 'Testmodus' : 'aus'}</span>
+    </div>
+    <div class="card-pad stack" style="gap:8px;padding-top:0">
+      <div class="small muted">
+        {fmtNum(d.smart.domains)} Domains · {fmtNum(d.smart.total)} Verbindungen ({fmtNum(d.smart.active)} offen) · {bytes(d.smart.bytes)}{d.smart.denied ? ` · ${fmtNum(d.smart.denied)} abgewiesen` : ''} · Antwortadresse {d.smart.target4 || '–'}{d.smart.target6 ? `, ${d.smart.target6}` : ''}
+      </div>
+      {#if !d.smart.target4}<div class="notice warn small"><Icon name="alert" size={16} /><span>Die öffentliche IPv4 des Servers ist unbekannt (Einstellung „Server-Adresse“) – SmartDNS antwortet dann mit den echten Adressen.</span></div>{/if}
+      {#if !x.public && !T.on}<div class="tiny muted">Wirkt erst, wenn „DNS von außen“ oder DoH/DoT an ist – VPN-Geräte nutzen SmartDNS ohnehin über die Ziel-Regeln.</div>{/if}
+      {#each d.smart.hits.slice(0, 12) as h}
+        <div class="row small" style="gap:8px">
+          <span class="mono tiny grow ellipsis">{h.domain}</span>
+          <span class="tiny muted">{fmtNum(h.conns)}× · {bytes(h.bytes)} · {when(h.last)}</span>
+          {#if h.err}<span class="tiny warn-text ellipsis" style="max-width:260px" title={h.err}>{h.err}</span>{/if}
+        </div>
+      {/each}
+    </div>
+  </div>
+{/if}
+
+<div class="card" style="margin-top:14px">
+  <div class="card-head">
     <h2>Freigegebene Geräte <span class="muted small">{x.clients.length}</span></h2>
     <button class="btn sm primary" onclick={() => edit()}><Icon name="plus" size={14} /> Gerät freigeben</button>
   </div>
@@ -152,7 +302,16 @@
             <div class="line">
               <strong>{c.name}</strong>
               {#each c.addrs as a}<span class="chip mono">{a}</span>{/each}
+              {#if !c.addrs.length}<span class="chip">nur DoH/DoT</span>{/if}
+              {#if c.learn}<span class="chip" title="Wer per DoH/DoT fragt, darf 24 h auch normales DNS">Adresse merken{c.learned.length ? `: ${c.learned.join(', ')}` : ''}</span>{/if}
             </div>
+            {#if T.on && T.host && c.token}
+              <div class="links">
+                <button class="ipbtn mono" title="DoT – Android „Privates DNS“ (kopieren)" onclick={() => cp(dotHost(c))}><b>DoT</b> {dotHost(c)} <Icon name="copy" size={12} /></button>
+                <button class="ipbtn mono" title="DoH – Browser, iOS, Router (kopieren)" onclick={() => cp(dohURL(c))}><b>DoH</b> {dohURL(c)} <Icon name="copy" size={12} /></button>
+                <button class="btn sm ghost" title="Neue Kennung (alte Links werden ungültig)" onclick={() => newToken(c)}><Icon name="refresh" size={12} /></button>
+              </div>
+            {/if}
             <div class="tiny muted sub">
               <span><Icon name="shield" size={12} /> {profName(c.profile)}</span>
               <span>· {fmtNum(c.queries)} Anfragen{#if c.blocked}, <span class="bad-text">{fmtNum(c.blocked)} gesperrt</span>{/if}</span>
@@ -223,7 +382,7 @@
       <input id="dx-name" class="input" bind:value={f.name} maxlength="48" placeholder="z. B. Fernseher Wohnzimmer" />
     </div>
     <div class="field">
-      <label for="dx-addrs">Adressen <Info title="Adressen" text="Öffentliche IP-Adressen (IPv4/IPv6), Netze (höchstens /16 bzw. /48 – bei IPv6 am besten das /64 des Anschlusses) oder DynDNS-Namen. Eine pro Zeile." /></label>
+      <label for="dx-addrs">Adressen{#if T.on}&nbsp;<span class="muted">(optional bei DoH/DoT)</span>{/if} <Info title="Adressen" text="Öffentliche IP-Adressen (IPv4/IPv6), Netze (höchstens /16 bzw. /48 – bei IPv6 am besten das /64 des Anschlusses) oder DynDNS-Namen. Eine pro Zeile. Für normales DNS (Port 53) nötig; Geräte mit DoH/DoT erkennt das Panel an ihrer Kennung." /></label>
       <textarea id="dx-addrs" class="input mono" rows="3" bind:value={f.addrs} placeholder={'203.0.113.10\n2001:db8:1234:5678::/64\nmeinzuhause.myfritz.net'}></textarea>
     </div>
     <div class="field">
@@ -238,6 +397,12 @@
       <label for="dx-note">Notiz</label>
       <input id="dx-note" class="input" bind:value={f.note} maxlength="300" placeholder="optional" />
     </div>
+    {#if T.on}
+      <div class="row" style="gap:6px">
+        <label class="switch"><input type="checkbox" bind:checked={f.learn} /><span class="track"></span> Adresse merken</label>
+        <Info title="Adresse merken" text="Fragt das Gerät (z. B. Handy oder Router) per DoH/DoT, darf seine öffentliche Adresse 24 Stunden lang auch normales DNS über Port 53 nutzen – praktisch für Fernseher im selben Heimnetz, ohne feste IP. Braucht „DNS von außen“." />
+      </div>
+    {/if}
     <label class="switch"><input type="checkbox" bind:checked={f.enabled} /><span class="track"></span> Aktiv</label>
   </div>
   {#snippet footer()}
@@ -328,5 +493,24 @@
   }
   .namecell {
     max-width: 220px;
+  }
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .links .ipbtn {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .certline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 </style>

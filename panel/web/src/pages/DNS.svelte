@@ -11,6 +11,7 @@
   import Info from '../components/Info.svelte';
   import { peerItems, userItems, serverItems } from '../lib/pick.js';
   import DNSExternal from '../components/DNSExternal.svelte';
+  import DNSLive from '../components/DNSLive.svelte';
 
   let { tab = 'overview' } = $props();
 
@@ -172,8 +173,8 @@
   function openProfile(p = null) {
     pCur = p;
     pf = p
-      ? { name: p.name, enabled: p.enabled, lists: [...p.lists], rules: p.rules, assign: [...p.assign], block_doh: p.block_doh, nxdomain: p.nxdomain }
-      : { name: d.profiles.length ? '' : 'Standard', enabled: true, lists: d.lists.filter((l) => l.mode === 'block').map((l) => l.id), rules: '', assign: d.profiles.length ? [] : ['global'], block_doh: true, nxdomain: false };
+      ? { name: p.name, enabled: p.enabled, lists: [...p.lists], rules: p.rules, assign: [...p.assign], block_doh: p.block_doh, nxdomain: p.nxdomain, smart: (p.smart || []).map((x) => ({ group: x.group, domains: x.domains.join('\n') })) }
+      : { name: d.profiles.length ? '' : 'Standard', enabled: true, lists: d.lists.filter((l) => l.mode === 'block').map((l) => l.id), rules: '', assign: d.profiles.length ? [] : ['global'], block_doh: true, nxdomain: false, smart: [] };
     pOpen = true;
   }
   function toggleList(id) {
@@ -201,8 +202,36 @@
   function addAssign(it) {
     if (!pf.assign.includes(it.value)) pf.assign = [...pf.assign, it.value];
   }
+  // ---------- SmartDNS ----------
+  const SMART_PRESETS = [
+    ['Netflix', 'netflix.com\nnetflix.net\nnflxvideo.net\nnflximg.net\nnflximg.com\nnflxext.com\nnflxso.net\nfast.com'],
+    ['Disney+', 'disneyplus.com\ndisney-plus.net\ndssott.com\nbamgrid.com\ndisneystreaming.com\ndisneynow.com'],
+    ['Prime Video', 'primevideo.com\namazonvideo.com\naiv-cdn.net\naiv-delivery.net\npv-cdn.net\nmedia-amazon.com'],
+    ['Hulu', 'hulu.com\nhulustream.com\nhuluim.com\nhulu.hb.omtrdc.net'],
+    ['Max', 'max.com\nhbomax.com\nhbo.com\nhbomaxcdn.com\ndiscomax.com'],
+    ['BBC iPlayer', 'bbc.co.uk\nbbc.com\nbbci.co.uk\nbbc.net.uk\nbidi.net.uk'],
+    ['YouTube', 'youtube.com\ngooglevideo.com\nytimg.com\nyoutubei.googleapis.com\nyoutube-nocookie.com'],
+    ['Spotify', 'spotify.com\nscdn.co\nspotifycdn.com\nspotilocal.com'],
+    ['ChatGPT', 'openai.com\nchatgpt.com\noaistatic.com\noaiusercontent.com'],
+  ];
+  const groupOpts = $derived(d.choices.groups || []);
+  function addSmart(preset) {
+    const g = groupOpts.find((x) => x.enabled) || groupOpts[0];
+    if (preset) {
+      const row = pf.smart.find((r) => r.group === g?.id);
+      if (row) {
+        const have = new Set(row.domains.split(/\s+/).filter(Boolean));
+        row.domains = [...have, ...preset[1].split('\n').filter((x) => !have.has(x))].join('\n');
+        return;
+      }
+    }
+    pf.smart = [...pf.smart, { group: g?.id || 0, domains: preset ? preset[1] : '' }];
+  }
+  const smartCount = (t) => (t || '').split(/[\s,;]+/).filter((x) => x && !x.startsWith('#')).length;
+
   async function saveProfile() {
     const body = $state.snapshot(pf);
+    body.smart = body.smart.filter((r) => r.domains.trim()).map((r) => ({ group: Number(r.group), domains: r.domains }));
     const r = pCur ? await run(() => put(`/dns/profiles/${pCur.id}`, body), 'Profil gespeichert') : await run(() => post('/dns/profiles', body), 'Profil angelegt');
     if (r) {
       pOpen = false;
@@ -378,7 +407,9 @@
     if (await run(() => put('/dns/settings', { candidates: '' }), 'Liste zurückgesetzt')) load();
   }
   const isLocal = (a) => a.startsWith('127.') || a.startsWith('[::1]');
-  const srvName = (a) => (a.replace(/:53$/, '') === '127.0.0.1:5335' ? 'Unbound' : a.replace(/:53$/, ''));
+  const KNOWN_DNS = { '127.0.0.1:5335': 'Unbound', '1.1.1.1': 'Cloudflare', '1.0.0.1': 'Cloudflare', '8.8.8.8': 'Google', '8.8.4.4': 'Google', '9.9.9.9': 'Quad9', '149.112.112.112': 'Quad9', '94.140.14.140': 'AdGuard', '208.67.222.222': 'OpenDNS', '76.76.2.0': 'Control D', '185.222.222.222': 'DNS.SB' };
+  const srvHost = (a) => a.replace(/:53$/, '');
+  const srvName = (a) => KNOWN_DNS[srvHost(a)] || srvHost(a);
   // automatische Wahl
   let autoBusy = $state(false);
   async function autoNow() {
@@ -451,6 +482,8 @@
     </div>
   </div>
 
+  {#if d.settings.enabled === '1'}<DNSLive />{/if}
+
   <div class="card filtercard">
     <div class="card-head">
       <h3>
@@ -484,7 +517,7 @@
             <span class="warn-t small">noch niemandem zugeordnet</span>
           {/each}
           {#if p.assign.length > 4}<span class="muted small">+{p.assign.length - 4}</span>{/if}
-          <span class="muted small">· {p.lists.length} {p.lists.length === 1 ? 'Liste' : 'Listen'} ({fmtNum(listDomains(p))} Domains) · {ruleCount(p.rules)} eigene Regeln{p.block_doh ? ' · DoH gesperrt' : ''}</span>
+          <span class="muted small">· {p.lists.length} {p.lists.length === 1 ? 'Liste' : 'Listen'} ({fmtNum(listDomains(p))} Domains) · {ruleCount(p.rules)} eigene Regeln{p.block_doh ? ' · DoH gesperrt' : ''}{p.smart?.length ? ` · SmartDNS: ${p.smart.map((x) => groupById[x.group]?.name || x.group).join(', ')}` : ''}</span>
         </div>
       {/each}
       {#if unusedLists.length && activeProfiles.length}
@@ -590,6 +623,15 @@
         </div>
       </div>
       <div class="card">
+        <div class="card-head"><h3>DNS-Server <Info title="DNS-Server im Zeitraum" text="Welcher DNS-Server die nicht zwischengespeicherten Anfragen beantwortet hat (aus dem Protokoll), mit mittlerer Antwortzeit. Gesperrte und gespeicherte Antworten fragen keinen Server." /></h3></div>
+        <div class="toplist">
+          {#each stats.upstreams || [] as r}
+            {@const all = stats.upstreams.reduce((a, x) => a + x.count, 0)}
+            <div class="toprow" title={r.name}><span class="small ellipsis grow">{srvName(r.name)}{#if srvName(r.name) !== srvHost(r.name)}&nbsp;<span class="mono tiny muted">{srvHost(r.name)}</span>{/if}</span><span class="share"><span style="width:{pct(r.count, all)}%"></span></span><span class="tiny muted num">{pct(r.count, all)} %</span><span class="tiny muted num">{r.ms} ms</span></div>
+          {:else}<div class="muted small" style="padding:12px 14px">Noch nichts protokolliert.</div>{/each}
+        </div>
+      </div>
+      <div class="card">
         <div class="card-head"><h3>Namen ohne Antwort <Info title="NXDOMAIN" text="Häufig gefragte Namen, die es nicht gibt – oft Geräte, die nach abgeschalteten Diensten suchen, oder Tippfehler in eigenen Regeln." /></h3></div>
         <div class="toplist">
           {#each stats.top_nx || [] as r}
@@ -664,7 +706,7 @@
               {#if en.via}<span class="badge accent" title="über Ausgangsgruppe"><Icon name="route" size={12} /> {groupById[en.via]?.name || en.via}</span>{/if}
               {#if en.detail && en.action !== 'ok' && en.action !== 'cached'}<div class="tiny muted detail">{en.detail}</div>{/if}
             </td>
-            <td class="right tiny muted">{en.action === 'cached' || en.action === 'blocked' ? '' : en.ms}</td>
+            <td class="right tiny muted nowrap" title={en.upstream ? `beantwortet von ${en.upstream}` : ''}>{en.action === 'cached' || en.action === 'blocked' ? '' : en.ms}{#if en.upstream}<div class="tiny muted">{srvName(en.upstream)}</div>{/if}</td>
             <td class="right nowrap">
               {#if en.action === 'blocked'}
                 <button class="btn sm ghost" title="Freigeben" onclick={() => openQuick(en.name, true)}><Icon name="check" size={13} /></button>
@@ -703,6 +745,13 @@
               <span class="muted small">Noch keinem Gerät zugeordnet</span>
             {/each}
           </div>
+          {#if p.smart?.length}
+            <div class="row wrap" style="gap:6px">
+              {#each p.smart as sr}
+                <span class="badge accent" title={sr.domains.join(', ')}><Icon name="route" size={12} /> {sr.domains.slice(0, 2).join(', ')}{sr.domains.length > 2 ? ` +${sr.domains.length - 2}` : ''} → {groupById[sr.group]?.name || `Gruppe #${sr.group}`}</span>
+              {/each}
+            </div>
+          {/if}
           <div class="row wrap" style="gap:6px">
             {#each p.lists as id}
               {@const l = d.lists.find((x) => x.id === id)}
@@ -1026,6 +1075,39 @@
       </Info></label>
       <textarea id="p-rules" class="input mono" rows="8" bind:value={pf.rules} placeholder={'werbung.de              # sperren\nallow cdn.beispiel.de   # freigeben (geht vor)\nnas.home = 192.168.1.10 # eigene Antwort'}></textarea>
     </div>
+    <div class="field">
+      <span class="label"
+        >SmartDNS – Dienste über eine Ausgangsgruppe <Info title="SmartDNS" wide>
+          <p>Die eingetragenen Domains (samt Unterdomains) laufen über die gewählte Ausgangsgruppe – z. B. Netflix über „USA“, der Rest bleibt direkt.</p>
+          <p><b>VPN-Geräte</b> (WireGuard, OpenVPN, VLESS …): wirkt wie eine Ziel-Regel – der Verkehr zu diesen Zielen geht über den Ausgang der Gruppe, alle Ports.</p>
+          <p><b>Geräte ohne VPN</b> (Fernseher, Konsole, DoH/DoT): Der Panel-DNS antwortet für diese Namen mit der Adresse des Servers; der Server reicht die HTTPS-Verbindung (Port 443) anhand des Namens über die Gruppe weiter. Die Verschlüsselung bleibt Ende-zu-Ende. Unverschlüsseltes HTTP (Port 80) und UDP/QUIC laufen so nicht – Apps weichen dann auf HTTPS aus.</p>
+          <p>Damit Streamingdienste den Standort glauben, braucht es meist mehrere Domains (Anmeldung, Videoserver). Die Vorlagen enthalten die üblichen.</p>
+        </Info></span
+      >
+      {#if !groupOpts.length}
+        <div class="muted small">Noch keine Ausgangsgruppe – unter <a href="#/proxy/groups">Proxy & Ausgänge → Gruppen</a> anlegen.</div>
+      {:else}
+        {#each pf.smart as row, i}
+          <div class="smartrow">
+            <div class="row" style="gap:8px">
+              <Icon name="route" size={15} />
+              <select class="input" style="width:auto" bind:value={row.group}>
+                {#each groupOpts as g}<option value={g.id}>{g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
+              </select>
+              <span class="tiny muted">{smartCount(row.domains)} Domains</span>
+              <span class="grow"></span>
+              <button class="btn sm icon ghost danger" title="Entfernen" onclick={() => (pf.smart = pf.smart.filter((_, j) => j !== i))}><Icon name="trash" size={14} /></button>
+            </div>
+            <textarea class="input mono" rows="3" bind:value={row.domains} placeholder={'netflix.com\nnflxvideo.net'}></textarea>
+          </div>
+        {/each}
+        <div class="row wrap" style="gap:6px">
+          <button class="btn sm" onclick={() => addSmart(null)}><Icon name="plus" size={13} /> Gruppe hinzufügen</button>
+          <span class="tiny muted">Vorlage:</span>
+          {#each SMART_PRESETS as pr}<button class="btn sm ghost" title={pr[1].replaceAll('\n', ', ')} onclick={() => addSmart(pr)}>{pr[0]}</button>{/each}
+        </div>
+      {/if}
+    </div>
     <div class="row" style="gap:6px">
       <label class="switch"><input type="checkbox" bind:checked={pf.block_doh} /><span class="track"></span> Verschlüsseltes DNS der Geräte sperren (DoH/DoT)</label>
       <Info title="Verschlüsseltes DNS" text="Browser und Android („Privates DNS“) gehen sonst am Filter vorbei. Mit fest eingestelltem eigenem Anbieter (z. B. Brave „Sicheres DNS“ = Cloudflare) lädt dann keine Seite mehr – dort „automatisch“ oder „aus“ wählen." />
@@ -1091,6 +1173,15 @@
 </Modal>
 
 <style>
+  .smartrow {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
   .cands {
     display: flex;
     flex-wrap: wrap;

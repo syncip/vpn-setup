@@ -45,6 +45,8 @@ type Engine struct {
 	rt    routeState // Ziel-Regeln (routes.go)
 	dns   dnsGate    // Panel-DNS bzw. DNS-Umleiter für Domain-Regeln (dns.go)
 	dnsx  dnsExt     // DNS für Geräte ohne VPN (dnsext.go)
+	smart smartProxy // SmartDNS-Proxy (smartproxy.go)
+	enc   encDNS     // DoH/DoT mit Zertifikat (encdns.go)
 
 	dnsLists dnsListState // Blocklisten des Panel-DNS (dnsfilter.go)
 
@@ -89,6 +91,10 @@ var settingDefaults = map[string]string{
 	"dns_auto":            "0",        // schnellste DNS-Server regelmäßig selbst wählen
 	"dns_auto_hours":      "24",
 	"dns_auto_count":      "2",
+	"dns_tls":             "0",   // DoH/DoT für Geräte ohne VPN
+	"dns_tls_host":        "",    // z. B. dns.example.org (Cloudflare „Nur DNS“), Kennungen als Unterdomains
+	"dns_dot_port":        "853", // DoT
+	"dns_acme_email":      "",    // optional: Kontakt bei Let's Encrypt
 }
 
 func (e *Engine) Setting(k string) string { return e.St.GetSetting(k, settingDefaults[k]) }
@@ -265,6 +271,8 @@ func (e *Engine) applyLocked() error {
 	} else {
 		e.setErr("shaping", "")
 	}
+	e.applySmart(e.SmartDomains())
+	e.applyEncDNS()
 	if err := e.applyNginx(snap); err != nil {
 		errs = append(errs, "nginx: "+err.Error())
 		e.setErr("nginx", err.Error())
@@ -354,6 +362,21 @@ func (e *Engine) applyNginx(snap *Snapshot) error {
 	if _, ok := defaults[pub]; !ok {
 		defaults[pub] = e.Cfg.PanelBackend
 	}
+	// Verschlüsseltes DNS (DoH) und SmartDNS: Namen samt Unterdomains („.name“ in nginx)
+	wild := map[int][]proto.SNIRoute{}
+	if h := e.encDNSHost(); h != "" && e.encDNSOn() {
+		wild[pub] = append(wild[pub], proto.SNIRoute{Port: pub, SNI: "." + h, Backend: dohAddr})
+	}
+	exact := map[string]bool{}
+	for _, r := range routes[pub] {
+		exact[r.SNI] = true
+	}
+	for _, d := range e.smartNginxNames() {
+		if exact[d] || d == e.encDNSHost() {
+			continue
+		}
+		wild[pub] = append(wild[pub], proto.SNIRoute{Port: pub, SNI: "." + d, Backend: smartAddr})
+	}
 	var ports []int
 	for p := range defaults {
 		ports = append(ports, p)
@@ -363,8 +386,18 @@ func (e *Engine) applyNginx(snap *Snapshot) error {
 	b.WriteString("# Vom VPN-Panel erzeugt – Änderungen werden überschrieben.\n")
 	for _, p := range ports {
 		fmt.Fprintf(&b, "\nmap $ssl_preread_server_name $vpn_backend_%d {\n", p)
+		if len(wild[p]) > 0 {
+			b.WriteString("    hostnames;\n")
+		}
 		seen := map[string]bool{}
 		for _, r := range routes[p] {
+			if seen[r.SNI] {
+				continue
+			}
+			seen[r.SNI] = true
+			fmt.Fprintf(&b, "    %s %s;\n", r.SNI, r.Backend)
+		}
+		for _, r := range wild[p] {
 			if seen[r.SNI] {
 				continue
 			}

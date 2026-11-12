@@ -77,6 +77,7 @@ type dnsGate struct {
 	strategy string // order | fastest | roundrobin | parallel
 	rr       uint32
 	srv      map[string]*srvStat // Antwortzeiten je DNS-Server
+	live     dnsLive             // Anfragen je Sekunde (Live-Ansicht)
 }
 
 // srvStat: gemessene Antwortzeiten eines DNS-Servers (gleitender Mittelwert).
@@ -577,6 +578,11 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 		}
 		return nil
 	}
+	return g.handleWith(e, src, s, query, tcp)
+}
+
+// handleWith beantwortet eine Anfrage mit bekannter Richtlinie (auch DoH/DoT).
+func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []byte, tcp bool) []byte {
 	start := time.Now()
 	g.mu.Lock()
 	g.queries++
@@ -610,11 +616,12 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 		} else {
 			entry.RCode = int(dnsmessage.RCodeServerFailure)
 		}
+		g.mu.Lock()
 		if action == "blocked" {
-			g.mu.Lock()
 			g.blocked++
-			g.mu.Unlock()
 		}
+		g.live.add(start.Unix(), action, entry.MS)
+		g.mu.Unlock()
 		if s.peer < 0 {
 			e.noteExt(src, -s.peer, name, false, action == "blocked")
 		}
@@ -637,6 +644,38 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 	// sie normales DNS.
 	if s.doh && proto.DomainMatch(dohHosts, name) {
 		return done(dnsReply(hdr, q, dnsmessage.RCodeNameError, nil, 60), "blocked", "verschlüsseltes DNS (DoH) – würde am Panel vorbeigehen", 0)
+	}
+
+	// SmartDNS für Geräte ohne VPN: Name zeigt auf den Server, der die HTTPS-Verbindung über die
+	// Gruppe weiterreicht (VPN-Geräte leitet stattdessen die Ziel-Regel aus dem Profil).
+	if s.peer < 0 {
+		if gid, dom, ok := s.filt.smartMatch(name); ok {
+			g.mu.Lock()
+			gr, gok := g.groups[gid]
+			g.mu.Unlock()
+			if gok && gr.Enabled {
+				v4, v6 := e.PublicAddrs()
+				detail := "SmartDNS: " + dom + " über „" + gr.Name + "“"
+				switch q.Type {
+				case dnsmessage.TypeA:
+					if v4.IsValid() {
+						return done(dnsReply(hdr, q, dnsmessage.RCodeSuccess, []netip.Addr{v4}, 60), "rewritten", detail, gid)
+					}
+				case dnsmessage.TypeAAAA:
+					var a []netip.Addr
+					if v6.IsValid() {
+						a = []netip.Addr{v6}
+					}
+					if v4.IsValid() {
+						return done(dnsReply(hdr, q, dnsmessage.RCodeSuccess, a, 60), "rewritten", detail, gid)
+					}
+				case 64, 65: // HTTPS/SVCB: keine Hinweise auf echte Adressen
+					if v4.IsValid() {
+						return done(dnsReply(hdr, q, dnsmessage.RCodeSuccess, nil, 60), "rewritten", detail, gid)
+					}
+				}
+			}
+		}
 	}
 
 	// 3./4. Weg bestimmen
@@ -675,12 +714,12 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 	}
 	errText := ""
 	if resp == nil {
-		resp = g.exchange(query, servers, mark, tcp)
+		resp, entry.Upstream = g.exchange(query, servers, mark, tcp)
 		if resp == nil && mark != 0 {
 			// DNS über die Gruppe antwortet nicht (manche Anbieter sperren fremde DNS-Server): direkt
 			// auflösen – wichtiger ist, dass das Ziel erkannt wird und über die Gruppe läuft.
 			errText = "DNS-Server der Gruppe antworten über den Ausgang nicht – Namen werden direkt aufgelöst (in der Gruppe einen DNS-Server des Anbieters eintragen)"
-			resp = g.exchange(query, upstream, 0, tcp)
+			resp, entry.Upstream = g.exchange(query, upstream, 0, tcp)
 		}
 		if resp != nil && !noCache {
 			g.store(key, resp)
@@ -938,7 +977,7 @@ func exchangeOne(query []byte, srv string, mark uint32, tcp bool, timeout time.D
 //     die anderen, damit deren Messung aktuell bleibt
 //   - roundrobin: reihum
 //   - parallel: an bis zu drei Server gleichzeitig, die erste Antwort gilt (am schnellsten, mehr Last)
-func (g *dnsGate) exchange(query []byte, servers []string, mark uint32, tcp bool) []byte {
+func (g *dnsGate) exchange(query []byte, servers []string, mark uint32, tcp bool) ([]byte, string) {
 	if len(servers) <= 1 {
 		return g.measure(query, servers, mark, tcp)
 	}
@@ -966,16 +1005,26 @@ func (g *dnsGate) exchange(query []byte, servers []string, mark uint32, tcp bool
 	if len(order) > 3 {
 		order = order[:3]
 	}
-	ch := make(chan []byte, len(order))
-	for _, srv := range order {
-		go func(srv string) { ch <- g.measure(query, []string{srv}, mark, tcp) }(srv)
+	type res struct {
+		b   []byte
+		srv string
 	}
+	ch := make(chan res, len(order))
+	for _, srv := range order {
+		go func(srv string) {
+			b, s := g.measure(query, []string{srv}, mark, tcp)
+			ch <- res{b, s}
+		}(srv)
+	}
+	last := ""
 	for range order {
-		if r := <-ch; r != nil {
-			return r
+		if r := <-ch; r.b != nil {
+			return r.b, r.srv
+		} else {
+			last = r.srv
 		}
 	}
-	return nil
+	return nil, last
 }
 
 // score: erwartete Antwortzeit (unbekannte Server zuerst ausprobieren, Ausfälle bestrafen).
@@ -988,8 +1037,10 @@ func (g *dnsGate) score(srv string) float64 {
 }
 
 // measure fragt der Reihe nach und merkt sich Antwortzeiten bzw. Ausfälle je Server.
-func (g *dnsGate) measure(query []byte, servers []string, mark uint32, tcp bool) []byte {
+func (g *dnsGate) measure(query []byte, servers []string, mark uint32, tcp bool) ([]byte, string) {
+	last := ""
 	for _, srv := range servers {
+		last = srv
 		t := time.Now()
 		resp := exchangeOne(query, srv, mark, tcp, dnsTimeout)
 		ms := float64(time.Since(t).Microseconds()) / 1000
@@ -1012,10 +1063,10 @@ func (g *dnsGate) measure(query []byte, servers []string, mark uint32, tcp bool)
 		}
 		g.mu.Unlock()
 		if resp != nil {
-			return resp
+			return resp, srv
 		}
 	}
-	return nil
+	return nil, last
 }
 
 // DNSServerStat: gemessene Werte eines DNS-Servers im laufenden Betrieb (für die Oberfläche).

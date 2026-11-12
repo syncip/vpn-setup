@@ -15,15 +15,16 @@ import (
 // Panel-DNS: Einstellungen, Filterprofile, Blocklisten, Protokoll und Auswertung.
 
 type dnsProfileRow struct {
-	ID       int64    `json:"id"`
-	Name     string   `json:"name"`
-	Enabled  bool     `json:"enabled"`
-	Lists    []int64  `json:"lists"`
-	Rules    string   `json:"rules"`
-	Assign   []string `json:"assign"`
-	BlockDoH bool     `json:"block_doh"`
-	NXDomain bool     `json:"nxdomain"`
-	Error    string   `json:"error,omitempty"` // Fehler in den eigenen Regeln
+	ID       int64               `json:"id"`
+	Name     string              `json:"name"`
+	Enabled  bool                `json:"enabled"`
+	Lists    []int64             `json:"lists"`
+	Rules    string              `json:"rules"`
+	Assign   []string            `json:"assign"`
+	BlockDoH bool                `json:"block_doh"`
+	NXDomain bool                `json:"nxdomain"`
+	Smart    []engine.SmartRoute `json:"smart"`
+	Error    string              `json:"error,omitempty"` // Fehler in den eigenen Regeln
 }
 
 type dnsListRow struct {
@@ -55,7 +56,10 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 		for _, o := range objs {
 			p := engine.DNSProfileFrom(o)
 			row := &dnsProfileRow{ID: p.ID, Name: p.Name, Enabled: p.Enabled, Lists: orInts(p.Lists), Rules: p.Rules,
-				Assign: orStrings(p.Assign), BlockDoH: p.BlockDoH, NXDomain: p.NXDomain}
+				Assign: orStrings(p.Assign), BlockDoH: p.BlockDoH, NXDomain: p.NXDomain, Smart: p.Smart}
+			if row.Smart == nil {
+				row.Smart = []engine.SmartRoute{}
+			}
 			if _, err := engine.ParseDNSRules(p.Rules); err != nil {
 				row.Error = err.Error()
 			}
@@ -90,7 +94,9 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 			"cache_size": a.E.Setting("dns_cache_size"), "ttl_min": a.E.Setting("dns_ttl_min"), "ttl_max": a.E.Setting("dns_ttl_max"),
 			"nocache": a.E.Setting("dns_nocache"), "strategy": a.E.Setting("dns_strategy"), "public": a.E.Setting("dns_public"),
 			"resolver": a.E.Setting("dns_resolver"), "candidates": engine.CandidatesText(a.E.DNSCandidateList()), "candidates_custom": a.E.Setting("dns_candidates"),
-			"auto": a.E.Setting("dns_auto"), "auto_hours": a.E.Setting("dns_auto_hours"), "auto_count": a.E.Setting("dns_auto_count")},
+			"auto": a.E.Setting("dns_auto"), "auto_hours": a.E.Setting("dns_auto_hours"), "auto_count": a.E.Setting("dns_auto_count"),
+			"tls": a.E.Setting("dns_tls"), "tls_host": a.E.Setting("dns_tls_host"), "dot_port": a.E.Setting("dns_dot_port"), "acme_email": a.E.Setting("dns_acme_email")},
+		"smart_state": a.E.SmartState(), "tls_state": a.E.EncDNSState(),
 		"unbound_installed": a.E.UnboundInstalled(), "auto_last": a.E.DNSAutoLast(),
 		"upstreams": a.E.DNSServerStats(), "ext": ext,
 		"info": info, "profiles": profiles, "lists": lists, "presets": dnsPresets, "dry_run": a.E.Sys.DryRun(),
@@ -148,6 +154,10 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 		Auto     *bool   `json:"auto"`
 		AutoH    *int    `json:"auto_hours"`
 		AutoN    *int    `json:"auto_count"`
+		TLS      *bool   `json:"tls"`
+		TLSHost  *string `json:"tls_host"`
+		DoTPort  *int    `json:"dot_port"`
+		Email    *string `json:"acme_email"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -174,6 +184,28 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Public != nil {
 		set["dns_public"] = map[bool]string{true: "1", false: "0"}[*in.Public]
+	}
+	if in.TLS != nil {
+		set["dns_tls"] = map[bool]string{true: "1", false: "0"}[*in.TLS]
+	}
+	if in.TLSHost != nil {
+		set["dns_tls_host"] = *in.TLSHost
+	}
+	if in.DoTPort != nil {
+		set["dns_dot_port"] = strconv.Itoa(*in.DoTPort)
+	}
+	if in.Email != nil {
+		set["dns_acme_email"] = *in.Email
+	}
+	if in.TLS != nil && *in.TLS {
+		h := a.E.Setting("dns_tls_host")
+		if in.TLSHost != nil {
+			h = *in.TLSHost
+		}
+		if strings.TrimSpace(h) == "" {
+			errJSON(w, http.StatusBadRequest, "Erst einen DNS-Namen eintragen (z. B. dns.example.org)")
+			return
+		}
 	}
 	if in.Upstream != nil {
 		set["dns_upstream"] = *in.Upstream
@@ -229,6 +261,10 @@ func (a *API) saveDNSProfile(w http.ResponseWriter, r *http.Request, o *store.Ob
 		Assign   []string `json:"assign"`
 		BlockDoH *bool    `json:"block_doh"`
 		NXDomain *bool    `json:"nxdomain"`
+		Smart    []struct {
+			Group   int64  `json:"group"`
+			Domains string `json:"domains"` // eine Domain je Zeile (oder durch Komma/Leerzeichen getrennt)
+		} `json:"smart"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -309,6 +345,46 @@ func (a *API) saveDNSProfile(w http.ResponseWriter, r *http.Request, o *store.Ob
 	}
 	if in.NXDomain != nil {
 		o.Data["nxdomain"] = *in.NXDomain
+	}
+	if in.Smart != nil {
+		if len(in.Smart) > 20 {
+			errJSON(w, http.StatusBadRequest, "SmartDNS: höchstens 20 Einträge je Profil")
+			return
+		}
+		out := []any{}
+		for _, sr := range in.Smart {
+			g, err := a.St.Object("group", sr.Group)
+			if err != nil {
+				errJSON(w, http.StatusBadRequest, "SmartDNS: Ausgangsgruppe auswählen")
+				return
+			}
+			var doms []string
+			seen := map[string]bool{}
+			for _, d := range strings.FieldsFunc(sr.Domains, func(r rune) bool { return r == '\n' || r == ',' || r == ' ' || r == ';' || r == '\r' }) {
+				d = strings.TrimSpace(d)
+				if d == "" || strings.HasPrefix(d, "#") {
+					continue
+				}
+				c := engine.CleanDomain(d)
+				if c == "" {
+					errJSON(w, http.StatusBadRequest, "SmartDNS („"+g.Name+"“): „"+d+"“ ist keine gültige Domain")
+					return
+				}
+				if !seen[c] {
+					seen[c] = true
+					doms = append(doms, c)
+				}
+			}
+			if len(doms) == 0 {
+				continue
+			}
+			if len(doms) > 300 {
+				errJSON(w, http.StatusBadRequest, "SmartDNS: höchstens 300 Domains je Gruppe")
+				return
+			}
+			out = append(out, map[string]any{"group": sr.Group, "domains": doms})
+		}
+		o.Data["smart"] = out
 	}
 	if err := a.St.SaveObject(o); err != nil {
 		fail(w, err)
@@ -578,4 +654,25 @@ func (a *API) dnsAutoNow(w http.ResponseWriter, r *http.Request) {
 	res := a.E.RunDNSAuto(true)
 	a.E.Log("info", "DNS-Server-Wahl von Hand gestartet von "+adminOf(r).Username)
 	writeJSON(w, res)
+}
+
+// dnsTLSRenew: Zertifikat für DoH/DoT jetzt holen.
+func (a *API) dnsTLSRenew(w http.ResponseWriter, r *http.Request) {
+	if err := a.E.RenewEncCert(true); err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	a.E.Log("info", "Zertifikat für DoH/DoT angefordert von "+adminOf(r).Username)
+	writeJSON(w, a.E.EncDNSState())
+}
+
+// dnsTLSState: Zustand von DoH/DoT und SmartDNS-Proxy.
+func (a *API) dnsTLSState(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"tls": a.E.EncDNSState(), "smart": a.E.SmartState()})
+}
+
+// dnsLive: Anfragen je Sekunde der letzten Minuten und die benutzten DNS-Server.
+func (a *API) dnsLive(w http.ResponseWriter, r *http.Request) {
+	secs, _ := strconv.Atoi(r.URL.Query().Get("secs"))
+	writeJSON(w, a.E.DNSLiveData(secs))
 }
