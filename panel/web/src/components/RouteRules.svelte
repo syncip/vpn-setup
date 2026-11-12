@@ -4,12 +4,13 @@
   import Modal from './Modal.svelte';
   import { confirmDialog } from './Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
-  import { PROTO_LABEL } from '../lib/format.js';
+  import { PROTO_LABEL, ago, fmtNum } from '../lib/format.js';
 
   // reload: Zähler der Elternseite – ändert er sich (z. B. neue Gruppe), wird neu geladen
   let { reload = 0 } = $props();
 
-  let d = $state({ routes: [], servers: [], users: [], peers: [], groups: [], lists: [], error: '' });
+  let d = $state({ routes: [], servers: [], users: [], peers: [], groups: [], lists: [], error: '', dns: null });
+  const when = (ts) => (ago(ts) === 'online' ? 'gerade eben' : ago(ts));
   let loaded = $state(false);
 
   async function load() {
@@ -136,6 +137,23 @@
               {#if r.note && r.enabled}<span class="warn-text"><Icon name="alert" size={12} /> wirkt nicht: {r.note}</span>{/if}
             </div>
           {/if}
+          {#if r.dns}
+            <!-- Domain-Erkennung für WireGuard/OpenVPN: zeigt, ob DNS-Anfragen des Geräts ankommen -->
+            <div class="tiny dnsline">
+              {#if r.dns.error}
+                <span class="warn-text"><Icon name="alert" size={12} /> {r.dns.error}</span>
+              {:else if r.dns.queries}
+                <span class="ok-text"><Icon name="check" size={12} /> Domains erkannt: {fmtNum(r.dns.addrs)} {r.dns.addrs === 1 ? 'Adresse' : 'Adressen'} gelernt, letzte DNS-Anfrage {when(r.dns.last)}</span>
+              {:else if r.dns.addrs}
+                <span class="muted">{fmtNum(r.dns.addrs)} {r.dns.addrs === 1 ? 'Adresse' : 'Adressen'} gelernt (seit dem Neustart noch keine neue DNS-Anfrage)</span>
+              {:else}
+                <span class="warn-text"
+                  ><Icon name="alert" size={12} /> Noch keine DNS-Anfrage für diese Domains gesehen – am Gerät VPN trennen und neu verbinden, dann das Ziel aufrufen. Bleibt es dabei,
+                  nutzt das Gerät verschlüsseltes DNS (Browser: „Sicheres DNS“, Android: „Privates DNS“).</span
+                >
+              {/if}
+            </div>
+          {/if}
         </div>
         <label class="switch" title={r.enabled ? 'Aktiv' : 'Aus'}><input type="checkbox" checked={r.enabled} onchange={() => toggle(r)} /><span class="track"></span></label>
         <button class="btn sm icon ghost" title="Bearbeiten" onclick={() => openRule(r)}><Icon name="edit" size={15} /></button>
@@ -148,9 +166,15 @@
       </div>
     {/each}
   </div>
-  {#if sorted.length > 1}
+  {#if sorted.length > 1 || d.dns?.running}
     <div class="foot muted tiny">
-      Rangfolge: Gerät vor Nutzer vor Server vor „Alle“. Innerhalb einer Ebene greifen Regeln für bestimmte Ziele vor „Alles“. Die erste passende Regel gilt.
+      {#if sorted.length > 1}Rangfolge: Gerät vor Nutzer vor Server vor „Alle“. Innerhalb einer Ebene greifen Regeln für bestimmte Ziele vor „Alles“. Die erste passende Regel gilt.{/if}
+      {#if d.dns?.running}
+        <div>
+          DNS-Umleiter für Domain-Regeln (WireGuard/OpenVPN): {#if d.dns.queries}{fmtNum(d.dns.queries)} Anfragen von {d.dns.clients} {d.dns.clients === 1 ? 'Gerät' : 'Geräten'} seit dem
+            Start, zuletzt {when(d.dns.last)}.{:else}läuft, hat aber noch keine DNS-Anfrage eines Geräts gesehen.{/if}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -291,6 +315,15 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 8px;
+  }
+  .ok-text {
+    color: var(--ok);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .dnsline {
+    margin-top: 2px;
   }
   .warn-text {
     color: var(--warn, #b7791f);

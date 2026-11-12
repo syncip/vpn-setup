@@ -47,6 +47,83 @@ type dnsGate struct {
 	tcp    net.Listener
 	sem    chan struct{}
 	warned bool
+	// Diagnose: was der Umleiter gesehen hat (seit Programmstart)
+	stat    map[int64]*RuleDNS // je Regel
+	clients map[netip.Addr]int64
+	queries int
+	last    int64
+}
+
+// RuleDNS: Stand einer Domain-Regel im DNS-Umleiter (für die Oberfläche).
+type RuleDNS struct {
+	Used    bool   `json:"used"`            // Regel gilt für mindestens ein WireGuard-/OpenVPN-Gerät
+	Addrs   int    `json:"addrs"`           // gelernte Adressen
+	Queries int    `json:"queries"`         // passende DNS-Anfragen
+	Last    int64  `json:"last"`            // letzte passende Anfrage
+	Error   string `json:"error,omitempty"` // letzter Fehler
+}
+
+// DNSInfo: Stand des Umleiters insgesamt.
+type DNSInfo struct {
+	Running bool               `json:"running"`
+	Queries int                `json:"queries"` // alle umgeleiteten Anfragen
+	Last    int64              `json:"last"`
+	Clients int                `json:"clients"` // Geräte, von denen Anfragen kamen
+	Rules   map[int64]*RuleDNS `json:"rules"`
+}
+
+// DNSInfo liefert den Stand für die Oberfläche.
+func (e *Engine) DNSInfo() DNSInfo {
+	g := &e.dns
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := DNSInfo{Running: g.udp != nil, Queries: g.queries, Last: g.last, Clients: len(g.clients), Rules: map[int64]*RuleDNS{}}
+	now := time.Now().Unix()
+	rule := func(id int64) *RuleDNS {
+		if out.Rules[id] == nil {
+			out.Rules[id] = &RuleDNS{}
+			if s := g.stat[id]; s != nil {
+				*out.Rules[id] = *s
+			}
+		}
+		return out.Rules[id]
+	}
+	for _, s := range g.srcs {
+		for _, r := range s.pol.Rules {
+			if len(r.Domains) > 0 {
+				rule(r.ID).Used = true
+			}
+		}
+	}
+	for id, m := range g.cache {
+		n := 0
+		for _, exp := range m {
+			if exp > now {
+				n++
+			}
+		}
+		if n > 0 || out.Rules[id] != nil {
+			rule(id).Addrs = n
+		}
+	}
+	return out
+}
+
+// note hält eine passende Anfrage bzw. einen Fehler für die Diagnose fest.
+func (g *dnsGate) note(ruleID int64, errText string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stat == nil {
+		g.stat = map[int64]*RuleDNS{}
+	}
+	s := g.stat[ruleID]
+	if s == nil {
+		s = &RuleDNS{}
+		g.stat[ruleID] = s
+	}
+	s.Queries++
+	s.Last = time.Now().Unix()
+	s.Error = errText
 }
 
 // dnsListen: Adresse des Umleiters (Tests setzen 127.0.0.1:0).
@@ -330,6 +407,16 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 	if pol == nil {
 		return nil // fremde Absender bekommen keine Antwort
 	}
+	g.mu.Lock()
+	g.queries++
+	g.last = time.Now().Unix()
+	if g.clients == nil {
+		g.clients = map[netip.Addr]int64{}
+	}
+	if len(g.clients) < 2000 {
+		g.clients[src] = g.last
+	}
+	g.mu.Unlock()
 	var p dnsmessage.Parser
 	hdr, err := p.Start(query)
 	if err != nil || hdr.Response {
@@ -361,8 +448,9 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 		return empty(dnsmessage.RCodeNameError)
 	}
 	rule, matched := pol.MatchDomain(name)
-	if matched && q.Type == dnsmessage.TypeAAAA {
-		// keine IPv6-Adressen für Ziele einer Regel – Ausgänge können nur IPv4
+	if matched && (q.Type == dnsmessage.TypeAAAA || q.Type == 64 || q.Type == 65) {
+		// Keine IPv6-Adressen für Ziele einer Regel – Ausgänge können nur IPv4. Das gilt auch für
+		// HTTPS-/SVCB-Einträge (Typ 65/64): Browser entnehmen ihnen sonst IPv6-Adressen (ipv6hint).
 		return empty(dnsmessage.RCodeSuccess)
 	}
 	group := int64(0)
@@ -382,10 +470,23 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 	}
 	g.mu.Unlock()
 	resp := dnsExchange(query, servers, mark, tcp)
+	errText := ""
+	if resp == nil && mark != 0 {
+		// DNS über die Gruppe antwortet nicht (manche Anbieter sperren fremde DNS-Server): direkt
+		// auflösen – wichtiger ist, dass das Ziel erkannt wird und über die Gruppe läuft.
+		errText = "DNS-Server der Gruppe antworten über den Ausgang nicht – Namen werden direkt aufgelöst (in der Gruppe einen DNS-Server des Anbieters eintragen)"
+		resp = dnsExchange(query, dnsUpstream, 0, tcp)
+	}
 	if resp == nil {
+		if matched {
+			g.note(rule.ID, "keine Antwort vom DNS-Server")
+		}
 		return nil
 	}
 	if matched {
+		if q.Type == dnsmessage.TypeA {
+			g.note(rule.ID, errText)
+		}
 		if addrs := answerAddrs(resp); len(addrs) > 0 {
 			g.learn(e, rule.ID, addrs)
 		}

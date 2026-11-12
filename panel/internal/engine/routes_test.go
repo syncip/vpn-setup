@@ -369,6 +369,15 @@ func TestDNSGate(t *testing.T) {
 	if h, err := p.Start(resp); err != nil || !h.Response || h.ID != 4711 || h.RCode != dnsmessage.RCodeSuccess {
 		t.Fatalf("AAAA-Antwort: %+v %v", h, err)
 	}
+	// HTTPS-Einträge (Typ 65) könnten IPv6-Adressen mitgeben → ebenfalls leer
+	resp = e.dns.handle(e, dev, query("www.netflix.com.", dnsmessage.Type(65)), false)
+	if h, err := p.Start(resp); err != nil || !h.Response || h.RCode != dnsmessage.RCodeSuccess || len(answerAddrs(resp)) != 0 {
+		t.Fatalf("HTTPS-Eintrag: %+v %v", h, err)
+	}
+	// Diagnose
+	if info := e.DNSInfo(); info.Queries < 4 || info.Clients != 1 || info.Rules[7] == nil || info.Rules[7].Addrs != 1 || info.Rules[7].Queries != 2 || !info.Rules[7].Used {
+		t.Errorf("Diagnose: %+v %+v", info, info.Rules[7])
+	}
 	// dasselbe Gerät über IPv6 (IPv6-DNS-Server im Gerät eingetragen)
 	if got := answerAddrs(e.dns.handle(e, netip.MustParseAddr("fd42::2"), query("api.netflix.com.", dnsmessage.TypeA), false)); len(got) != 1 {
 		t.Errorf("Anfrage über IPv6: %v", got)

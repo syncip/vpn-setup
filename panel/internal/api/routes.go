@@ -24,6 +24,8 @@ type routeRow struct {
 	Lists   []int64  `json:"lists"`
 	Group   int64    `json:"group"`
 	Note    string   `json:"note,omitempty"` // warum die Regel gerade nicht wirkt
+	// DNS: Stand der Domain-Erkennung für WireGuard-/OpenVPN-Geräte (nur bei Regeln mit Domains)
+	DNS *engine.RuleDNS `json:"dns,omitempty"`
 }
 
 func routeRowOf(r *engine.Route, note string) *routeRow {
@@ -42,10 +44,15 @@ func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	notes := a.E.RouteNotes()
+	dns := a.E.DNSInfo()
 	rows := []*routeRow{}
 	for _, o := range objs {
 		rt := engine.RouteFrom(o)
-		rows = append(rows, routeRowOf(rt, notes[rt.ID]))
+		row := routeRowOf(rt, notes[rt.ID])
+		if d := dns.Rules[rt.ID]; d != nil && d.Used && rt.Enabled && !rt.All && len(rt.Domains) > 0 {
+			row.DNS = d
+		}
+		rows = append(rows, row)
 	}
 	// Auswahl für das Formular
 	type opt struct {
@@ -84,7 +91,8 @@ func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	errs := a.E.Errors()
-	writeJSON(w, map[string]any{"routes": rows, "servers": sOpts, "users": uOpts, "peers": pOpts, "groups": gOpts, "lists": lOpts,
+	dns.Rules = nil
+	writeJSON(w, map[string]any{"dns": dns, "routes": rows, "servers": sOpts, "users": uOpts, "peers": pOpts, "groups": gOpts, "lists": lOpts,
 		"error": strings.TrimSpace(errs["acl"] + " " + errs["dns"])})
 }
 

@@ -238,11 +238,16 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 			fmt.Fprintf(&nat, "\t\tip saddr @dnssrc udp dport 53 redirect to :%d\n\t\tip saddr @dnssrc tcp dport 53 redirect to :%d\n", dnsPort, dnsPort)
 			// DNS über TLS abweisen – Geräte (z. B. Android „Privates DNS: automatisch“) fallen dann auf normales DNS zurück
 			fwd.WriteString("\t\tip saddr @dnssrc tcp dport 853 reject with tcp reset\n")
+			// DoH direkt per Adresse (https://1.1.1.1/dns-query u. ä.) – ohne Namensauflösung, also am Umleiter vorbei
+			fwd.WriteString("\t\tip saddr @dnssrc ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8, 9.9.9.9, 149.112.112.112 } tcp dport 443 reject with tcp reset\n")
+			fwd.WriteString("\t\tip saddr @dnssrc ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8, 9.9.9.9, 149.112.112.112 } udp dport 443 reject\n")
 		}
 		if len(dns6) > 0 { // DNS-Anfragen über IPv6 gehören genauso zum Umleiter
 			fmt.Fprintf(&sets, "\tset dnssrc6 {\n\t\ttype ipv6_addr\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(dns6, ", "))
 			fmt.Fprintf(&nat, "\t\tip6 saddr @dnssrc6 udp dport 53 redirect to :%d\n\t\tip6 saddr @dnssrc6 tcp dport 53 redirect to :%d\n", dnsPort, dnsPort)
 			fwd.WriteString("\t\tip6 saddr @dnssrc6 tcp dport 853 reject with tcp reset\n")
+			fwd.WriteString("\t\tip6 saddr @dnssrc6 ip6 daddr { 2001:4860:4860::8844, 2001:4860:4860::8888, 2606:4700:4700::1001, 2606:4700:4700::1111, 2620:fe::9, 2620:fe::fe } tcp dport 443 reject with tcp reset\n")
+			fwd.WriteString("\t\tip6 saddr @dnssrc6 ip6 daddr { 2001:4860:4860::8844, 2001:4860:4860::8888, 2606:4700:4700::1001, 2606:4700:4700::1111, 2620:fe::9, 2620:fe::fe } udp dport 443 reject\n")
 		}
 		if nat.Len() > 0 {
 			fmt.Fprintf(&chains, "\tchain vp_dns {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n%s\t}\n", nat.String())
