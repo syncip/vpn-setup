@@ -1,6 +1,7 @@
 <script>
   // Live-Ansicht des Panel-DNS: Anfragen je Sekunde und benutzte DNS-Server (seit dem Start).
   import Info from './Info.svelte';
+  import Icon from './Icon.svelte';
   import { get } from '../lib/api.js';
   import { fmtNum } from '../lib/format.js';
 
@@ -123,6 +124,15 @@
         <strong class="small">DNS-Server seit dem Start</strong>
         <Info title="DNS-Server" text="Welcher DNS-Server die Anfragen beantwortet hat, die nicht aus dem Speicher kamen – seit dem letzten Start des Dienstes. Mit Unbound als Resolver beantwortet Unbound fast alles; die anderen springen nur ein, wenn er nicht antwortet. Antwortzeit = gleitender Mittelwert." />
       </div>
+      {#if d?.unbound?.on && !d.unbound.ok}
+        <div class="notice bad small ubdown">
+          <Icon name="alert" size={16} />
+          <div>
+            <b>Unbound ausgefallen – wird übersprungen.</b> {d.unbound.why}
+            {#if d.unbound.detail}<details><summary>Meldungen von Unbound</summary><pre>{d.unbound.detail}</pre></details>{/if}
+          </div>
+        </div>
+      {/if}
       {#each d?.upstreams || [] as u}
         <div class="up">
           <span class="small strong ellipsis" title={u.server}>{u.name}</span>
@@ -141,6 +151,21 @@
 </div>
 
 <style>
+  .ubdown {
+    margin-bottom: 8px;
+  }
+  .ubdown details {
+    margin-top: 4px;
+  }
+  .ubdown summary {
+    cursor: pointer;
+  }
+  .ubdown pre {
+    margin: 4px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 11px;
+  }
   .livecard {
     margin-bottom: 14px;
   }

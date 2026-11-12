@@ -861,6 +861,10 @@
       </div>
       {#if sf.resolver === 'unbound' && !d.unbound_installed}
         <div class="notice warn small" style="margin-top:6px"><Icon name="alert" size={16} /><span>Unbound ist auf dem Server nicht installiert. Das Setup-Script installiert das Paket „unbound“ – bis dahin fragt das Panel die DNS-Server unten.</span></div>
+      {:else if sf.resolver === 'unbound' && d.unbound?.on && !d.unbound.ok}
+        <div class="notice bad small" style="margin-top:6px"><Icon name="alert" size={16} /><span><b>Unbound ausgefallen.</b> {d.unbound.why}</span></div>
+      {:else if sf.resolver === 'unbound' && d.unbound?.on && d.unbound.ok && !d.dry_run}
+        <div class="tiny ok-text" style="margin-top:6px">Unbound antwortet{d.unbound.ms ? ` (${d.unbound.ms} ms)` : ''}.</div>
       {/if}
     </div>
     <div class="field">

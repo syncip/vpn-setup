@@ -189,7 +189,7 @@
     <div class="row" style="gap:6px">
       <strong>So richtest du es ein</strong>
       <Info title="Portweiterleitung auf dem Proxmox-Host" wide>
-        <PortHelp ports={[{ proto: 'udp', port: 53, note: 'DNS' }, { proto: 'tcp', port: 53, note: 'DNS, große Antworten' }]} />
+        <PortHelp ports={[{ proto: 'udp', port: 53, note: 'DNS' }, { proto: 'tcp', port: 53, note: 'DNS, große Antworten' }, ...(T.on ? [{ proto: 'tcp', port: T.dot_port || 853, note: 'DNS-over-TLS' }] : [])]} />
         <p class="muted">Im Container leitet das Panel Port 53 selbst an den DNS-Dienst weiter – sonst ist nichts zu tun.</p>
       </Info>
     </div>

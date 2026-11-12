@@ -139,7 +139,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnginx-mod-stream || true
 # Unbound: wahlweise Auflösung für den Panel-DNS (DNS → Einstellungen). Das Panel schreibt die
 # Konfiguration selbst (127.0.0.1:5335) und startet den Dienst nur, wenn Unbound gewählt ist.
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends unbound || true
+# dns-root-data liefert den DNSSEC-Vertrauensanker (ohne ihn startet Unbound nicht).
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends unbound dns-root-data || true
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends unbound-anchor || true
+if [[ -f /usr/share/dns/root.key && -d /var/lib/unbound && ! -f /var/lib/unbound/root.key ]]; then
+  install -o unbound -g unbound -m 644 /usr/share/dns/root.key /var/lib/unbound/root.key
+fi
 if [[ ! -f /etc/unbound/unbound.conf.d/vpnpanel.conf ]]; then systemctl disable --now unbound 2>/dev/null || true; fi
 
 echo ">> Forwarding aktivieren"

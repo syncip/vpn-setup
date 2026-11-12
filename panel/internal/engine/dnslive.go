@@ -58,6 +58,7 @@ type DNSLive struct {
 	Peak      int             `json:"peak"`      // höchster Wert im Fenster
 	Clients   int             `json:"clients"`   // Geräte mit Anfragen in der letzten Minute
 	Upstreams []DNSServerLive `json:"upstreams"` // DNS-Server seit dem Start
+	Unbound   UnboundHealth   `json:"unbound"`
 }
 
 // DNSServerLive: ein DNS-Server mit Anteil (seit dem Start des Dienstes).
@@ -109,6 +110,7 @@ func (e *Engine) DNSLiveData(secs int) DNSLive {
 	for _, s := range stats {
 		total += s.OK
 	}
+	out.Unbound = e.UnboundHealth()
 	out.Upstreams = []DNSServerLive{}
 	for _, s := range stats {
 		u := DNSServerLive{DNSServerStat: s, Name: DNSServerName(s.Server)}

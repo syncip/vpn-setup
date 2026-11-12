@@ -9,12 +9,13 @@
 
   const c4 = $derived(meta.lan4 || '<Container-IPv4>');
   const c6 = $derived(meta.lan6 || '<Container-IPv6>');
+  const PUB4 = $derived(meta.pub4 || '');
   const PUB6 = $derived(meta.pub6 || '<öffentliche IPv6 für den Container>');
 
   function rule(p, v6, op) {
     const dport = p.to ? `${p.port}:${p.to}` : `${p.port}`;
     const dest = v6 ? `[${c6}]:${p.to ? `${p.port}-${p.to}` : p.port}` : `${c4}:${p.to ? `${p.port}-${p.to}` : p.port}`;
-    return `${v6 ? 'ip6tables' : 'iptables'} -t nat ${op} PREROUTING -i vmbr0${v6 ? ` -d ${PUB6}` : ''} -p ${p.proto} --dport ${dport} -j DNAT --to-destination ${dest}`;
+    return `${v6 ? 'ip6tables' : 'iptables'} -t nat ${op} PREROUTING -i vmbr0${v6 ? ` -d ${PUB6}` : PUB4 ? ` -d ${PUB4}` : ''} -p ${p.proto} --dport ${dport} -j DNAT --to-destination ${dest}`;
   }
   const uniq = $derived.by(() => {
     const seen = new Set();
@@ -48,7 +49,7 @@
   <pre>{ifaces}</pre>
   <p class="ph"><b>Sofort</b> (gilt bis zum Neustart) <button type="button" class="cp" onclick={() => cp(now)}><Icon name="copy" size={13} /> kopieren</button></p>
   <pre>{now}</pre>
-  <p class="muted">{meta.pub6 || !meta.lan6 ? 'Platzhalter in spitzen Klammern ersetzen. ' : ''}{#if meta.pub6}Öffentliche IPv6 {meta.pub6} aus der Server-Adresse ({meta.server_host}) übernommen{meta.lan6 ? `, interne ${meta.lan6} vom Container` : ''}. {/if}Die IPv6-Zeilen nur, wenn der Container eine eigene öffentliche IPv6 hat. Zusätzlich muss Weiterleitung auf dem Host an sein (<code>net.ipv4.ip_forward=1</code>).</p>
+  <p class="muted">{meta.pub6 || !meta.lan6 ? 'Platzhalter in spitzen Klammern ersetzen. ' : ''}{#if meta.pub4 || meta.pub6}Öffentliche {[meta.pub4, meta.pub6].filter(Boolean).join(' und ')} aus der Server-Adresse ({meta.server_host}) übernommen{meta.lan6 ? `, interne ${meta.lan6} vom Container` : ''}. {/if}Die IPv6-Zeilen nur, wenn der Container eine eigene öffentliche IPv6 hat. Zusätzlich muss Weiterleitung auf dem Host an sein (<code>net.ipv4.ip_forward=1</code>).</p>
 {:else}
   <p>Für diesen Dienst muss auf dem Host kein Port weitergeleitet werden.</p>
 {/if}

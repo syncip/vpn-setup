@@ -75,6 +75,7 @@ type dnsGate struct {
 	ttlMax   uint32
 	nocache  []string
 	strategy string // order | fastest | roundrobin | parallel
+	ub       unboundState
 	rr       uint32
 	srv      map[string]*srvStat // Antwortzeiten je DNS-Server
 	live     dnsLive             // Anfragen je Sekunde (Live-Ansicht)
@@ -978,6 +979,7 @@ func exchangeOne(query []byte, srv string, mark uint32, tcp bool, timeout time.D
 //   - roundrobin: reihum
 //   - parallel: an bis zu drei Server gleichzeitig, die erste Antwort gilt (am schnellsten, mehr Last)
 func (g *dnsGate) exchange(query []byte, servers []string, mark uint32, tcp bool) ([]byte, string) {
+	servers = g.skipDown(servers)
 	if len(servers) <= 1 {
 		return g.measure(query, servers, mark, tcp)
 	}
@@ -1044,6 +1046,9 @@ func (g *dnsGate) measure(query []byte, servers []string, mark uint32, tcp bool)
 		t := time.Now()
 		resp := exchangeOne(query, srv, mark, tcp, dnsTimeout)
 		ms := float64(time.Since(t).Microseconds()) / 1000
+		if srv == unboundAddr {
+			g.ub.note(resp != nil)
+		}
 		g.mu.Lock()
 		if g.srv == nil {
 			g.srv = map[string]*srvStat{}

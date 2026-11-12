@@ -82,6 +82,10 @@ func (e *Engine) applyUnbound() {
 		e.setErr("unbound", "Unbound: "+err.Error())
 		return
 	}
+	if msg := e.ensureRootKey(); msg != "" {
+		e.setErr("unbound", msg)
+		return
+	}
 	if out, err := e.Sys.Run("unbound-checkconf"); err != nil {
 		e.setErr("unbound", "Unbound-Konfiguration fehlerhaft: "+strings.TrimSpace(out))
 		return

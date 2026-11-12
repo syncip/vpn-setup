@@ -97,7 +97,7 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 			"auto": a.E.Setting("dns_auto"), "auto_hours": a.E.Setting("dns_auto_hours"), "auto_count": a.E.Setting("dns_auto_count"),
 			"tls": a.E.Setting("dns_tls"), "tls_host": a.E.Setting("dns_tls_host"), "dot_port": a.E.Setting("dns_dot_port"), "acme_email": a.E.Setting("dns_acme_email")},
 		"smart_state": a.E.SmartState(), "tls_state": a.E.EncDNSState(),
-		"unbound_installed": a.E.UnboundInstalled(), "auto_last": a.E.DNSAutoLast(),
+		"unbound_installed": a.E.UnboundInstalled(), "unbound": a.E.UnboundHealth(), "auto_last": a.E.DNSAutoLast(),
 		"upstreams": a.E.DNSServerStats(), "ext": ext,
 		"info": info, "profiles": profiles, "lists": lists, "presets": dnsPresets, "dry_run": a.E.Sys.DryRun(),
 		"error": strings.TrimSpace(errs["dns"] + " " + errs["dnslog"]), "choices": a.scopeChoices(),
