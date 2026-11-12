@@ -83,16 +83,22 @@ func TestUnboundGroups(t *testing.T) {
 	uid := ubgDryUID + int(us.ID)
 	nft := dry.Inputs["nft"]
 	for _, want := range []string{
-		fmt.Sprintf(`meta skuid %d oifname != "lo" counter meta mark set 0x2000000`, uid),
 		fmt.Sprintf(`meta skuid %d oifname "lo" accept`, uid),
 		fmt.Sprintf(`meta skuid %d meta nfproto ipv6 counter drop`, uid),
 		fmt.Sprintf(`meta skuid %d oifname != "ex*" counter drop`, uid),
-		"type route hook output priority mangle",
-		"type filter hook postrouting priority filter", // Wächter erst nach der Umleitung
+		"type filter hook postrouting priority filter",
 	} {
 		if !strings.Contains(nft, want) {
 			t.Errorf("nftables ohne %q", want)
 		}
+	}
+	if strings.Contains(nft, "vp_ubmark") {
+		t.Error("keine nachträgliche Umleitung per Markierung mehr")
+	}
+	// Weg über den Ausgang: Routing-Regel für den Benutzer der Instanz, gesetzt vor dem Start
+	ruleCmd := fmt.Sprintf("ip -4 rule add priority %d uidrange %d-%d lookup 3002", ubgRulePrio+2, uid, uid)
+	if at := strings.Index(log, ruleCmd); at < 0 || at > start {
+		t.Errorf("Routing-Regel fehlt oder kommt nach dem Start:\n%s", log)
 	}
 	if DNSServerName(addr) != "Unbound · USA" {
 		t.Errorf("Name: %q", DNSServerName(addr))

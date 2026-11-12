@@ -287,7 +287,8 @@ um – deshalb nach dem Update die Config neu laden.
   (`vpn-unbound@g<ID>`, 127.0.0.1:5400+Slot, eigener Systembenutzer `vpnub<ID>`). Sie fragt die
   Nameserver **über den Ausgang der Gruppe** – Geräte mit Ausgangsgruppe (ganzer Verkehr oder Ziel-Regel/
   SmartDNS) bekommen so Antworten passend zum Land des Ausgangs, und kein DNS dieser Geräte verlässt den
-  Server direkt. nftables markiert die Pakete des Instanz-Benutzers (Weg über die Gruppe) und verwirft als
+  Server direkt. Eine Routing-Regel für den Instanz-Benutzer (`ip rule … uidrange … lookup <Gruppe>`)
+  legt den Weg schon beim Senden fest (Absender = Adresse am Tunnel); nftables verwirft als
   **Kill-Switch** alles außer Loopback und den Ausgangstunneln (`ex*`), dazu jedes IPv6. Die Instanzen
   startet nur das Panel, nachdem diese Regeln geladen sind (der Dienst verweigert ohne sie den Start, kein
   Autostart beim Booten); lassen sich die Regeln nicht laden, hält das Panel sie an. Fällt eine Instanz aus,

@@ -61,6 +61,9 @@ WantedBy=multi-user.target
 
 // GroupMark: Markierung, mit der Verbindungen über eine Gruppe laufen.
 func GroupMark(slot int) uint32 { return uint32(slot) << 24 }
+
+// GroupTable: Routing-Tabelle einer Gruppe (Weg über den aktiven Ausgang bzw. Sperre).
+func GroupTable(slot int) int   { return groupTable + slot }
 func probeMark(slot int) uint32 { return uint32(64+slot) << 24 }
 
 // IfName: Schnittstelle eines Ausgangs.

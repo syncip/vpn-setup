@@ -1,6 +1,6 @@
 //go:build lab
 
-// Labortest auf echtem Linux (als root, z. B. in WSL) für Unbound je Ausgangsgruppe: Markierung
+// Labortest auf echtem Linux (als root, z. B. in WSL) für Unbound je Ausgangsgruppe: Routing-Regel
 // (Weg über den Ausgang) und Kill-Switch aus ubNftChains – in eigenen Netzwerk-Namespaces, ohne das
 // Netz des Rechners anzufassen. Statt eines Unbound-Benutzers sendet „nobody“.
 //
@@ -19,10 +19,13 @@ import (
 const (
 	ubLab   = "ublab"  // „Server“ (Container)
 	ubProv  = "ubprov" // „Internet“ mit Ausgangs-Anbieter
-	ubMark  = 0x3d000000
 	ubTable = "3061"
+	ubPrio  = "6361"
 	ubNoUID = 65534 // nobody
 )
+
+// labInst: Instanz in Platz 61 (Tabelle 3061), gesendet wird als „nobody“.
+var labInst = ubInstance{GID: 1, Name: "Lab", Slot: 61, UID: ubNoUID}
 
 func ubSh(t *testing.T, args ...string) string {
 	t.Helper()
@@ -60,8 +63,8 @@ func TestUnboundKillSwitch(t *testing.T) {
 		{"ip", "-6", "addr", "add", "fd99::1/64", "dev", "eth0", "nodad"},
 		{"ip", "route", "add", "default", "via", "10.98.0.2"}, {"ip", "-6", "route", "add", "default", "via", "fd99::2"},
 		{"sysctl", "-qw", "net.ipv4.conf.ex7.rp_filter=2"},
-		// Gruppe: Markierung → Tabelle mit Weg über den Ausgang
-		{"ip", "rule", "add", "priority", "6061", "fwmark", "0x3d000000/0x7f000000", "lookup", ubTable},
+		// Gruppe: Tabelle mit Weg über den Ausgang, Regel für den Benutzer der Instanz (wie syncUBRules)
+		append([]string{"ip", "-4", "rule", "add", "priority", ubPrio}, strings.Fields(labInst.rule())...),
 		{"ip", "route", "add", "default", "via", "10.97.0.2", "dev", "ex7", "table", ubTable},
 	} {
 		ubSh(t, in(ubLab, c...)...)
@@ -75,9 +78,9 @@ func TestUnboundKillSwitch(t *testing.T) {
 		ubSh(t, in(ubProv, c...)...)
 	}
 	// Firewall wie auf dem Server: Ausgang maskieren, dazu die Ketten für die Instanz
-	insts := []ubInstance{{GID: 1, Name: "Lab", Mark: ubMark, UID: ubNoUID}}
-	script := "table ip labnat {\n\tchain post {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ex7\" masquerade\n\t}\n}\n" +
-		"table inet " + nftTable + " {\n" + ubNftChains(insts) + "}\n"
+	// Ohne Maskierung: Der Absender muss schon beim Senden die Adresse am Tunnel sein (ein echter
+	// Anbieter verwirft fremde Absender) – genau das ging auf sys1 mit der Umleitung per Markierung schief.
+	script := "table inet " + nftTable + " {\n" + ubNftChains([]ubInstance{labInst}) + "}\n"
 	cmd := exec.Command("ip", "netns", "exec", ubLab, "nft", "-f", "-")
 	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -126,7 +129,7 @@ func TestUnboundKillSwitch(t *testing.T) {
 	send(false, "198.51.100.53", "root")
 	if src := got(inet4, "inst"); src != "10.97.0.1" {
 		out, _ := exec.Command("ip", "netns", "exec", ubLab, "nft", "list", "ruleset").CombinedOutput()
-		rt, _ := exec.Command("ip", "netns", "exec", ubLab, "ip", "route", "get", "198.51.100.53", "mark", "0x3d000000").CombinedOutput()
+		rt, _ := exec.Command("ip", "netns", "exec", ubLab, "ip", "route", "get", "198.51.100.53", "uid", "65534").CombinedOutput()
 		t.Errorf("Instanz nicht über den Ausgang: Absender %q\n%s\n%s", src, out, rt)
 	}
 	if src := got(inet4, "root"); src != "10.98.0.1" {
@@ -147,13 +150,13 @@ func TestUnboundKillSwitch(t *testing.T) {
 		t.Error("IPv6 des Servers gesperrt")
 	}
 	// 4. Kill-Switch: Regel der Gruppe fehlt (Routing kaputt) → nichts geht direkt hinaus
-	ubSh(t, in(ubLab, "ip", "rule", "del", "priority", "6061")...)
+	ubSh(t, in(ubLab, "ip", "rule", "del", "priority", ubPrio)...)
 	send(true, "198.51.100.53", "norule")
 	if src := got(inet4, "norule"); src != "" {
 		t.Errorf("Kill-Switch: Instanz ging ohne Gruppenregel hinaus (Absender %s)", src)
 	}
 	// 5. Ausgang gesperrt (on_fail=block → blackhole) → nichts
-	ubSh(t, in(ubLab, "ip", "rule", "add", "priority", "6061", "fwmark", "0x3d000000/0x7f000000", "lookup", ubTable)...)
+	ubSh(t, in(ubLab, append([]string{"ip", "-4", "rule", "add", "priority", ubPrio}, strings.Fields(labInst.rule())...)...)...)
 	ubSh(t, in(ubLab, "ip", "route", "replace", "blackhole", "default", "table", ubTable)...)
 	send(true, "198.51.100.53", "blocked")
 	if src := got(inet4, "blocked"); src != "" {

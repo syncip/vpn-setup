@@ -8,12 +8,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"vpnpanel/internal/exits"
 )
 
 // Unbound je Ausgangsgruppe: Mit „Unbound (selbst auflösen)“ bekommt jede aktive Gruppe eine eigene
 // kleine Unbound-Instanz (127.0.0.1:5400+Platz der Gruppe). Sie läuft unter einem eigenen
-// Systembenutzer; nftables markiert dessen Verkehr mit der Markierung der Gruppe, so dass alle
-// Anfragen nach außen über den Ausgang der Gruppe laufen (samt Failover). Ein Kill-Switch verwirft
+// Systembenutzer; eine Routing-Regel für diesen Benutzer (ip rule uidrange) schickt alle Anfragen
+// nach außen über die Tabelle der Gruppe, also über ihren Ausgang (samt Failover). Der Weg steht so
+// schon beim Senden fest (Absender = Adresse am Tunnel), wie beim SO_MARK des Panel-DNS – eine
+// nachträgliche Umleitung per Markierung verlor auf sys1 die Adressumschreibung. Ein Kill-Switch verwirft
 // alles, was sonst hinaus wollte (anderer Weg, IPv6) – kein DNS-Leck, auch nicht bei Fehlern im
 // Routing. Für Geräte mit Ausgangsgruppe fragt der Panel-DNS zuerst die Instanz, dann die
 // DNS-Server der Gruppe (ebenfalls über den Ausgang).
@@ -24,6 +28,7 @@ const (
 	ubgDataDir  = "/var/lib/vpnpanel-unbound"
 	ubgStateKey = "state:unbound_groups"
 	ubgDryUID   = 64000 // Trockenlauf: ausgedachte Benutzer-IDs ab hier
+	ubgRulePrio = 6300  // + Platz der Gruppe: ip rule uidrange → Tabelle der Gruppe
 )
 
 // Die Instanzen startet nur das Panel – erst nachdem die nftables-Regeln (Weg über den Ausgang,
@@ -48,6 +53,7 @@ type ubInstance struct {
 	GID  int64
 	Name string // Name der Gruppe
 	Mark uint32
+	Slot int
 	User string
 	UID  int
 	Addr string
@@ -62,10 +68,16 @@ func (in ubInstance) conf() string {
 func (in ubInstance) dir() string { return ubgDataDir + "/g" + strconv.FormatInt(in.GID, 10) }
 func ubUser(gid int64) string     { return "vpnub" + strconv.FormatInt(gid, 10) }
 
+// rule: Auswahl und Ziel der Routing-Regel (ohne „ip -4 rule add priority N“).
+func (in ubInstance) rule() string {
+	return fmt.Sprintf("uidrange %d-%d lookup %d", in.UID, in.UID, exits.GroupTable(in.Slot))
+}
+func (in ubInstance) prio() int { return ubgRulePrio + in.Slot }
+
 type ubGroupState struct {
 	apply   sync.Mutex // Anwenden (aus Apply und aus der Selbstprüfung)
 	mu      sync.Mutex
-	pending []ubInstance // eingerichtet; nftScript schreibt dafür Markierung und Kill-Switch
+	pending []ubInstance // eingerichtet; nftScript schreibt dafür den Kill-Switch
 	list    []ubInstance // gestartet
 }
 
@@ -88,8 +100,8 @@ var ubNames sync.Map
 
 func (e *Engine) unboundGroupConfig(in ubInstance) string {
 	return fmt.Sprintf(`# Vom VPN-Panel geschrieben – Unbound für die Ausgangsgruppe „%s“.
-# Alle Anfragen nach außen laufen über den Ausgang der Gruppe (nftables markiert den Verkehr des
-# Benutzers %s); Änderungen gehen beim nächsten Anwenden verloren.
+# Alle Anfragen nach außen laufen über den Ausgang der Gruppe (Routing-Regel für den Benutzer %s);
+# Änderungen gehen beim nächsten Anwenden verloren.
 server:
     interface: %s
     port: %s
@@ -156,7 +168,7 @@ func (e *Engine) applyUnboundGroups(want bool) {
 			if !gr.Enabled || slot <= 0 {
 				continue
 			}
-			in := ubInstance{GID: id, Name: gr.Name, Mark: gr.Mark, User: ubUser(id), Addr: fmt.Sprintf("127.0.0.1:%d", ubgPortBase+slot)}
+			in := ubInstance{GID: id, Name: gr.Name, Mark: gr.Mark, Slot: slot, User: ubUser(id), Addr: fmt.Sprintf("127.0.0.1:%d", ubgPortBase+slot)}
 			if err := e.setupUBInstance(&in, unitChanged); err != nil {
 				errs = append(errs, "„"+gr.Name+"“: "+err.Error())
 				continue
@@ -191,6 +203,9 @@ func (e *Engine) applyUnboundGroups(want bool) {
 		e.dns.mu.Lock()
 		e.dns.ubg = nil
 		e.dns.mu.Unlock()
+		if err := e.syncUBRules(nil); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
 	e.setErr("unbound_groups", strings.Join(errs, "; "))
 	if len(errs) > 0 {
@@ -205,6 +220,10 @@ func (e *Engine) startUBInstances() {
 	defer e.ubg.apply.Unlock()
 	var insts []ubInstance
 	var errs []string
+	// Routing-Regeln vor dem Start: ohne Regel verwirft der Kill-Switch alles (kein Leck)
+	if err := e.syncUBRules(e.ubPending()); err != nil {
+		errs = append(errs, err.Error())
+	}
 	for _, in := range e.ubPending() {
 		act := "start"
 		if in.restart {
@@ -247,7 +266,7 @@ func (e *Engine) startUBInstances() {
 	}
 }
 
-// stopUBInstances: nftables ließ sich nicht laden – ohne Markierung und Kill-Switch dürfen die
+// stopUBInstances: nftables ließ sich nicht laden – ohne Kill-Switch dürfen die
 // Instanzen nicht laufen (ihre Anfragen gingen sonst direkt hinaus).
 func (e *Engine) stopUBInstances(reason string) {
 	e.ubg.apply.Lock()
@@ -346,19 +365,60 @@ func (e *Engine) ensureUBUser(user string, gid int64) (int, error) {
 	return uid, nil
 }
 
-// ubNftChains: Markierung (Weg über den Ausgang) und Kill-Switch für die Instanzen.
+// syncUBRules: Routing-Regeln (uidrange → Tabelle der Gruppe) für die Instanzen setzen, fremde
+// Regeln im eigenen Bereich entfernen. Bestehende richtige Regeln bleiben unangetastet (kein Flattern).
+func (e *Engine) syncUBRules(insts []ubInstance) error {
+	have := map[int]string{}
+	if !e.Sys.DryRun() {
+		out, err := e.Sys.Run("ip", "-4", "rule", "show")
+		if err != nil {
+			return fmt.Errorf("Routing-Regeln lesen: %s", strings.TrimSpace(out))
+		}
+		for _, l := range strings.Split(out, "\n") {
+			p, rest, ok := strings.Cut(strings.TrimSpace(l), ":")
+			n, err := strconv.Atoi(p)
+			if !ok || err != nil || n <= ubgRulePrio || n > ubgRulePrio+127 {
+				continue
+			}
+			have[n] = strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(rest), "from all ")), " ")
+		}
+	}
+	want := map[int]bool{}
+	var errs []string
+	for _, in := range insts {
+		p := in.prio()
+		want[p] = true
+		if have[p] == in.rule() {
+			continue
+		}
+		if _, ok := have[p]; ok {
+			_, _ = e.Sys.Run("ip", "-4", "rule", "del", "priority", strconv.Itoa(p))
+		}
+		args := append([]string{"-4", "rule", "add", "priority", strconv.Itoa(p)}, strings.Fields(in.rule())...)
+		if out, err := e.Sys.Run("ip", args...); err != nil {
+			errs = append(errs, "Routing-Regel für „"+in.Name+"“: "+strings.TrimSpace(out))
+		}
+	}
+	for p := range have {
+		if !want[p] {
+			_, _ = e.Sys.Run("ip", "-4", "rule", "del", "priority", strconv.Itoa(p))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// ubNftChains: Kill-Switch für die Instanzen. Der Weg über den Ausgang kommt aus der Routing-Regel
+// (syncUBRules); fehlt sie oder zeigt die Tabelle woandershin, geht nichts hinaus.
 func ubNftChains(insts []ubInstance) string {
 	if len(insts) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\tchain vp_ubmark {\n\t\ttype route hook output priority mangle; policy accept;\n")
-	for _, in := range insts {
-		fmt.Fprintf(&b, "\t\tmeta skuid %d oifname != \"lo\" counter meta mark set 0x%x\n", in.UID, in.Mark)
-	}
-	// Wächter in postrouting: erst dort steht die Schnittstelle nach der Umleitung fest (im
-	// output-Hook sieht nftables noch die ursprüngliche Route).
-	b.WriteString("\t}\n\tchain vp_ubguard {\n\t\ttype filter hook postrouting priority filter; policy accept;\n")
+	// Wächter in postrouting: dort steht die endgültige Schnittstelle fest
+	b.WriteString("\tchain vp_ubguard {\n\t\ttype filter hook postrouting priority filter; policy accept;\n")
 	for _, in := range insts {
 		// nur Loopback (Antworten an den Panel-DNS) und die Tunnel der Ausgänge; sonst nichts hinaus
 		fmt.Fprintf(&b, "\t\tmeta skuid %d oifname \"lo\" accept\n\t\tmeta skuid %d meta nfproto ipv6 counter drop\n\t\tmeta skuid %d oifname != \"ex*\" counter drop\n",
