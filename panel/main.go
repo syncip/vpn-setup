@@ -36,7 +36,7 @@ import (
 )
 
 // version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
-var version = "0.13.2"
+var version = "0.14.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -138,6 +138,7 @@ func serve(args []string) {
 		if err := seedDemoExitTraffic(e); err != nil {
 			log.Printf("Demo-Verkehr der Ausgänge: %v", err)
 		}
+		e.DemoExtSeen()
 	}
 	ensureAdmin(e, o)
 

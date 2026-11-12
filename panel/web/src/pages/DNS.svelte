@@ -38,6 +38,7 @@
   const srvById = $derived(Object.fromEntries(d.choices.servers.map((s) => [s.id, s])));
   const groupById = $derived(Object.fromEntries(d.choices.groups.map((g) => [g.id, g])));
   const dnsPeers = $derived(d.choices.peers.filter((p) => p.protocol === 'wireguard' || p.protocol === 'openvpn'));
+  const VIA = { dns: 'Port 53 (Server-IP)', doh: 'DoH-Link (mit Kennung)', dot: 'DoT (mit Kennung)', 'doh-addr': 'DoH ohne Kennung', 'dot-addr': 'DoT ohne Kennung' };
   const extById = $derived(Object.fromEntries((d.ext || []).map((c) => [c.id, c])));
   const peerLabel = (id) => {
     if (id < 0) return `Ohne VPN · ${extById[-id]?.name || `#${-id}`}`;
@@ -409,7 +410,8 @@
   const isLocal = (a) => a.startsWith('127.') || a.startsWith('[::1]');
   const KNOWN_DNS = { '127.0.0.1:5335': 'Unbound', '1.1.1.1': 'Cloudflare', '1.0.0.1': 'Cloudflare', '8.8.8.8': 'Google', '8.8.4.4': 'Google', '9.9.9.9': 'Quad9', '149.112.112.112': 'Quad9', '94.140.14.140': 'AdGuard', '208.67.222.222': 'OpenDNS', '76.76.2.0': 'Control D', '185.222.222.222': 'DNS.SB' };
   const srvHost = (a) => a.replace(/:53$/, '');
-  const srvName = (a) => KNOWN_DNS[srvHost(a)] || srvHost(a);
+  const ubgNames = $derived(Object.fromEntries((d.unbound?.groups || []).map((g) => [g.addr, `Unbound · ${g.name}`])));
+  const srvName = (a) => ubgNames[a] || KNOWN_DNS[srvHost(a)] || srvHost(a);
   // automatische Wahl
   let autoBusy = $state(false);
   async function autoNow() {
@@ -698,7 +700,12 @@
           {@const a = ACTION[en.action] || ACTION.ok}
           <tr>
             <td class="nowrap tiny muted" title={new Date(en.ts * 1000).toLocaleString('de-DE')}>{clock(en.ts)}</td>
-            <td class="small nowrap ellipsis devcell" title={en.client}>{peerLabel(en.peer_id)}</td>
+            <td class="small nowrap ellipsis devcell" title={en.client}>
+              {#if en.peer_id < 0}
+                <span class="mono">{en.client || '?'}</span>
+                <div class="tiny muted ellipsis">{VIA[en.transport] || 'ohne VPN'}{extById[-en.peer_id]?.name ? ` · ${extById[-en.peer_id].name}` : ''}</div>
+              {:else}{peerLabel(en.peer_id)}{/if}
+            </td>
             <td class="mono tiny namecell" title={en.name}>{en.name}</td>
             <td class="tiny muted">{QTYPE[en.qtype] || en.qtype}</td>
             <td>
@@ -852,7 +859,7 @@
         >Auflösung <Info title="Wer löst die Namen auf?" wide>
           <p><b>Öffentliche DNS-Server</b> (z. B. Cloudflare, Quad9): schnell, weil sie fast alles schon im Speicher haben – der Anbieter sieht aber alle Namen, die der Server nachfragt.</p>
           <p><b>Unbound</b> läuft auf dem Server selbst und fragt die zuständigen Nameserver direkt (rekursiv, mit DNSSEC-Prüfung). Kein Anbieter sieht die Anfragen gesammelt; der erste Abruf eines Namens dauert etwas länger, danach antwortet der Speicher. Die DNS-Server unten springen ein, falls Unbound nicht antwortet.</p>
-          <p>Für Ziel-Regeln gelten weiter die DNS-Server der Ausgangsgruppe.</p>
+          <p><b>Geräte mit Ausgangsgruppe</b> (ganzer Verkehr oder Ziel-Regel) bekommen mit Unbound je Gruppe eine eigene Instanz. Sie fragt die Nameserver <b>über den Ausgang der Gruppe</b> – so passen die Antworten zum Land des Ausgangs, und kein DNS verlässt den Server direkt. Ein Kill-Switch verwirft alles, was nicht über den Ausgang ginge. Antwortet die Instanz nicht, springen die DNS-Server der Gruppe ein (ebenfalls über den Ausgang).</p>
         </Info></span
       >
       <div class="segmented">
@@ -865,6 +872,17 @@
         <div class="notice bad small" style="margin-top:6px"><Icon name="alert" size={16} /><span><b>Unbound ausgefallen.</b> {d.unbound.why}</span></div>
       {:else if sf.resolver === 'unbound' && d.unbound?.on && d.unbound.ok && !d.dry_run}
         <div class="tiny ok-text" style="margin-top:6px">Unbound antwortet{d.unbound.ms ? ` (${d.unbound.ms} ms)` : ''}.</div>
+      {/if}
+      {#if sf.resolver === 'unbound' && d.unbound?.groups?.length}
+        <div class="ubg">
+          <div class="tiny muted">Unbound je Ausgangsgruppe (Anfragen laufen über den Ausgang):</div>
+          {#each d.unbound.groups as g}
+            <div class="row small" style="gap:6px" title={g.addr}>
+              {#if g.ok}<Icon name="check" size={13} /><span>{g.name}</span><span class="tiny muted">{g.ms ? `${g.ms} ms` : ''}</span>
+              {:else}<Icon name="alert" size={13} /><span class="bad-text">{g.name}:</span><span class="tiny">{g.why}</span>{/if}
+            </div>
+          {/each}
+        </div>
       {/if}
     </div>
     <div class="field">
@@ -1402,5 +1420,10 @@
   textarea.input {
     resize: vertical;
     font-size: 12px;
+  }
+  .ubg {
+    margin-top: 8px;
+    display: grid;
+    gap: 3px;
   }
 </style>

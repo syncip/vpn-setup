@@ -64,6 +64,21 @@ server:
 // applyUnbound schreibt die Konfiguration und startet den Dienst (bzw. hält ihn an, wenn er nicht
 // gebraucht wird – das Paket bleibt installiert).
 func (e *Engine) applyUnbound() {
+	e.ubg.apply.Lock()
+	defer e.ubg.apply.Unlock()
+	e.applyUnboundGlobal()
+	// je Ausgangsgruppe eine eigene Instanz (nach dem globalen Unbound: braucht dessen Vertrauensanker)
+	e.applyUnboundGroups(e.Setting("dns_enabled") == "1" && e.Setting("dns_resolver") == "unbound" && e.unboundInstalled())
+}
+
+// repairUnbound: nur den globalen Unbound neu einrichten (Selbstprüfung).
+func (e *Engine) repairUnbound() {
+	e.ubg.apply.Lock()
+	defer e.ubg.apply.Unlock()
+	e.applyUnboundGlobal()
+}
+
+func (e *Engine) applyUnboundGlobal() {
 	want := e.Setting("dns_enabled") == "1" && e.Setting("dns_resolver") == "unbound"
 	if !want {
 		if e.Sys.Exists(unboundConf) {

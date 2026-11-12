@@ -281,7 +281,18 @@ um – deshalb nach dem Update die Config neu laden.
 - **Auflösung:** über öffentliche DNS-Server oder **Unbound** (läuft im Container, löst selbst rekursiv
   auf, 127.0.0.1:5335; das Setup-Script installiert das Paket, das Panel schreibt die Konfiguration und
   startet den Dienst nur, wenn Unbound gewählt ist). Antwortet Unbound nicht, springen die eingestellten
-  DNS-Server ein. Für Ziel-Regeln gelten weiter die DNS-Server der Ausgangsgruppe.
+  DNS-Server ein; eine Selbstprüfung überspringt einen ausgefallenen Unbound sofort und versucht alle
+  5 Minuten, ihn zu reparieren.
+- **Unbound je Ausgangsgruppe:** Mit Unbound bekommt jede aktive Ausgangsgruppe eine eigene Instanz
+  (`vpn-unbound@g<ID>`, 127.0.0.1:5400+Slot, eigener Systembenutzer `vpnub<ID>`). Sie fragt die
+  Nameserver **über den Ausgang der Gruppe** – Geräte mit Ausgangsgruppe (ganzer Verkehr oder Ziel-Regel/
+  SmartDNS) bekommen so Antworten passend zum Land des Ausgangs, und kein DNS dieser Geräte verlässt den
+  Server direkt. nftables markiert die Pakete des Instanz-Benutzers (Weg über die Gruppe) und verwirft als
+  **Kill-Switch** alles außer Loopback und den Ausgangstunneln (`ex*`), dazu jedes IPv6. Die Instanzen
+  startet nur das Panel, nachdem diese Regeln geladen sind (der Dienst verweigert ohne sie den Start, kein
+  Autostart beim Booten); lassen sich die Regeln nicht laden, hält das Panel sie an. Fällt eine Instanz aus,
+  springen die DNS-Server der Gruppe ein (ebenfalls über den Ausgang). Geprüft im Labortest
+  `unbound_lab_test.go` (Netzwerk-Namespaces, als root).
 - **DNS-Speedtest:** misst die Server einer bearbeitbaren Liste (hinzufügen/entfernen, eingebaute Liste
   wiederherstellen) plus die eingestellten Server und Unbound – bekannte Namen und neue (zufällige)
   Namen getrennt. **Automatische Wahl** (abschaltbar): misst regelmäßig (stündlich bis wöchentlich) und
@@ -290,9 +301,14 @@ um – deshalb nach dem Update die Config neu laden.
 - **Ohne VPN** (Fernseher, Konsole, Router zu Hause): „DNS von außen“ leitet Port 53 der
   Außenschnittstelle an den Panel-DNS. Antworten bekommen nur **freigegebene Geräte** (IP-Adressen,
   Netze oder DynDNS-Namen, die alle 5 Minuten neu aufgelöst werden), jeweils mit eigenem Filterprofil.
-  Alle anderen Anfragen werden verworfen, aber mit IP, Hostname (Rückwärtsauflösung), Anzahl und letzter
-  Domain angezeigt – so sieht man, ob das eigene Gerät ankommt oder Fremde es versuchen; mit einem Klick
-  freigeben. Ein offener DNS-Server für alle wird bewusst nicht angeboten (DNS-Verstärkungsangriffe).
+  Alle anderen Anfragen werden verworfen. **„Wer fragt von außen?“** listet jeden Absender als
+  *freigegeben* oder *gesperrt* mit IP, Hostname (Rückwärtsauflösung), Land, Anzahl und Weg (Port 53 an
+  die Server-IP, DoH oder DoT – mit oder ohne Kennung); ein Klick auf die Zeile zeigt alle angefragten
+  Domains (bis 500 je freigegebenem, 50 je gesperrtem Absender) – so sieht man, ob das eigene Gerät
+  ankommt oder Fremde es versuchen; mit einem Klick freigeben. Das Land kommt aus den öffentlichen
+  Vergabelisten der fünf Regional-Registries (RIPE, ARIN, APNIC, LACNIC, AFRINIC), die das Panel wöchentlich
+  lädt und lokal auswertet – keine IP geht an einen fremden Dienst. Im DNS-Protokoll steht bei Geräten ohne
+  VPN die zugreifende IP und der Weg. Ein offener DNS-Server für alle wird bewusst nicht angeboten (DNS-Verstärkungsangriffe).
   Auf dem Proxmox-Host UDP und TCP 53 an den Container weiterleiten (die Seite zeigt die Befehle,
   mit der internen IPv6 des Containers und der öffentlichen IPv6 aus der Server-Adresse).
 - **DoH und DoT** (Reiter „Ohne VPN“): Jedes freigegebene Gerät bekommt eine Kennung und damit eigene

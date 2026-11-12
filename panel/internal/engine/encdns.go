@@ -289,12 +289,22 @@ func (e *Engine) serveDoH(w http.ResponseWriter, r *http.Request) {
 	if ap, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
 		src = ap.Addr().Unmap()
 	}
+	via := "doh"
+	if token == "" {
+		via = "doh-addr"
+	}
 	s := e.clientFor(token, src)
 	if s == nil {
 		e.enc.denied.Add(1)
+		if src.IsValid() {
+			e.noteExt(src, 0, queryName(q), true, false, via)
+		}
 		http.Error(w, "unbekannte Kennung", http.StatusForbidden)
 		return
 	}
+	sc := *s
+	sc.via = via
+	s = &sc
 	e.enc.nDoH.Add(1)
 	id := binary.BigEndian.Uint16(q)
 	binary.BigEndian.PutUint16(q, 0) // RFC 8484: ID 0 zwischenspeichern
@@ -342,11 +352,22 @@ func (e *Engine) serveDoT(ln net.Listener) {
 				src, _ = netip.AddrFromSlice(ta.IP)
 				src = src.Unmap()
 			}
-			s := e.clientFor(e.tokenOf(tc.ConnectionState().ServerName), src)
+			token := e.tokenOf(tc.ConnectionState().ServerName)
+			via := "dot"
+			if token == "" {
+				via = "dot-addr"
+			}
+			s := e.clientFor(token, src)
 			if s == nil {
 				e.enc.denied.Add(1)
+				if src.IsValid() {
+					e.noteExt(src, 0, "", true, false, via)
+				}
 				return
 			}
+			sc := *s
+			sc.via = via
+			s = &sc
 			for {
 				_ = c.SetDeadline(time.Now().Add(30 * time.Second))
 				q, err := readFrame(c)

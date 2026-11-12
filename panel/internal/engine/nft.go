@@ -34,6 +34,7 @@ type srcPolicy struct {
 	filt *dnsFilter // Filterprofil (nil = keins)
 	dns  bool       // DNS-Anfragen an den Panel-DNS umleiten
 	doh  bool       // verschlüsseltes DNS (DoH/DoT) sperren
+	via  string     // Weg ohne VPN: dns | doh | dot | doh-addr | dot-addr ("" = VPN)
 }
 
 // forwardSources: Quelladressen aller Geräte, deren Verkehr weitergeleitet wird und für die
@@ -306,6 +307,8 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 		fmt.Fprintf(&chains, "\tchain vp_dnsext {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n"+
 			"\t\tiifname %q udp dport 53 redirect to :%d\n\t\tiifname %q tcp dport 53 redirect to :%d\n\t}\n", out, dnsPort, out, dnsPort)
 	}
+	// Unbound je Ausgangsgruppe: Verkehr über den Ausgang, sonst nichts hinaus
+	chains.WriteString(ubNftChains(e.ubPending()))
 	if chains.Len() == 0 {
 		return "", "", false
 	}

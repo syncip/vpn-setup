@@ -28,6 +28,8 @@ type UnboundHealth struct {
 	Detail  string `json:"detail,omitempty"` // letzte Zeilen aus dem Journal
 	Checked int64  `json:"checked"`
 	MS      int    `json:"ms,omitempty"`
+	// Groups: Unbound je Ausgangsgruppe
+	Groups []UnboundGroupHealth `json:"groups"`
 }
 
 type unboundState struct {
@@ -49,14 +51,25 @@ func (u *unboundState) note(ok bool) {
 	}
 }
 
-// skipDown: Unbound aus der Liste nehmen, solange er ausgefallen ist (nur wenn Ersatz da ist).
+// ubStateOf: Zustand, falls srv ein Unbound ist (global oder je Gruppe), sonst nil.
+func (g *dnsGate) ubStateOf(srv string) *unboundState {
+	if srv == unboundAddr {
+		return &g.ub
+	}
+	if v, ok := g.ubgState.Load(srv); ok {
+		return v.(*unboundState)
+	}
+	return nil
+}
+
+// skipDown: ausgefallene Unbound-Instanzen aus der Liste nehmen (nur wenn Ersatz da ist).
 func (g *dnsGate) skipDown(servers []string) []string {
-	if !g.ub.down.Load() || len(servers) < 2 {
+	if len(servers) < 2 {
 		return servers
 	}
 	out := make([]string, 0, len(servers))
 	for _, s := range servers {
-		if s != unboundAddr {
+		if st := g.ubStateOf(s); st == nil || !st.down.Load() {
 			out = append(out, s)
 		}
 	}
@@ -71,7 +84,9 @@ func (e *Engine) UnboundHealth() UnboundHealth {
 	u := &e.dns.ub
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.h
+	h := u.h
+	h.Groups = append([]UnboundGroupHealth{}, u.h.Groups...)
+	return h
 }
 
 // RunUnbound prüft Unbound regelmäßig.
@@ -131,7 +146,7 @@ func (e *Engine) checkUnbound() {
 		}
 		u.mu.Unlock()
 		if fix {
-			e.applyUnbound()
+			e.repairUnbound()
 			if msg := e.Errors()["unbound"]; msg != "" {
 				h.Why = msg
 			}
@@ -140,6 +155,9 @@ func (e *Engine) checkUnbound() {
 		if !e.unboundActive() {
 			h.Why += " Anfragen gehen solange an die Ersatz-DNS-Server."
 		}
+	}
+	if h.On {
+		h.Groups = e.checkUnboundGroups()
 	}
 	u.mu.Lock()
 	u.h = h

@@ -147,6 +147,16 @@ func (a *API) deleteDNSClient(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// dnsSeenDetail: alles zu einem Absender außerhalb des VPN (?addr=).
+func (a *API) dnsSeenDetail(w http.ResponseWriter, r *http.Request) {
+	d := a.E.ExtSeenOf(r.URL.Query().Get("addr"))
+	if d == nil {
+		errJSON(w, http.StatusNotFound, "Absender nicht (mehr) in der Liste")
+		return
+	}
+	writeJSON(w, d)
+}
+
 // forgetDNSSeen leert die Liste der gesehenen Absender (?addr= für einen).
 func (a *API) forgetDNSSeen(w http.ResponseWriter, r *http.Request) {
 	a.E.ForgetExt(r.URL.Query().Get("addr"))

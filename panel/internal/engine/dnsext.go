@@ -135,7 +135,26 @@ type extSeen struct {
 	First   int64  `json:"first"`
 	Last    int64  `json:"last"`
 	Name    string `json:"name"` // zuletzt gefragter Name
+	// Via: Anfragen je Weg – dns (Port 53 an die Server-IP), doh, dot, doh-addr/dot-addr (ohne Kennung)
+	Via map[string]int `json:"via,omitempty"`
+	// Domains: angefragte Namen (begrenzt, siehe seenMaxDomains); More = Anfragen nach weiteren Namen
+	Domains map[string]*seenDom `json:"domains,omitempty"`
+	More    int                 `json:"more,omitempty"`
 }
+
+// seenDom: ein angefragter Name eines Absenders.
+type seenDom struct {
+	N    int   `json:"n"`
+	B    int   `json:"b,omitempty"` // davon gesperrt (Filter)
+	Last int64 `json:"last"`
+}
+
+// Höchstzahl gemerkter Namen je Absender (freigegeben bzw. nicht freigegeben) – hält Speicher und
+// die Datei dnsclients.json klein, auch wenn Scanner tausende Namen probieren.
+const (
+	seenMaxDomains       = 500
+	seenMaxDomainsDenied = 50
+)
 
 type dnsExt struct {
 	mu     sync.Mutex
@@ -336,7 +355,7 @@ func (e *Engine) extSource(a netip.Addr, needPublic bool) *srcPolicy {
 }
 
 // noteExt zählt eine Anfrage von außerhalb des VPN.
-func (e *Engine) noteExt(a netip.Addr, client int64, name string, refused, blocked bool) {
+func (e *Engine) noteExt(a netip.Addr, client int64, name string, refused, blocked bool, via string) {
 	x := &e.dnsx
 	x.mu.Lock()
 	defer x.mu.Unlock()
@@ -375,6 +394,37 @@ func (e *Engine) noteExt(a netip.Addr, client int64, name string, refused, block
 	if blocked {
 		s.Blocked++
 	}
+	if via != "" {
+		if s.Via == nil {
+			s.Via = map[string]int{}
+		}
+		if _, ok := s.Via[via]; ok || len(s.Via) < 8 {
+			s.Via[via]++
+		}
+	}
+	if name != "" {
+		if s.Domains == nil {
+			s.Domains = map[string]*seenDom{}
+		}
+		d := s.Domains[name]
+		limit := seenMaxDomainsDenied
+		if client != 0 {
+			limit = seenMaxDomains
+		}
+		if d == nil && len(s.Domains) < limit {
+			d = &seenDom{}
+			s.Domains[name] = d
+		}
+		if d != nil {
+			d.N++
+			d.Last = now
+			if blocked {
+				d.B++
+			}
+		} else {
+			s.More++
+		}
+	}
 	x.dirty = true
 }
 
@@ -411,12 +461,17 @@ func (e *Engine) saveExt() {
 	x.mu.Lock()
 	raw := map[string]*extSeen{}
 	for a, v := range x.seen {
-		c := *v
-		raw[a.String()] = &c
+		raw[a.String()] = v
 	}
+	b, err := json.Marshal(raw) // unter der Sperre: die Zähler ändern sich sonst während des Schreibens
 	x.mu.Unlock()
-	b, _ := json.Marshal(raw)
-	_ = os.WriteFile(e.extPath(), b, 0o600)
+	if err != nil {
+		return
+	}
+	tmp := e.extPath() + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, e.extPath())
+	}
 }
 
 // ForgetExt löscht die Liste der gesehenen Absender (alle oder einen).
@@ -460,10 +515,82 @@ type ExtHostRes struct {
 
 // ExtSeenRow: Absender außerhalb des VPN, der gefragt hat.
 type ExtSeenRow struct {
-	Addr string `json:"addr"`
-	Host string `json:"host"` // Rückwärtsauflösung
+	Addr    string `json:"addr"`
+	Host    string `json:"host"`    // Rückwärtsauflösung
+	Country string `json:"country"` // Ländercode laut Registrierungsstelle ("" = unbekannt)
 	extSeen
 	ClientName string `json:"client_name,omitempty"`
+}
+
+// seenRow (mit x.mu): Zeile ohne die Namensliste, Zähler kopiert.
+func seenRow(a netip.Addr, s *extSeen) ExtSeenRow {
+	r := ExtSeenRow{Addr: a.String(), extSeen: *s}
+	r.Domains = nil
+	if s.Via != nil {
+		r.Via = make(map[string]int, len(s.Via))
+		for k, v := range s.Via {
+			r.Via[k] = v
+		}
+	}
+	return r
+}
+
+// ExtSeenDomain: ein angefragter Name in der Detailansicht.
+type ExtSeenDomain struct {
+	Name string `json:"name"`
+	seenDom
+}
+
+// ExtSeenDetail: alles zu einem Absender außerhalb des VPN.
+type ExtSeenDetail struct {
+	ExtSeenRow
+	Domains   []ExtSeenDomain `json:"domains"`
+	DomainMax int             `json:"domain_max"`
+	Peers     []string        `json:"learned_for,omitempty"` // per DoH/DoT gemerkt für Gerät
+}
+
+// ExtSeenOf liefert die Details zu einem Absender (nil = unbekannt).
+func (e *Engine) ExtSeenOf(addr string) *ExtSeenDetail {
+	a, err := netip.ParseAddr(addr)
+	if err != nil {
+		return nil
+	}
+	a = a.Unmap()
+	names := map[int64]string{}
+	if objs, err := e.St.Objects("dnsclient"); err == nil {
+		for _, o := range objs {
+			names[o.ID] = o.Name
+		}
+	}
+	x := &e.dnsx
+	x.mu.Lock()
+	e.loadExt()
+	s := x.seen[a]
+	if s == nil {
+		x.mu.Unlock()
+		return nil
+	}
+	d := &ExtSeenDetail{ExtSeenRow: seenRow(a, s), Domains: make([]ExtSeenDomain, 0, len(s.Domains)), DomainMax: seenMaxDomainsDenied}
+	if s.Client != 0 {
+		d.DomainMax = seenMaxDomains
+	}
+	for n, v := range s.Domains {
+		d.Domains = append(d.Domains, ExtSeenDomain{Name: n, seenDom: *v})
+	}
+	if l, ok := x.learned[a]; ok && l.until > time.Now().Unix() {
+		d.Peers = append(d.Peers, names[l.id])
+	}
+	x.mu.Unlock()
+	d.ClientName = names[d.Client]
+	sort.Slice(d.Domains, func(i, j int) bool {
+		if d.Domains[i].N != d.Domains[j].N {
+			return d.Domains[i].N > d.Domains[j].N
+		}
+		return d.Domains[i].Name < d.Domains[j].Name
+	})
+	d.Host = e.reverseNames([]netip.Addr{a})[a]
+	d.Country = e.countryOf(a)
+	return d
 }
 
 // DNSExternal: Freigaben und alle Absender außerhalb des VPN, die gefragt haben.
@@ -524,7 +651,7 @@ func (e *Engine) DNSExternal() DNSExternal {
 	}
 	var addrs []netip.Addr
 	for a, s := range x.seen {
-		r := ExtSeenRow{Addr: a.String(), extSeen: *s}
+		r := seenRow(a, s)
 		if i, ok := idx[s.Client]; ok && s.Client != 0 {
 			c := &out.Clients[i]
 			r.ClientName = c.Name
@@ -546,6 +673,7 @@ func (e *Engine) DNSExternal() DNSExternal {
 	for i := range out.Seen {
 		if a, err := netip.ParseAddr(out.Seen[i].Addr); err == nil {
 			out.Seen[i].Host = names[a]
+			out.Seen[i].Country = e.countryOf(a)
 		}
 	}
 	return out

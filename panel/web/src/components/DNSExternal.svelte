@@ -150,12 +150,43 @@
     if (await run(() => del(`/dns/seen${addr ? `?addr=${encodeURIComponent(addr)}` : ''}`))) load();
   }
 
+  // ---------- Details zu einem Absender ----------
+  const VIA = { dns: 'Port 53 (Server-IP)', doh: 'DoH-Link (mit Kennung)', dot: 'DoT (mit Kennung)', 'doh-addr': 'DoH ohne Kennung', 'dot-addr': 'DoT ohne Kennung' };
+  const VIA_SHORT = { dns: 'Port 53', doh: 'DoH', dot: 'DoT', 'doh-addr': 'DoH', 'dot-addr': 'DoT' };
+  const regions = (() => {
+    try {
+      return new Intl.DisplayNames(['de'], { type: 'region' });
+    } catch {
+      return null;
+    }
+  })();
+  const land = (cc) => (cc ? regions?.of(cc) || cc : '');
+  const viaList = (v) => Object.entries(v || {}).sort((a, b) => b[1] - a[1]);
+  let det = $state(null);
+  let detOpen = $state(false);
+  let detQ = $state('');
+  async function showSeen(addr) {
+    detQ = '';
+    det = { addr, loading: true };
+    detOpen = true;
+    try {
+      det = await get(`/dns/seen?addr=${encodeURIComponent(addr)}`);
+    } catch (e) {
+      det = { addr, error: e.message };
+    }
+  }
+  const detDomains = $derived.by(() => {
+    const t = detQ.trim().toLowerCase();
+    const l = det?.domains || [];
+    return t ? l.filter((x) => x.name.includes(t)) : l;
+  });
+
   let q = $state('');
   let showAll = $state(false);
   const seenShown = $derived.by(() => {
     const t = q.trim().toLowerCase();
     let rows = x.seen;
-    if (t) rows = rows.filter((s) => [s.addr, s.host, s.client_name, s.name].some((v) => (v || '').toLowerCase().includes(t)));
+    if (t) rows = rows.filter((s) => [s.addr, s.host, s.client_name, s.name, s.country, land(s.country)].some((v) => (v || '').toLowerCase().includes(t)));
     return showAll ? rows : rows.slice(0, 50);
   });
   const cp = (t) => copy(t).then(() => toast('Kopiert'));
@@ -169,7 +200,7 @@
         <strong>DNS von außen</strong>
         <Info title="DNS ohne VPN" wide>
           <p>Geräte, die kein VPN können (Fernseher, Konsole, Router zu Hause), tragen den Server direkt als DNS-Server ein. Dann gelten für sie Filterprofile und Protokoll wie für VPN-Geräte.</p>
-          <p><b>Nur freigegebene Absender</b> bekommen Antworten. Ein offener DNS-Server für alle würde sofort für Angriffe (DNS-Verstärkung) missbraucht – deshalb gibt es das nicht. Fremde Anfragen werden verworfen, aber unten mitgezählt.</p>
+          <p><b>Nur freigegebene Absender</b> bekommen Antworten. Ein offener DNS-Server für alle würde sofort für Angriffe (DNS-Verstärkung) missbraucht – deshalb gibt es das nicht. Anfragen nicht freigegebener Absender werden verworfen, aber unten als „gesperrt“ mitgezählt.</p>
           <p>Wechselt die Adresse deines Anschlusses, trag statt der IP einen DynDNS-Namen ein (z. B. von der FRITZ!Box: <code>xyz.myfritz.net</code>) – das Panel löst ihn alle 5 Minuten neu auf.</p>
         </Info>
         <div class="muted small">Port 53 auf {d.out_interface} → Panel-DNS</div>
@@ -179,7 +210,7 @@
     {#if !d.dns_enabled}
       <div class="notice warn small"><Icon name="alert" size={16} /><span>Erst den Panel-DNS einschalten (Einstellungen).</span></div>
     {:else if x.public}
-      <div class="notice okn small"><Icon name="check" size={16} /><span>{x.clients.filter((c) => c.enabled).length} {x.clients.filter((c) => c.enabled).length === 1 ? 'freigegebenes Gerät' : 'freigegebene Geräte'} · {strangers.length} {strangers.length === 1 ? 'fremder Absender' : 'fremde Absender'} gesehen</span></div>
+      <div class="notice okn small"><Icon name="check" size={16} /><span>{x.clients.filter((c) => c.enabled).length} {x.clients.filter((c) => c.enabled).length === 1 ? 'freigegebenes Gerät' : 'freigegebene Geräte'} · {strangers.length} {strangers.length === 1 ? 'gesperrter Absender' : 'gesperrte Absender'} gesehen</span></div>
     {:else}
       <div class="muted small">Aus – Anfragen von außen erreichen den Panel-DNS nicht.</div>
     {/if}
@@ -202,7 +233,7 @@
         {#if dnsIP6}<button class="ipbtn mono" title="Kopieren" onclick={() => cp(dnsIP6)}>{dnsIP6} <Icon name="copy" size={12} /></button>{/if}
         {#if !dnsIP4 && !dnsIP6}<span class="mono">{x.self || 'öffentliche IP des Servers'}</span>{/if}
       </li>
-      <li><b>Prüfen:</b> Gerät benutzen – unten erscheint es mit „freigegeben“. Taucht es als <i>fremd</i> auf, stimmt die Adresse nicht: dort auf „Freigeben“ klicken.</li>
+      <li><b>Prüfen:</b> Gerät benutzen – unten erscheint es mit „freigegeben“. Taucht es als <i>gesperrt</i> auf, stimmt die Adresse nicht: dort auf „Freigeben“ klicken.</li>
     </ol>
     <div class="tiny muted">Zweiten DNS-Server am Gerät leer lassen – sonst fragt es teils dort und umgeht den Filter. Viele Fernseher und Android-Geräte nutzen fest eingebaute DNS-Server (z. B. 8.8.8.8); das lässt sich nur im Router abfangen.</div>
   </div>
@@ -384,39 +415,41 @@
   <div class="card-head">
     <h2>
       Wer fragt von außen?
-      <Info title="Absender außerhalb des VPN" text="Alle Adressen außerhalb des VPN, die den Panel-DNS gefragt haben – freigegebene Geräte und fremde (deren Anfragen verworfen werden). Hostname = Rückwärtsauflösung der IP, meist der Anbieter. Die Liste übersteht Neustarts; Einträge älter als 30 Tage verschwinden." />
+      <Info title="Absender außerhalb des VPN" text="Alle Adressen außerhalb des VPN, die den Panel-DNS gefragt haben – freigegebene Geräte und gesperrte (nicht freigegeben, ihre Anfragen werden verworfen). Zeile anklicken für alle Details und angefragten Domains. Weg = Port 53 an die Server-IP, DoH oder DoT. Land laut Registrierungsstelle des Adressblocks (lokal ausgewertet, ohne fremden Dienst). Hostname = Rückwärtsauflösung der IP, meist der Anbieter. Die Liste übersteht Neustarts; Einträge älter als 30 Tage verschwinden." />
       <span class="muted small">{x.seen.length}</span>
     </h2>
     <div class="row" style="gap:8px">
-      {#if x.seen.length > 8}<SearchInput bind:value={q} placeholder="IP, Host, Domain …" width="220px" />{/if}
+      {#if x.seen.length > 8}<SearchInput bind:value={q} placeholder="IP, Host, Land, Domain …" width="220px" />{/if}
       {#if x.seen.length}<button class="btn sm ghost" onclick={() => forget('')}><Icon name="trash" size={14} /> Leeren</button>{/if}
     </div>
   </div>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Absender</th><th>Hostname</th><th>Gerät</th><th class="right">Anfragen</th><th>Zuletzt</th><th>Letzte Domain</th><th></th></tr></thead>
+      <thead><tr><th>Absender</th><th>Land</th><th>Hostname</th><th>Gerät</th><th>Weg</th><th class="right">Anfragen</th><th>Zuletzt</th><th>Letzte Domain</th><th></th></tr></thead>
       <tbody>
         {#each seenShown as s (s.addr)}
-          <tr>
+          <tr class="clickrow" onclick={() => showSeen(s.addr)} title="Details anzeigen">
             <td class="mono small nowrap">{s.addr}</td>
+            <td class="small nowrap" title={land(s.country)}>{s.country || '–'}</td>
             <td class="small ellipsis hostcell" title={s.host}>{s.host || '–'}</td>
             <td class="nowrap">
               {#if s.client}
                 <span class="badge ok"><Icon name="check" size={12} /> {s.client_name || 'freigegeben'}</span>
               {:else}
-                <span class="badge bad" title="Anfragen werden verworfen"><Icon name="alert" size={12} /> fremd</span>
+                <span class="badge bad" title="Nicht freigegeben – Anfragen werden verworfen"><Icon name="alert" size={12} /> gesperrt</span>
               {/if}
             </td>
-            <td class="right small">{fmtNum(s.queries)}{#if s.blocked}<div class="tiny bad-text">{fmtNum(s.blocked)} gesperrt</div>{/if}</td>
+            <td class="nowrap">{#each viaList(s.via) as [k, n]}<span class="badge muted via" title="{VIA[k] || k}: {fmtNum(n)}">{VIA_SHORT[k] || k}</span>{/each}</td>
+            <td class="right small">{fmtNum(s.queries)}{#if s.blocked}<div class="tiny bad-text">{fmtNum(s.blocked)} gefiltert</div>{/if}</td>
             <td class="small nowrap muted" title={new Date(s.last * 1000).toLocaleString('de-DE')}>{when(s.last)}<div class="tiny">seit {new Date(s.first * 1000).toLocaleDateString('de-DE')}</div></td>
             <td class="mono tiny ellipsis namecell" title={s.name}>{s.name || '–'}</td>
             <td class="right nowrap">
-              {#if !s.client}<button class="btn sm" onclick={() => edit(null, s.addr)}><Icon name="check" size={13} /> Freigeben</button>{/if}
-              <button class="btn sm icon ghost" title="Aus der Liste entfernen" onclick={() => forget(s.addr)}><Icon name="x" size={13} /></button>
+              {#if !s.client}<button class="btn sm" onclick={(e) => (e.stopPropagation(), edit(null, s.addr))}><Icon name="check" size={13} /> Freigeben</button>{/if}
+              <button class="btn sm icon ghost" title="Aus der Liste entfernen" onclick={(e) => (e.stopPropagation(), forget(s.addr))}><Icon name="x" size={13} /></button>
             </td>
           </tr>
         {:else}
-          <tr><td colspan="7" class="muted small" style="padding:20px">{x.public ? 'Noch keine Anfragen von außen.' : 'DNS von außen ist aus.'}</td></tr>
+          <tr><td colspan="9" class="muted small" style="padding:20px">{x.public ? 'Noch keine Anfragen von außen.' : 'DNS von außen ist aus.'}</td></tr>
         {/each}
       </tbody>
     </table>
@@ -460,7 +493,113 @@
   {/snippet}
 </Modal>
 
+<Modal bind:open={detOpen} title={det?.addr || ''} subtitle={det?.loading ? '' : det?.host || 'kein Hostname'} width={660}>
+  {#if det?.loading}
+    <div class="muted small">Lädt …</div>
+  {:else if det?.error}
+    <div class="notice bad small"><Icon name="alert" size={16} /><span>{det.error}</span></div>
+  {:else if det}
+    <div class="kv">
+      <span>Status</span>
+      <span>
+        {#if det.client}<span class="badge ok"><Icon name="check" size={12} /> freigegeben</span> {det.client_name || `Gerät #${det.client}`}
+        {:else}<span class="badge bad"><Icon name="alert" size={12} /> gesperrt</span> <span class="muted small">nicht freigegeben – Anfragen werden verworfen</span>{/if}
+      </span>
+      <span>Absender</span>
+      <span class="mono">{det.addr} <button class="btn sm icon ghost" title="Kopieren" onclick={() => cp(det.addr)}><Icon name="copy" size={13} /></button></span>
+      <span>Hostname</span>
+      <span class="ellipsis" title={det.host}>{det.host || '–'}</span>
+      <span>Land</span>
+      <span>{det.country ? `${land(det.country)} (${det.country})` : 'unbekannt'}</span>
+      <span>Anfragen</span>
+      <span>{fmtNum(det.queries)}{#if det.refused} · <span class="bad-text">{fmtNum(det.refused)} verworfen</span>{/if}{#if det.blocked} · <span class="bad-text">{fmtNum(det.blocked)} vom Filter gesperrt</span>{/if}</span>
+      <span>Zeitraum</span>
+      <span>{new Date(det.first * 1000).toLocaleString('de-DE')} – {new Date(det.last * 1000).toLocaleString('de-DE')}</span>
+      <span>Weg</span>
+      <span>
+        {#each viaList(det.via) as [k, n]}<div>{VIA[k] || k}: <b>{fmtNum(n)}</b></div>{:else}<span class="muted">–</span>{/each}
+      </span>
+      {#if det.learned_for?.length}
+        <span>Gemerkt</span>
+        <span>per DoH/DoT für „{det.learned_for.join('“, „')}“ – darf 24 Stunden Port 53 nutzen</span>
+      {/if}
+    </div>
+    <div class="row" style="justify-content:space-between;margin:14px 0 6px;gap:8px">
+      <strong class="small">Angefragte Domains ({fmtNum(det.domains.length)})</strong>
+      {#if det.domains.length > 10}<SearchInput bind:value={detQ} placeholder="Domain …" width="200px" />{/if}
+    </div>
+    <div class="domlist">
+      {#each detDomains as dm (dm.name)}
+        <div class="domrow">
+          <span class="mono tiny ellipsis grow" title={dm.name}>{dm.name}</span>
+          {#if dm.b}<span class="tiny bad-text">{fmtNum(dm.b)} gefiltert</span>{/if}
+          <span class="tiny num">{fmtNum(dm.n)}×</span>
+          <span class="tiny muted nowrap">{when(dm.last)}</span>
+        </div>
+      {:else}
+        <div class="muted small" style="padding:10px">{det.domains.length ? 'Keine passende Domain.' : 'Keine Domain bekannt (z. B. abgewiesene DoT-Verbindung).'}</div>
+      {/each}
+    </div>
+    {#if det.more}<div class="tiny muted" style="margin-top:6px">Dazu {fmtNum(det.more)} Anfragen nach weiteren Namen – je Absender werden höchstens {det.domain_max} Namen gemerkt.</div>{/if}
+  {/if}
+  {#snippet footer()}
+    {#if det && !det.loading && !det.error}
+      <button class="btn ghost" onclick={async () => { await forget(det.addr); detOpen = false; }}><Icon name="trash" size={14} /> Aus der Liste</button>
+      <span class="grow"></span>
+      {#if !det.client}<button class="btn" onclick={() => { detOpen = false; edit(null, det.addr); }}><Icon name="check" size={14} /> Freigeben</button>{/if}
+    {/if}
+    <button class="btn primary" onclick={() => (detOpen = false)}>Schließen</button>
+  {/snippet}
+</Modal>
+
 <style>
+  .clickrow {
+    cursor: pointer;
+  }
+  .clickrow:hover td {
+    background: var(--hover, rgba(127, 127, 127, 0.06));
+  }
+  .via {
+    margin-right: 3px;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 8px 12px;
+    align-items: baseline;
+  }
+  .kv > span:nth-child(odd) {
+    color: var(--text-2);
+    font-size: 13px;
+  }
+  .kv > span {
+    min-width: 0;
+  }
+  .domlist {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 320px;
+    overflow: auto;
+  }
+  .domrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .domrow:last-child {
+    border-bottom: 0;
+  }
+  @media (max-width: 560px) {
+    .kv {
+      grid-template-columns: 1fr;
+      gap: 2px;
+    }
+    .kv > span:nth-child(odd) {
+      margin-top: 8px;
+    }
+  }
   .top {
     align-items: start;
   }

@@ -76,6 +76,8 @@ type dnsGate struct {
 	nocache  []string
 	strategy string // order | fastest | roundrobin | parallel
 	ub       unboundState
+	ubg      map[int64]string // Unbound-Instanz je Ausgangsgruppe (Gruppe → Adresse)
+	ubgState sync.Map         // Adresse der Instanz → *unboundState
 	rr       uint32
 	srv      map[string]*srvStat // Antwortzeiten je DNS-Server
 	live     dnsLive             // Anfragen je Sekunde (Live-Ansicht)
@@ -563,23 +565,30 @@ var (
 func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []byte {
 	s := g.sourceOf(src)
 	if s == nil {
-		s = e.extSourceOf(src)
+		if es := e.extSourceOf(src); es != nil {
+			es.via = "dns"
+			s = es
+		}
 	}
 	if s == nil {
-		// fremde Absender bekommen keine Antwort – von außen werden sie aber mitgezählt
+		// nicht freigegebene Absender bekommen keine Antwort – von außen werden sie aber mitgezählt
 		if e.dnsx.isPublic() {
-			var p dnsmessage.Parser
-			name := ""
-			if _, err := p.Start(query); err == nil {
-				if q, err := p.Question(); err == nil {
-					name = strings.ToLower(strings.TrimSuffix(q.Name.String(), "."))
-				}
-			}
-			e.noteExt(src, 0, name, true, false)
+			e.noteExt(src, 0, queryName(query), true, false, "dns")
 		}
 		return nil
 	}
 	return g.handleWith(e, src, s, query, tcp)
+}
+
+// queryName: gefragter Name einer Anfrage ("" = nicht lesbar).
+func queryName(query []byte) string {
+	var p dnsmessage.Parser
+	if _, err := p.Start(query); err == nil {
+		if q, err := p.Question(); err == nil {
+			return strings.ToLower(strings.TrimSuffix(q.Name.String(), "."))
+		}
+	}
+	return ""
 }
 
 // handleWith beantwortet eine Anfrage mit bekannter Richtlinie (auch DoH/DoT).
@@ -605,7 +614,7 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 		return nil
 	}
 	name := strings.ToLower(strings.TrimSuffix(q.Name.String(), "."))
-	entry := store.DNSEntry{TS: start.Unix(), PeerID: s.peer, UserID: s.user, Client: src.String(), Name: name, QType: int(q.Type)}
+	entry := store.DNSEntry{TS: start.Unix(), PeerID: s.peer, UserID: s.user, Client: src.String(), Name: name, QType: int(q.Type), Transport: s.via}
 	done := func(resp []byte, action, detail string, via int64) []byte {
 		entry.Action, entry.Detail, entry.Via = action, detail, via
 		entry.MS = int(time.Since(start).Milliseconds())
@@ -624,7 +633,7 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 		g.live.add(start.Unix(), action, entry.MS)
 		g.mu.Unlock()
 		if s.peer < 0 {
-			e.noteExt(src, -s.peer, name, false, action == "blocked")
+			e.noteExt(src, -s.peer, name, false, action == "blocked", s.via)
 		}
 		g.logEntry(entry)
 		return resp
@@ -697,6 +706,10 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 	if gr, ok := g.groups[group]; group != 0 && ok && gr.Enabled && len(gr.DNS) > 0 {
 		mark = gr.Mark
 		servers = nil
+		// Unbound der Gruppe zuerst (löst selbst auf, über den Ausgang), dann die DNS-Server der Gruppe
+		if a := g.ubg[group]; a != "" {
+			servers = append(servers, a)
+		}
 		for _, sv := range gr.DNS {
 			servers = append(servers, hostPort53(sv))
 		}
@@ -1046,8 +1059,8 @@ func (g *dnsGate) measure(query []byte, servers []string, mark uint32, tcp bool)
 		t := time.Now()
 		resp := exchangeOne(query, srv, mark, tcp, dnsTimeout)
 		ms := float64(time.Since(t).Microseconds()) / 1000
-		if srv == unboundAddr {
-			g.ub.note(resp != nil)
+		if st := g.ubStateOf(srv); st != nil {
+			st.note(resp != nil)
 		}
 		g.mu.Lock()
 		if g.srv == nil {

@@ -128,6 +128,9 @@ func DNSServerName(srv string) string {
 	if srv == unboundAddr {
 		return "Unbound"
 	}
+	if n, ok := ubNames.Load(srv); ok {
+		return n.(string)
+	}
 	host := strings.TrimSuffix(srv, ":53")
 	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	for _, c := range DNSCandidates {

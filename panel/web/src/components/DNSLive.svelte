@@ -133,6 +133,15 @@
           </div>
         </div>
       {/if}
+      {#each (d?.unbound?.groups || []).filter((g) => !g.ok) as g}
+        <div class="notice warn small ubdown">
+          <Icon name="alert" size={16} />
+          <div>
+            <b>Unbound „{g.name}“ wird übersprungen.</b> {g.why}
+            {#if g.detail}<details><summary>Meldungen</summary><pre>{g.detail}</pre></details>{/if}
+          </div>
+        </div>
+      {/each}
       {#each d?.upstreams || [] as u}
         <div class="up">
           <span class="small strong ellipsis" title={u.server}>{u.name}</span>

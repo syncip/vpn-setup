@@ -20,6 +20,8 @@ type DNSEntry struct {
 	Detail string `json:"detail"` // z. B. Liste oder Regel, die gesperrt hat
 	// Upstream: DNS-Server, der geantwortet hat (Adresse:Port; "" = Speicher, Sperre, eigene Antwort)
 	Upstream string `json:"upstream"`
+	// Transport: Weg ohne VPN – dns (Port 53), doh, dot, doh-addr/dot-addr (ohne Kennung); "" = VPN
+	Transport string `json:"transport"`
 }
 
 // AddDNSLog schreibt mehrere Einträge in einem Rutsch.
@@ -31,13 +33,13 @@ func (s *Store) AddDNSLog(es []DNSEntry) error {
 	if err != nil {
 		return err
 	}
-	st, err := tx.Prepare(`INSERT INTO dns_log (ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail, upstream) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+	st, err := tx.Prepare(`INSERT INTO dns_log (ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail, upstream, transport) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 	for _, e := range es {
-		if _, err := st.Exec(e.TS, e.PeerID, e.UserID, e.Client, e.Name, e.QType, e.Action, e.RCode, e.MS, e.Via, e.Detail, e.Upstream); err != nil {
+		if _, err := st.Exec(e.TS, e.PeerID, e.UserID, e.Client, e.Name, e.QType, e.Action, e.RCode, e.MS, e.Via, e.Detail, e.Upstream, e.Transport); err != nil {
 			st.Close()
 			tx.Rollback()
 			return err
@@ -106,7 +108,7 @@ func (s *Store) DNSLog(f DNSLogFilter) ([]DNSEntry, error) {
 		f.Limit = 200
 	}
 	where, args := f.where()
-	rows, err := s.db.Query(`SELECT id, ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail, upstream FROM dns_log`+where+
+	rows, err := s.db.Query(`SELECT id, ts, peer_id, user_id, client, name, qtype, action, rcode, ms, via, detail, upstream, transport FROM dns_log`+where+
 		` ORDER BY id DESC LIMIT ?`, append(args, f.Limit)...)
 	if err != nil {
 		return nil, err
@@ -115,7 +117,7 @@ func (s *Store) DNSLog(f DNSLogFilter) ([]DNSEntry, error) {
 	out := []DNSEntry{}
 	for rows.Next() {
 		var e DNSEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.PeerID, &e.UserID, &e.Client, &e.Name, &e.QType, &e.Action, &e.RCode, &e.MS, &e.Via, &e.Detail, &e.Upstream); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.PeerID, &e.UserID, &e.Client, &e.Name, &e.QType, &e.Action, &e.RCode, &e.MS, &e.Via, &e.Detail, &e.Upstream, &e.Transport); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

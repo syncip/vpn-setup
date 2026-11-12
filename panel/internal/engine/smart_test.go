@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/base64"
+	"fmt"
 	"net"
 	"net/http/httptest"
 	"net/netip"
@@ -151,5 +152,24 @@ func TestSmartDNS(t *testing.T) {
 	}
 	if st := e.EncDNSState(); !st.HasCert || !st.Cert.SelfSigned || !certCovers(st.Cert, "dns.example.org") {
 		t.Errorf("Testzertifikat: %+v", st)
+	}
+
+	// Details je Absender: Weg (DoH mit Kennung, Port 53), Namen, nicht freigegebene Absender
+	d := e.ExtSeenOf("198.18.7.7")
+	if d == nil || d.Via["doh"] != 1 || d.Via["dns"] != 1 || d.ClientName != "TV" || len(d.Domains) != 2 {
+		t.Fatalf("Details DoH-Gerät: %+v", d)
+	}
+	if bad := e.ExtSeenOf("198.18.8.8"); bad == nil || bad.Client != 0 || bad.Refused != 1 || bad.Via["doh"] != 1 ||
+		len(bad.Domains) != 1 || bad.Domains[0].Name != "www.netflix.com" {
+		t.Errorf("abgewiesene Kennung: %+v", bad)
+	}
+	for i := 0; i < seenMaxDomainsDenied+10; i++ {
+		e.dns.handle(e, netip.MustParseAddr("198.18.9.9"), dnsQuery(fmt.Sprintf("n%d.example.", i), dnsmessage.TypeA), false)
+	}
+	if sc := e.ExtSeenOf("198.18.9.9"); sc == nil || len(sc.Domains) != seenMaxDomainsDenied || sc.More != 10 || sc.Via["dns"] != seenMaxDomainsDenied+10 {
+		t.Errorf("Grenze für Scanner: %d Namen, %d weitere", len(sc.Domains), sc.More)
+	}
+	if rows := e.DNSExternal().Seen; len(rows) == 0 || rows[0].Domains != nil {
+		t.Error("Liste ohne Namen erwartet")
 	}
 }

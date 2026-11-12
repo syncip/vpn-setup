@@ -76,6 +76,8 @@ var migrations = []string{
 	 CREATE INDEX exit_traffic_hour ON exit_traffic(hour);`,
 	// DNS-Protokoll: welcher DNS-Server (bzw. Unbound) geantwortet hat
 	`ALTER TABLE dns_log ADD COLUMN upstream TEXT NOT NULL DEFAULT '';`,
+	// DNS-Protokoll: Weg von Anfragen ohne VPN (dns = Port 53, doh, dot; „-addr“ = ohne Kennung)
+	`ALTER TABLE dns_log ADD COLUMN transport TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate() error {

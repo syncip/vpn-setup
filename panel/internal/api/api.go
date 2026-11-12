@@ -128,6 +128,7 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("POST /api/dns/check", a.auth(a.dnsCheck))
 	api.HandleFunc("POST /api/dns/speedtest", a.auth(a.dnsSpeedTest))
 	api.HandleFunc("GET /api/dns/clients", a.auth(a.dnsExternal))
+	api.HandleFunc("GET /api/dns/seen", a.auth(a.dnsSeenDetail))
 	api.HandleFunc("POST /api/dns/auto", a.auth(a.dnsAutoNow))
 	api.HandleFunc("GET /api/dns/live", a.auth(a.dnsLive))
 	api.HandleFunc("GET /api/dns/tls", a.auth(a.dnsTLSState))

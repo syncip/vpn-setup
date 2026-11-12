@@ -301,6 +301,7 @@ func (e *Engine) RunLists(stop <-chan struct{}) {
 		case <-t.C:
 		}
 		e.refreshExtHosts()
+		e.refreshGeo()
 		e.RunDNSAuto(false)
 		if e.encDNSOn() && !e.Sys.DryRun() {
 			_ = e.RenewEncCert(false)

@@ -40,13 +40,15 @@ type Engine struct {
 	Exits    *exits.Manager
 	liveKick chan struct{}
 
-	lists listState  // Online-Listen (lists.go)
-	acl   aclState   // wirksame Sperr-/Freigabelisten (acl.go)
-	rt    routeState // Ziel-Regeln (routes.go)
-	dns   dnsGate    // Panel-DNS bzw. DNS-Umleiter für Domain-Regeln (dns.go)
-	dnsx  dnsExt     // DNS für Geräte ohne VPN (dnsext.go)
-	smart smartProxy // SmartDNS-Proxy (smartproxy.go)
-	enc   encDNS     // DoH/DoT mit Zertifikat (encdns.go)
+	lists listState    // Online-Listen (lists.go)
+	acl   aclState     // wirksame Sperr-/Freigabelisten (acl.go)
+	rt    routeState   // Ziel-Regeln (routes.go)
+	dns   dnsGate      // Panel-DNS bzw. DNS-Umleiter für Domain-Regeln (dns.go)
+	dnsx  dnsExt       // DNS für Geräte ohne VPN (dnsext.go)
+	smart smartProxy   // SmartDNS-Proxy (smartproxy.go)
+	enc   encDNS       // DoH/DoT mit Zertifikat (encdns.go)
+	geo   geoState     // Länder zu Absender-Adressen (geo.go)
+	ubg   ubGroupState // Unbound je Ausgangsgruppe (unbound_groups.go)
 
 	dnsLists dnsListState // Blocklisten des Panel-DNS (dnsfilter.go)
 
@@ -262,8 +264,10 @@ func (e *Engine) applyLocked() error {
 	if err := e.applyNft(env, snap, rt, e.aclPlan()); err != nil {
 		errs = append(errs, "Firewall (IP-Listen, Ziel-Regeln): "+err.Error())
 		e.setErr("acl", err.Error())
+		e.stopUBInstances(err.Error())
 	} else {
 		e.setErr("acl", "")
+		e.startUBInstances()
 	}
 	if err := shaping.Apply(e.Sys, env.Global.OutIf, env.Shape, env.GetState, env.SetState, e.Log); err != nil {
 		e.Log("warn", "Geschwindigkeitsbegrenzung: "+err.Error())
