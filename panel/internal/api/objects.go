@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"vpnpanel/internal/engine"
 	"vpnpanel/internal/exits"
@@ -15,19 +17,22 @@ import (
 // ---------- Ausgänge und Gruppen (Menü „Proxy“) ----------
 
 type exitRow struct {
-	ID       int64             `json:"id"`
-	Name     string            `json:"name"`
-	Enabled  bool              `json:"enabled"`
-	Type     string            `json:"type"`
-	Server   string            `json:"server"` // Gegenstelle (Anzeige)
-	Address  string            `json:"address,omitempty"`
-	NeedAuth bool              `json:"need_auth"`
-	HasAuth  bool              `json:"has_auth"`
-	Username string            `json:"username,omitempty"`
-	Removed  []string          `json:"removed"`
-	Groups   []int64           `json:"groups"`
-	Status   *exits.ExitStatus `json:"status"`
-	Error    string            `json:"error,omitempty"`
+	ID       int64                       `json:"id"`
+	Name     string                      `json:"name"`
+	Enabled  bool                        `json:"enabled"`
+	Type     string                      `json:"type"`
+	Server   string                      `json:"server"` // Gegenstelle (Anzeige)
+	Address  string                      `json:"address,omitempty"`
+	NeedAuth bool                        `json:"need_auth"`
+	HasAuth  bool                        `json:"has_auth"`
+	Username string                      `json:"username,omitempty"`
+	Removed  []string                    `json:"removed"`
+	Groups   []int64                     `json:"groups"`
+	Status   *exits.ExitStatus           `json:"status"`
+	Error    string                      `json:"error,omitempty"`
+	Mode     string                      `json:"mode"`      // always | standby
+	CheckMin int                         `json:"check_min"` // Prüfabstand in Bereitschaft
+	Traffic  map[string]store.ExitTotals `json:"traffic"`   // day | week | month | all
 }
 
 type groupRow struct {
@@ -73,9 +78,18 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 		}
 		groups = append(groups, row)
 	}
+	now := time.Now()
+	tr := map[string]map[int64]store.ExitTotals{}
+	for k, since := range map[string]int64{"day": now.Add(-24 * time.Hour).Unix(), "week": now.AddDate(0, 0, -7).Unix(),
+		"month": now.AddDate(0, 0, -30).Unix(), "all": 0} {
+		tr[k], _ = a.St.ExitTraffic(since)
+	}
 	rows := []*exitRow{}
 	for _, o := range eo {
-		row := &exitRow{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Removed: []string{}, Groups: inGroups[o.ID]}
+		row := &exitRow{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Removed: []string{}, Groups: inGroups[o.ID], Traffic: map[string]store.ExitTotals{}}
+		for k, m := range tr {
+			row.Traffic[k] = m[o.ID]
+		}
 		row.Type, _ = o.Data["type"].(string)
 		if l, ok := o.Data["removed"].([]any); ok {
 			for _, v := range l {
@@ -88,6 +102,7 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 			row.Groups = []int64{}
 		}
 		if x, err := exits.ExitFrom(o); err == nil {
+			row.Mode, row.CheckMin = x.Mode, x.CheckMin
 			if x.WG != nil {
 				row.Server, row.Address = x.WG.Endpoint, x.WG.Address.String()
 			} else if x.OVPN != nil {
@@ -114,7 +129,9 @@ type exitInput struct {
 	Enabled  *bool   `json:"enabled"`
 	Config   string  `json:"config"`
 	Username *string `json:"username"`
-	Password *string `json:"password"` // leer = unverändert
+	Password *string `json:"password"`  // leer = unverändert
+	Mode     *string `json:"mode"`      // always | standby
+	CheckMin *int    `json:"check_min"` // Minuten (Bereitschaft)
 }
 
 // parseExitConfig erkennt die Art und bereinigt die Konfiguration.
@@ -196,6 +213,20 @@ func (a *API) saveExit(w http.ResponseWriter, r *http.Request, o *store.Object) 
 		}
 		o.Secrets["password"] = *in.Password
 	}
+	if in.Mode != nil {
+		if *in.Mode != "always" && *in.Mode != "standby" {
+			errJSON(w, http.StatusBadRequest, "Verbindung: always oder standby")
+			return
+		}
+		o.Data["mode"] = *in.Mode
+	}
+	if in.CheckMin != nil {
+		if *in.CheckMin < 5 || *in.CheckMin > 7*24*60 {
+			errJSON(w, http.StatusBadRequest, "Prüfabstand: 5 Minuten bis 7 Tage")
+			return
+		}
+		o.Data["check_min"] = *in.CheckMin
+	}
 	if o.ID == 0 {
 		slot, err := a.E.NewSlot("exit")
 		if err != nil {
@@ -254,6 +285,7 @@ func (a *API) deleteExit(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	_ = a.St.DeleteExitTraffic(o.ID)
 	a.E.Log("warn", "Ausgang „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
 	writeJSON(w, map[string]bool{"ok": true})
@@ -266,6 +298,27 @@ func (a *API) checkExits(w http.ResponseWriter, r *http.Request) {
 	_ = readJSON(r, &in)
 	go a.E.CheckExits(in.Speed) // kann bei Geschwindigkeitstests eine Minute dauern
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// checkExit: einen Ausgang sofort prüfen (Ping bzw. mit Speedtest) und das Ergebnis liefern.
+func (a *API) checkExit(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Speed bool `json:"speed"`
+	}
+	_ = readJSON(r, &in)
+	o, err := a.St.Object("exit", pathID(r))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	// Verbinden (Bereitschaft) + Speedtest kann länger dauern als die übliche Schreibfrist
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(150 * time.Second))
+	st, err := a.E.CheckExit(o.ID, in.Speed)
+	res := map[string]any{"status": st, "ok": err == nil}
+	if err != nil {
+		res["error"] = err.Error()
+	}
+	writeJSON(w, res)
 }
 
 type groupInput struct {
@@ -626,4 +679,25 @@ func (a *API) deleteIPList(w http.ResponseWriter, r *http.Request) {
 	a.E.Log("warn", "IP-Liste „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// exitTraffic: Verkehr je Ausgang als Zeitreihe (?days=1|7|30|90).
+func (a *API) exitTraffic(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days < 1 || days > 365 {
+		days = 7
+	}
+	bucket := int64(3600)
+	switch {
+	case days > 30:
+		bucket = 86400
+	case days > 2:
+		bucket = 6 * 3600
+	}
+	series, err := a.St.ExitTrafficSeries(time.Now().AddDate(0, 0, -days).Unix(), bucket)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"bucket": bucket, "series": series, "days": days})
 }

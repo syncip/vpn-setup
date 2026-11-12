@@ -334,3 +334,24 @@ func proto2addr(p *store.Peer) string {
 	}
 	return ""
 }
+
+// seedDemoExitTraffic: zwei Wochen Verkehr über die Ausgänge (nur Testmodus).
+func seedDemoExitTraffic(e *engine.Engine) error {
+	if t, _ := e.St.ExitTraffic(0); len(t) > 0 {
+		return nil
+	}
+	objs, _ := e.St.Objects("exit")
+	now := time.Now().Unix()
+	for i, o := range objs {
+		for h := int64(0); h < 14*24; h++ {
+			ts := now - h*3600
+			hour := (ts / 3600) % 24
+			down := int64(40_000_000/(i+1)) * (1 + (hour+int64(i)*5)%7)
+			if hour < 7 {
+				down /= 8
+			}
+			_ = e.St.AddExitTraffic(o.ID, ts, down/9, down)
+		}
+	}
+	return nil
+}

@@ -78,7 +78,14 @@ type Exit struct {
 	OVPN    *OVPN
 	User    string
 	Pass    string
+	// Verbindung: always = ständig verbunden (alle 30 s geprüft); standby = nur verbunden, solange
+	// eine Gruppe ihn nutzt – sonst alle CheckMin Minuten kurz verbinden und prüfen.
+	Mode     string
+	CheckMin int
 }
+
+// Standby: nur bei Bedarf verbunden.
+func (e *Exit) Standby() bool { return e != nil && e.Mode == "standby" }
 
 type Group struct {
 	ID      int64
@@ -102,8 +109,16 @@ func num(m store.M, k string, def float64) float64 {
 
 // ExitFrom liest einen Ausgang aus der Datenbank.
 func ExitFrom(o *store.Object) (*Exit, error) {
-	e := &Exit{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Slot: int(num(o.Data, "slot", 0))}
+	e := &Exit{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Slot: int(num(o.Data, "slot", 0)), CheckMin: int(num(o.Data, "check_min", 30))}
 	e.Type, _ = o.Data["type"].(string)
+	if mode, _ := o.Data["mode"].(string); mode == "standby" {
+		e.Mode = "standby"
+	} else {
+		e.Mode = "always"
+	}
+	if e.CheckMin < 5 {
+		e.CheckMin = 5
+	}
 	cfg, _ := o.Secrets["config"].(string)
 	var err error
 	switch e.Type {
@@ -181,6 +196,10 @@ type ExitStatus struct {
 	Error   string   `json:"error,omitempty"`
 	Checked int64    `json:"checked"`
 	Samples []Sample `json:"samples"`
+	// Bereitschaft: nicht ständig verbunden
+	Standby   bool  `json:"standby"`
+	Connected bool  `json:"connected"`  // gerade verbunden
+	NextCheck int64 `json:"next_check"` // nächste Prüfung (nur Bereitschaft)
 }
 
 type GroupStatus struct {
@@ -208,10 +227,12 @@ type Manager struct {
 	healthy map[string]time.Time // „Gruppe/Ausgang“ → gesund seit
 	hooks   []func(groupID int64)
 	probeMu sync.Mutex
+	conn    map[int64]bool // Ausgänge in Bereitschaft, die gerade verbunden sind
+	force   bool           // nächste Prüfung: auch Ausgänge in Bereitschaft (Knopf „Jetzt prüfen“)
 }
 
 func New() *Manager {
-	return &Manager{status: map[int64]*ExitStatus{}, groups: map[int64]*GroupStatus{}, healthy: map[string]time.Time{}}
+	return &Manager{status: map[int64]*ExitStatus{}, groups: map[int64]*GroupStatus{}, healthy: map[string]time.Time{}, conn: map[int64]bool{}}
 }
 
 // OnSwitch: wird nach jedem Umschalten einer Gruppe aufgerufen (z. B. Proxy trennt Verbindungen).
@@ -282,13 +303,27 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 	want := map[string]string{} // Schnittstelle → Typ
 	for _, e := range exits {
 		byID[e.ID] = e
+	}
+	for _, g := range groups {
+		if g.Enabled && g.Slot > 0 {
+			m.active(env, g, byID) // aktuellen Ausgang festlegen – ihn braucht es verbunden
+		}
+	}
+	needed := m.neededSet()
+	for _, e := range exits {
 		if !e.Enabled || e.Slot < 1 {
 			continue
 		}
 		n := IfName(e.ID)
 		want[n] = e.Type
+		if e.Standby() && !needed[e.ID] && !m.isConn(e.ID) {
+			m.disconnect(env, e) // Bereitschaft: nur zum Prüfen bzw. bei Bedarf verbinden
+			continue
+		}
 		if err := m.applyExit(env, e); err != nil {
 			errs = append(errs, e.Name+": "+err.Error())
+		} else if e.Standby() {
+			m.setConn(e.ID, true)
 		}
 	}
 	// Nicht mehr benötigte Ausgänge abbauen
@@ -348,6 +383,11 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 	for id := range m.status {
 		if e := byID[id]; e == nil || !e.Enabled {
 			delete(m.status, id)
+		}
+	}
+	for id := range m.conn {
+		if e := byID[id]; e == nil || !e.Enabled || !e.Standby() {
+			delete(m.conn, id)
 		}
 	}
 	m.mu.Unlock()

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -113,7 +114,7 @@ func (e *Engine) CheckExits(speed bool) {
 	if speed {
 		every = time.Nanosecond
 	}
-	e.Exits.Check(e.exitEnv(), xs, gs, every)
+	e.Exits.CheckAll(e.exitEnv(), xs, gs, every)
 }
 
 // SwitchExit: Gruppe von Hand auf einen Ausgang umschalten.
@@ -213,4 +214,62 @@ func (e *Engine) ExitRates() map[int64]ExitRate {
 	}
 	st.at, st.prev, st.last = now, cur, out
 	return out
+}
+
+// ifaceCounter liest einen Zähler einer Schnittstelle (rx_bytes, tx_bytes).
+func (e *Engine) ifaceCounter(dev, name string) (uint64, bool) {
+	b, err := e.Sys.ReadFile("/sys/class/net/" + dev + "/statistics/" + name)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	return n, err == nil
+}
+
+// collectExitTraffic zählt den Verkehr der Ausgänge seit dem letzten Lauf (Statistik je Stunde).
+// Die Zähler der Schnittstellen beginnen nach jedem Neuverbinden bei 0 – ist ein Wert kleiner als
+// zuvor, zählt er ganz. Die letzten Werte stehen in der Datenbank, damit ein Neustart nichts verliert.
+func (e *Engine) collectExitTraffic(ts int64) {
+	if e.Sys.DryRun() {
+		return
+	}
+	objs, _ := e.St.Objects("exit")
+	if len(objs) == 0 {
+		return
+	}
+	prev := map[int64][2]uint64{}
+	_ = json.Unmarshal([]byte(e.St.GetSetting("state:exits:counters", "")), &prev)
+	cur := map[int64][2]uint64{}
+	for _, o := range objs {
+		dev := exits.IfName(o.ID)
+		rx, ok1 := e.ifaceCounter(dev, "rx_bytes")
+		tx, ok2 := e.ifaceCounter(dev, "tx_bytes")
+		if !ok1 || !ok2 {
+			cur[o.ID] = [2]uint64{} // nicht verbunden – nach dem Verbinden zählt alles ab 0
+			continue
+		}
+		cur[o.ID] = [2]uint64{rx, tx}
+		p, had := prev[o.ID]
+		if !had {
+			continue // erster Wert – ab jetzt zählen
+		}
+		down, up := rx, tx
+		if rx >= p[0] {
+			down = rx - p[0]
+		}
+		if tx >= p[1] {
+			up = tx - p[1]
+		}
+		if up+down > 0 {
+			_ = e.St.AddExitTraffic(o.ID, ts, int64(up), int64(down))
+		}
+	}
+	b, _ := json.Marshal(cur)
+	_ = e.St.SetSetting("state:exits:counters", string(b))
+}
+
+// CheckExit prüft einen Ausgang sofort (speed = auch Geschwindigkeit messen).
+func (e *Engine) CheckExit(id int64, speed bool) (exits.ExitStatus, error) {
+	xs, _ := e.LoadExits()
+	return e.Exits.CheckOne(e.exitEnv(), exitMap(xs)[id], speed)
 }

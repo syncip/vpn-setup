@@ -165,12 +165,29 @@ func (m *Manager) Run(stop <-chan struct{}, envFn func() *Env, load func() ([]*E
 	}
 }
 
-// Check prüft alle Ausgänge (parallel) und bewertet danach die Gruppen.
+// Check prüft alle Ausgänge (parallel) und bewertet danach die Gruppen. Ausgänge in Bereitschaft
+// werden nur geprüft, wenn eine Gruppe sie nutzt oder ihre Prüfung fällig ist (dafür kurz verbunden).
 func (m *Manager) Check(env *Env, exits []*Exit, groups []*Group, speedEvery time.Duration) {
 	m.probeMu.Lock()
 	defer m.probeMu.Unlock()
-	var wg sync.WaitGroup
+	m.mu.Lock()
+	force := m.force
+	m.force = false
+	m.mu.Unlock()
 	now := time.Now()
+	byID := map[int64]*Exit{}
+	for _, e := range exits {
+		byID[e.ID] = e
+	}
+	for _, g := range groups {
+		if g.Enabled && g.Slot > 0 {
+			m.active(env, g, byID)
+		}
+	}
+	needed := m.neededSet()
+
+	// 1. Welche Ausgänge werden geprüft? Bereitschaft: genutzt, verbunden oder Prüfung fällig.
+	var todo []*Exit
 	for _, e := range exits {
 		if !e.Enabled || e.Slot < 1 {
 			continue
@@ -181,49 +198,108 @@ func (m *Manager) Check(env *Env, exits []*Exit, groups []*Group, speedEvery tim
 			st = &ExitStatus{ID: e.ID}
 			m.status[e.ID] = st
 		}
-		speed := speedEvery > 0 && now.Sub(time.Unix(st.MbitAt, 0)) >= speedEvery
+		st.Standby = e.Standby()
+		st.Connected = !e.Standby() || m.conn[e.ID]
+		due := force || st.Checked == 0 || now.Sub(time.Unix(st.Checked, 0)) >= time.Duration(e.CheckMin)*time.Minute
 		m.mu.Unlock()
+		if e.Standby() && !needed[e.ID] && !m.isConn(e.ID) {
+			if !due {
+				m.mu.Lock()
+				st.NextCheck = st.Checked + int64(e.CheckMin)*60
+				m.mu.Unlock()
+				continue
+			}
+			if err := m.connect(env, e); err != nil {
+				m.record(e, Sample{TS: now.Unix(), Loss: 100}, "", "", 0, false, fmt.Errorf("%w: %v", errNoTunnel, err))
+				m.disconnect(env, e)
+				continue
+			}
+		} else if e.Standby() && !m.isConn(e.ID) {
+			// genutzt, aber (noch) nicht verbunden – z. B. nach dem Start
+			if err := m.connect(env, e); err != nil {
+				env.Log("warn", fmt.Sprintf("Ausgang „%s“: %v", e.Name, err))
+			}
+		}
+		todo = append(todo, e)
+	}
+	if len(todo) > 0 {
+		m.ensureRoutes(env, exits, groups)
+	}
+
+	// 2. Messen (parallel)
+	probe := func(e *Exit) {
+		m.mu.Lock()
+		st := m.status[e.ID]
+		speed := st != nil && speedEvery > 0 && now.Sub(time.Unix(st.MbitAt, 0)) >= speedEvery
+		m.mu.Unlock()
+		s, ip, loc, mb, err := m.probe(env, e, speed)
+		m.record(e, s, ip, loc, mb, speed, err)
+	}
+	var wg sync.WaitGroup
+	for _, e := range todo {
 		wg.Add(1)
-		go func(e *Exit, speed bool) {
+		go func(e *Exit) {
 			defer wg.Done()
-			s, ip, loc, mb, err := m.probe(env, e, speed)
-			m.mu.Lock()
-			defer m.mu.Unlock()
-			st := m.status[e.ID]
-			if st == nil {
-				return
-			}
-			// Up = Schnittstelle da; ob Verkehr durchgeht, bewertet isHealthy anhand der Messungen
-			st.Checked, st.Up = s.TS, !errors.Is(err, errNoTunnel)
-			st.Samples = append(st.Samples, s)
-			if len(st.Samples) > keepSamples {
-				st.Samples = st.Samples[len(st.Samples)-keepSamples:]
-			}
-			st.Loss, st.RTT = avg(st.Samples)
-			if ip != "" {
-				st.IP, st.Loc = ip, loc
-			}
-			if mb > 0 {
-				st.Mbit, st.MbitAt = mb, s.TS
-			} else if speed {
-				st.MbitAt = s.TS // nicht sofort wieder versuchen
-			}
-			st.Error = ""
-			if err != nil {
-				st.Error = err.Error()
-			}
-		}(e, speed)
+			probe(e)
+		}(e)
 	}
 	wg.Wait()
+
+	// 3. Aktiver Ausgang gestört? Dann Ausgänge in Bereitschaft verbinden und prüfen.
+	m.failoverCandidates(env, groups, byID, probe)
 	m.ensureRoutes(env, exits, groups)
-	byID := map[int64]*Exit{}
-	for _, e := range exits {
-		byID[e.ID] = e
-	}
+
+	// 4. Gruppen bewerten (ggf. umschalten)
 	for _, g := range groups {
 		if g.Enabled && g.Slot > 0 {
 			m.evaluate(env, g, byID)
 		}
+	}
+
+	// 5. Nicht mehr benötigte Ausgänge in Bereitschaft wieder trennen
+	needed = m.neededSet()
+	for _, e := range exits {
+		if e.Standby() && e.Enabled && !needed[e.ID] && m.isConn(e.ID) {
+			m.disconnect(env, e)
+		}
+		m.mu.Lock()
+		if st := m.status[e.ID]; st != nil && e.Standby() {
+			st.Connected = m.conn[e.ID]
+			st.NextCheck = st.Checked + int64(e.CheckMin)*60
+			if needed[e.ID] {
+				st.NextCheck = 0 // genutzt → laufend geprüft
+			}
+		}
+		m.mu.Unlock()
+	}
+}
+
+// record trägt eine Messung ein.
+func (m *Manager) record(e *Exit, s Sample, ip, loc string, mb float64, speed bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.status[e.ID]
+	if st == nil {
+		return
+	}
+	// Up = Schnittstelle da; ob Verkehr durchgeht, bewertet isHealthy anhand der Messungen
+	st.Checked, st.Up = s.TS, err == nil || !errors.Is(err, errNoTunnel)
+	st.Samples = append(st.Samples, s)
+	if len(st.Samples) > keepSamples {
+		st.Samples = st.Samples[len(st.Samples)-keepSamples:]
+	}
+	st.Loss, st.RTT = avg(st.Samples)
+	if ip != "" {
+		st.IP, st.Loc = ip, loc
+	}
+	if mb > 0 {
+		st.Mbit, st.MbitAt = mb, s.TS
+	} else if speed {
+		st.MbitAt = s.TS // nicht sofort wieder versuchen
+	}
+	st.Error = ""
+	if err != nil {
+		st.Error = err.Error()
 	}
 }
 
@@ -383,6 +459,17 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 	if !changed {
 		return
 	}
+	// Ausgang in Bereitschaft (z. B. Rückkehr zum bevorzugten): erst verbinden
+	if x := exits[next]; x.Standby() && !m.isConn(next) {
+		if err := m.connect(env, x); err != nil {
+			m.disconnect(env, x)
+			m.mu.Lock()
+			gs.Active, gs.Reason = cur, fmt.Sprintf("„%s“ (Bereitschaft) ließ sich nicht verbinden: %v", x.Name, err)
+			m.mu.Unlock()
+			env.Log("warn", fmt.Sprintf("Gruppe „%s“: %s", g.Name, gs.Reason))
+			return
+		}
+	}
 	m.routeGroup(env, g, next)
 	env.Set(fmt.Sprintf("exits:active:%d", g.ID), strconv.FormatInt(next, 10))
 	to := "keiner (" + map[string]string{"block": "gesperrt", "direct": "direkt über den Server"}[g.OnFail] + ")"
@@ -405,6 +492,12 @@ func (m *Manager) Switch(env *Env, g *Group, exitID int64, exits map[int64]*Exit
 		return fmt.Errorf("Ausgang gehört nicht zur Gruppe oder ist deaktiviert")
 	}
 	m.active(env, g, exits)
+	if x := exits[exitID]; x.Standby() && !m.isConn(exitID) {
+		if err := m.connect(env, x); err != nil {
+			m.disconnect(env, x)
+			return fmt.Errorf("„%s“ ließ sich nicht verbinden: %v", x.Name, err)
+		}
+	}
 	m.mu.Lock()
 	gs := m.groups[g.ID]
 	gs.Active, gs.Since, gs.Reason = exitID, time.Now().Unix(), "von Hand umgeschaltet"

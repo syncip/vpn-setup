@@ -479,6 +479,7 @@ func (e *Engine) collectLocked() error {
 			}
 		}
 	}
+	e.collectExitTraffic(ts)
 	// Nutzer: Zeitraum prüfen, Verbrauch addieren
 	for id, u := range snap.Users {
 		changed := false

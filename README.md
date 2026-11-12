@@ -120,6 +120,15 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   entfernt wurde). Jeder Ausgang bekommt eine Schnittstelle `ex<ID>` ohne Route in der Haupttabelle –
   der Server selbst bleibt unverändert erreichbar. Eingehende Verbindungen über einen Ausgang werden
   verworfen, TCP-MSS wird angepasst. Nur IPv4.
+- **Verbindung je Ausgang:** *Immer verbunden* (Vorgabe, Prüfung alle 30 Sekunden, Umschalten sofort)
+  oder *Bereitschaft*: verbunden nur, solange eine Gruppe den Ausgang gerade nutzt. Sonst verbindet der
+  Server ihn im gewählten Abstand (5 Minuten bis täglich) kurz, prüft ihn und trennt wieder – sinnvoll,
+  wenn der Anbieter viele dauerhafte Verbindungen ungern sieht. Fällt der aktive Ausgang einer Gruppe aus,
+  werden Ausgänge in Bereitschaft der Reihe nach verbunden und geprüft, bevor umgeschaltet wird (dauert
+  einige Sekunden länger).
+- **Ping und Speedtest von Hand:** Knöpfe je Ausgang; ein Ausgang in Bereitschaft wird dafür kurz verbunden.
+- **Verkehr je Ausgang:** gezählt an der Schnittstelle `ex<ID>` (stündlich gespeichert), in der Tabelle
+  24 Stunden / 30 Tage, darunter ein Diagramm über 24 h bis 90 Tage, gesamt oder je Ausgang.
 - **Gruppen:** mehrere Ausgänge in fester Reihenfolge. Alle 30 Sekunden prüft der Server jeden Ausgang
   (Ping, HTTPS-Abruf über den Tunnel → öffentliche IP und Land; auf Wunsch ein Geschwindigkeitstest mit
   5 MB, Einstellung `exit_speedtest`). Überschreitet der aktive Ausgang die Grenzen (Verlust,

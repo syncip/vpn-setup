@@ -7,9 +7,10 @@
   import Info from '../components/Info.svelte';
   import PortHelp from '../components/PortHelp.svelte';
   import RouteRules from '../components/RouteRules.svelte';
+  import TimeChart from '../components/TimeChart.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
-  import { ago, clone, date, fmtNum } from '../lib/format.js';
+  import { ago, clone, date, fmtNum, bytes } from '../lib/format.js';
   import { protocol, toast, go } from '../lib/state.svelte.js';
 
   let { tab = 'overview' } = $props();
@@ -86,17 +87,81 @@
     }, speed ? 60000 : 12000);
   }
 
+  // ---------- einzelner Ausgang: Ping / Speedtest ----------
+  let testing = $state({}); // id → 'ping' | 'speed'
+  async function testExit(e, speed) {
+    testing[e.id] = speed ? 'speed' : 'ping';
+    try {
+      const r = await post(`/exits/${e.id}/check`, { speed });
+      const s = r.status || {};
+      const i = d.exits.findIndex((x) => x.id === e.id);
+      if (i >= 0) d.exits[i].status = s;
+      if (!r.ok) toast(`${e.name}: ${r.error}`, 'error');
+      else if (speed) toast(`${e.name}: ${fmtNum(Math.round(s.mbit))} Mbit/s, ${fmtNum(Math.round(s.rtt))} ms`);
+      else {
+        const last = s.samples?.[s.samples.length - 1];
+        toast(`${e.name}: ${last?.rtt ? `${fmtNum(Math.round(last.rtt))} ms, ` : ''}${fmtNum(Math.round(last?.loss ?? 100))} % Verlust${last?.ok ? '' : ' – kein Internet über den Tunnel'}`, last?.ok ? 'ok' : 'error');
+      }
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+    delete testing[e.id];
+  }
+
   // ---------- Ausgänge ----------
   let exOpen = $state(false);
   let exCur = $state(null);
-  let ex = $state({ name: '', config: '', username: '', password: '', enabled: true });
+  let ex = $state({ name: '', config: '', username: '', password: '', enabled: true, mode: 'always', check_min: 30 });
+  const CHECKS = [
+    [5, 'alle 5 Minuten'],
+    [15, 'alle 15 Minuten'],
+    [30, 'alle 30 Minuten'],
+    [60, 'stündlich'],
+    [180, 'alle 3 Stunden'],
+    [360, 'alle 6 Stunden'],
+    [720, 'alle 12 Stunden'],
+    [1440, 'täglich'],
+  ];
+  const checkText = (m) => CHECKS.find((c) => c[0] === m)?.[1] || `alle ${m} Minuten`;
+  const inMin = (ts) => {
+    const m = Math.round((ts - Date.now() / 1000) / 60);
+    if (m <= 0) return 'gleich';
+    return m < 90 ? `in ${m} Min.` : `in ${Math.round(m / 60)} Std.`;
+  };
+
+  // ---------- Verkehr ----------
+  let trDays = $state(7);
+  let trExit = $state(0);
+  let tr = $state(null);
+  async function loadTraffic() {
+    tr = await get(`/exits/traffic?days=${trDays}`).catch(() => null);
+  }
+  $effect(() => {
+    if (tab !== 'exits') return;
+    trDays;
+    loadTraffic();
+  });
+  const trData = $derived.by(() => {
+    if (!tr) return null;
+    const by = new Map();
+    for (const [b, id, up, down] of tr.series) {
+      if (trExit && id !== trExit) continue;
+      const p = by.get(b) || { ts: b * 1000, up: 0, down: 0 };
+      p.up += up;
+      p.down += down;
+      by.set(b, p);
+    }
+    const to = Date.now();
+    return { points: [...by.values()], bucket: tr.bucket * 1000, from: to - tr.days * 86400000, to };
+  });
+  const trSum = $derived((trData?.points || []).reduce((a, p) => a + p.up + p.down, 0));
   let exBusy = $state(false);
   let removedInfo = $state(null);
   const exType = $derived(ex.config.toLowerCase().includes('[interface]') ? 'wireguard' : ex.config.trim() ? 'openvpn' : exCur?.type || '');
 
   function openExit(e = null) {
     exCur = e;
-    ex = { name: e?.name || '', config: '', username: e?.username || '', password: '', enabled: e ? e.enabled : true };
+    ex = { name: e?.name || '', config: '', username: e?.username || '', password: '', enabled: e ? e.enabled : true, mode: e?.mode || 'always', check_min: e?.check_min || 30 };
     exOpen = true;
   }
   async function readFile(ev) {
@@ -108,7 +173,7 @@
   }
   async function saveExit() {
     exBusy = true;
-    const body = { name: ex.name, enabled: ex.enabled };
+    const body = { name: ex.name, enabled: ex.enabled, mode: ex.mode, check_min: Number(ex.check_min) };
     if (ex.config.trim()) body.config = ex.config;
     if (exType === 'openvpn') {
       body.username = ex.username;
@@ -376,32 +441,50 @@
 <div class="card">
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Name</th><th>Status</th><th>Antwortzeit</th><th>Verlust</th><th>Tempo</th><th>Öffentliche IP</th><th></th></tr></thead>
+      <thead><tr><th>Ausgang</th><th>Zustand</th><th>Messung</th><th>Öffentliche IP</th><th class="right">Verkehr <Info title="Verkehr" text="Oben: letzte 24 Stunden, unten: letzte 30 Tage (hoch + runter)." /></th><th class="right">Prüfen</th><th></th></tr></thead>
       <tbody>
         {#each d.exits as e}
           {@const h = health(e)}
           {@const s = e.status}
-          <tr>
+          <tr class:off={!e.enabled}>
             <td>
               <div class="row" style="gap:8px">
                 <ProtoLogo id={e.type} size={22} />
-                <div>
+                <div style="min-width:0">
                   <div class="strong">{e.name}</div>
-                  <div class="muted tiny mono">{e.server}</div>
+                  <div class="muted tiny mono ellipsis exsrv" title={e.server}>{e.server}{#if e.removed.length}&nbsp;<span class="badge muted" title={'Beim Hochladen entfernt: ' + e.removed.join(', ')}><Icon name="filter" size={11} /> {e.removed.length}</span>{/if}</div>
                 </div>
               </div>
             </td>
             <td>
               <span class="badge {h[0]}">{h[1]}</span>
+              <div class="tiny muted nowrap">
+                {#if e.mode === 'standby'}
+                  <span title="Bereitschaft: nur verbunden, solange eine Gruppe den Ausgang nutzt">{s?.connected ? (s?.next_check ? 'Bereitschaft · gerade verbunden' : 'Bereitschaft · in Benutzung') : 'Bereitschaft · getrennt'}</span>
+                  {#if !s?.connected && s?.next_check}<br />prüft {checkText(e.check_min)}, nächste {inMin(s.next_check)}{/if}
+                {:else}
+                  immer verbunden · prüft alle 30 s
+                {/if}
+              </div>
               {#if e.error}<div class="tiny bad-text">{e.error}</div>{/if}
               {#if e.need_auth && !e.has_auth}<div class="tiny bad-text">Benutzername/Passwort fehlen</div>{/if}
             </td>
-            <td>{s?.rtt ? `${fmtNum(Math.round(s.rtt))} ms` : '–'}</td>
-            <td>{s?.checked ? `${fmtNum(Math.round(s.loss))} %` : '–'}</td>
-            <td title={s?.mbit_at ? `gemessen ${ago(s.mbit_at)}` : ''}>{s?.mbit ? `${fmtNum(Math.round(s.mbit))} Mbit/s` : '–'}</td>
-            <td>{#if s?.ip}<span class="mono small">{s.ip}</span> <span class="badge">{s.loc}</span>{:else}–{/if}</td>
             <td class="nowrap">
-              {#if e.removed.length}<span class="badge muted" title={'Beim Hochladen entfernt: ' + e.removed.join(', ')}><Icon name="filter" size={12} /> {e.removed.length}</span>{/if}
+              {#if s?.checked}
+                <span class="small">{s.rtt ? `${fmtNum(Math.round(s.rtt))} ms` : '–'} · {fmtNum(Math.round(s.loss))} %</span>
+                <div class="tiny muted" title={s.mbit_at ? `Tempo gemessen ${ago(s.mbit_at)}` : ''}>{s.mbit ? `${fmtNum(Math.round(s.mbit))} Mbit/s` : 'Tempo –'}{#if e.mode === 'standby'}&nbsp;· {ago(s.checked) === 'online' ? 'gerade' : ago(s.checked)}{/if}</div>
+              {:else}<span class="muted small">–</span>{/if}
+            </td>
+            <td class="nowrap">{#if s?.ip}<span class="mono small">{s.ip}</span> <span class="badge">{s.loc}</span>{:else}–{/if}</td>
+            <td class="right nowrap small" title="30 Tage: hoch {bytes(e.traffic?.month?.up)}, runter {bytes(e.traffic?.month?.down)} · gesamt {bytes((e.traffic?.all?.up || 0) + (e.traffic?.all?.down || 0))}">
+              {bytes((e.traffic?.day?.up || 0) + (e.traffic?.day?.down || 0))}
+              <div class="tiny muted">{bytes((e.traffic?.month?.up || 0) + (e.traffic?.month?.down || 0))}</div>
+            </td>
+            <td class="right nowrap">
+              <button class="btn sm" title="Ping-Prüfung jetzt (Antwortzeit, Verlust, HTTPS über den Tunnel){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, false)}><Icon name="activity" size={13} /> {testing[e.id] === 'ping' ? '…' : 'Ping'}</button>
+              <button class="btn sm" title="Speedtest jetzt (lädt 5 MB über den Ausgang){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, true)}><Icon name="gauge" size={13} /> {testing[e.id] === 'speed' ? 'misst …' : 'Speed'}</button>
+            </td>
+            <td class="right nowrap">
               <button class="btn sm icon ghost" title={e.enabled ? 'Deaktivieren' : 'Aktivieren'} onclick={() => toggleExit(e)}><Icon name="power" size={15} /></button>
               <button class="btn sm icon ghost" title="Bearbeiten" onclick={() => openExit(e)}><Icon name="edit" size={15} /></button>
               <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeExit(e)}><Icon name="trash" size={15} /></button>
@@ -414,6 +497,39 @@
     </table>
   </div>
 </div>
+
+{#if d.exits.length}
+  <div class="card" style="margin-top:14px">
+    <div class="card-head">
+      <h3>Verkehr über die Ausgänge <Info title="Verkehr" text="Gezählt an den Schnittstellen der Ausgänge: alles, was Nutzer über Gruppen ins Internet schicken bzw. von dort laden (inkl. Prüfungen). Runter = vom Anbieter empfangen." /> <span class="muted small">{bytes(trSum)}</span></h3>
+      <div class="row wrap" style="gap:8px">
+        <select class="input" style="width:auto" bind:value={trExit}>
+          <option value={0}>Alle Ausgänge</option>
+          {#each d.exits as e}<option value={e.id}>{e.name}</option>{/each}
+        </select>
+        <div class="segmented">
+          {#each [[1, '24 h'], [7, '7 Tage'], [30, '30 Tage'], [90, '90 Tage']] as [n, l]}<button class:active={trDays === n} onclick={() => (trDays = n)}>{l}</button>{/each}
+        </div>
+      </div>
+    </div>
+    <div class="card-pad" style="padding-top:0">
+      {#if trData}
+        <TimeChart mode="bars" points={trData.points} bucket={trData.bucket} from={trData.from} to={trData.to} format={bytes} binary height={180} />
+      {/if}
+      <div class="trgrid">
+        {#each [...d.exits].sort((a, b) => (b.traffic?.month?.down || 0) + (b.traffic?.month?.up || 0) - (a.traffic?.month?.down || 0) - (a.traffic?.month?.up || 0)) as e}
+          {@const m = (e.traffic?.month?.up || 0) + (e.traffic?.month?.down || 0)}
+          {@const all = d.exits.reduce((a, x) => a + (x.traffic?.month?.up || 0) + (x.traffic?.month?.down || 0), 0)}
+          <button class="trrow" class:sel={trExit === e.id} onclick={() => (trExit = trExit === e.id ? 0 : e.id)}>
+            <span class="small ellipsis grow">{e.name}</span>
+            <span class="share"><span style="width:{all ? (m / all) * 100 : 0}%"></span></span>
+            <span class="tiny muted nowrap">{bytes(m)} · 30 T.</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+  </div>
+{/if}
 {/if}
 
 <Modal bind:open={exOpen} title={exCur ? `Ausgang ${exCur.name}` : 'Ausgang hochladen'} width={680}>
@@ -430,6 +546,26 @@
         <div class="field"><label for="ex-pw">Passwort</label><input id="ex-pw" class="input" type="password" bind:value={ex.password} autocomplete="new-password" placeholder={exCur?.has_auth ? 'gespeichert – leer = unverändert' : ''} /></div>
       </div>
     {/if}
+    <div class="field">
+      <span class="label"
+        >Verbindung <Info title="Verbindung" wide>
+          <p><b>Immer verbunden:</b> Der Tunnel steht ständig und wird alle 30 Sekunden geprüft – Umschalten geht sofort.</p>
+          <p><b>Bereitschaft:</b> Verbunden nur, solange eine Gruppe den Ausgang gerade nutzt. Sonst verbindet der Server ihn im gewählten Abstand kurz, prüft ihn (Ping, HTTPS, ggf. Tempo) und trennt wieder. Fällt der aktive Ausgang einer Gruppe aus, werden Ausgänge in Bereitschaft der Reihe nach verbunden und geprüft, bevor umgeschaltet wird – das dauert einige Sekunden länger.</p>
+          <p>Sinnvoll, wenn der Anbieter viele dauerhafte Verbindungen ungern sieht oder nur wenige gleichzeitige Verbindungen erlaubt.</p>
+        </Info></span
+      >
+      <div class="row wrap" style="gap:10px">
+        <div class="segmented">
+          <button type="button" class:active={ex.mode === 'always'} onclick={() => (ex.mode = 'always')}>Immer verbunden</button>
+          <button type="button" class:active={ex.mode === 'standby'} onclick={() => (ex.mode = 'standby')}>Bereitschaft</button>
+        </div>
+        {#if ex.mode === 'standby'}
+          <select class="input" style="width:auto" bind:value={ex.check_min}>
+            {#each CHECKS as [v, l]}<option value={v}>prüfen {l}</option>{/each}
+          </select>
+        {/if}
+      </div>
+    </div>
     <label class="switch"><input type="checkbox" bind:checked={ex.enabled} /><span class="track"></span> Aktiv</label>
   </div>
   {#snippet footer()}
@@ -501,6 +637,49 @@
 </Modal>
 
 <style>
+  .exsrv {
+    max-width: 220px;
+  }
+  tr.off {
+    opacity: 0.6;
+  }
+  .trgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 4px 14px;
+    margin-top: 10px;
+  }
+  .trrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    padding: 4px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    min-width: 0;
+  }
+  .trrow:hover,
+  .trrow.sel {
+    background: var(--accent-soft);
+  }
+  .share {
+    width: 70px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border);
+    overflow: hidden;
+    flex: none;
+  }
+  .share span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
   .flow {
     display: flex;
     align-items: stretch;

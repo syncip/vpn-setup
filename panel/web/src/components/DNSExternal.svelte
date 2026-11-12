@@ -107,7 +107,7 @@
     {#if !d.dns_enabled}
       <div class="notice warn small"><Icon name="alert" size={16} /><span>Erst den Panel-DNS einschalten (Einstellungen).</span></div>
     {:else if x.public}
-      <div class="notice okn small"><Icon name="check" size={16} /><span>{x.clients.filter((c) => c.enabled).length} freigegebene Geräte · {strangers.length} fremde Absender gesehen</span></div>
+      <div class="notice okn small"><Icon name="check" size={16} /><span>{x.clients.filter((c) => c.enabled).length} {x.clients.filter((c) => c.enabled).length === 1 ? 'freigegebenes Gerät' : 'freigegebene Geräte'} · {strangers.length} {strangers.length === 1 ? 'fremder Absender' : 'fremde Absender'} gesehen</span></div>
     {:else}
       <div class="muted small">Aus – Anfragen von außen erreichen den Panel-DNS nicht.</div>
     {/if}

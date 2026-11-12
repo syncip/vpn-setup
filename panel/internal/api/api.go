@@ -91,6 +91,8 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("PUT /api/exits/{id}", a.auth(a.updateExit))
 	api.HandleFunc("DELETE /api/exits/{id}", a.auth(a.deleteExit))
 	api.HandleFunc("POST /api/exits/check", a.auth(a.checkExits))
+	api.HandleFunc("GET /api/exits/traffic", a.auth(a.exitTraffic))
+	api.HandleFunc("POST /api/exits/{id}/check", a.auth(a.checkExit))
 	api.HandleFunc("POST /api/groups", a.auth(a.createGroup))
 	api.HandleFunc("PUT /api/groups/{id}", a.auth(a.updateGroup))
 	api.HandleFunc("DELETE /api/groups/{id}", a.auth(a.deleteGroup))

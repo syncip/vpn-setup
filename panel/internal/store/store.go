@@ -70,6 +70,10 @@ var migrations = []string{
 	   ms INTEGER NOT NULL DEFAULT 0, via INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '');
 	 CREATE INDEX dns_log_ts ON dns_log(ts);
 	 CREATE INDEX dns_log_peer ON dns_log(peer_id, ts);`,
+	// Verkehr über die Ausgänge (externe VPNs) je Stunde
+	`CREATE TABLE exit_traffic (exit_id INTEGER NOT NULL, hour INTEGER NOT NULL, up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
+	   PRIMARY KEY (exit_id, hour));
+	 CREATE INDEX exit_traffic_hour ON exit_traffic(hour);`,
 }
 
 func (s *Store) migrate() error {
@@ -536,7 +540,72 @@ func (s *Store) TrafficByUser(since int64) (map[int64][2]int64, error) {
 
 func (s *Store) PruneTraffic(before int64) error {
 	_, err := s.db.Exec(`DELETE FROM traffic WHERE hour < ?`, before)
+	if err == nil {
+		_, err = s.db.Exec(`DELETE FROM exit_traffic WHERE hour < ?`, before)
+	}
 	return err
+}
+
+// ---------- Verkehr über Ausgänge ----------
+
+// AddExitTraffic zählt Verkehr eines Ausgangs zur Stunde von ts.
+func (s *Store) AddExitTraffic(exitID, ts, up, down int64) error {
+	hour := ts - ts%3600
+	_, err := s.db.Exec(`INSERT INTO exit_traffic (exit_id, hour, up, down) VALUES (?,?,?,?)
+		ON CONFLICT(exit_id, hour) DO UPDATE SET up=up+excluded.up, down=down+excluded.down`, exitID, hour, up, down)
+	return err
+}
+
+// DeleteExitTraffic: beim Löschen eines Ausgangs.
+func (s *Store) DeleteExitTraffic(exitID int64) error {
+	_, err := s.db.Exec(`DELETE FROM exit_traffic WHERE exit_id = ?`, exitID)
+	return err
+}
+
+// ExitTotals: Summen je Ausgang ab since (0 = alles).
+type ExitTotals struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
+func (s *Store) ExitTraffic(since int64) (map[int64]ExitTotals, error) {
+	rows, err := s.db.Query(`SELECT exit_id, SUM(up), SUM(down) FROM exit_traffic WHERE hour >= ? GROUP BY exit_id`, since-since%3600)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]ExitTotals{}
+	for rows.Next() {
+		var id int64
+		var t ExitTotals
+		if err := rows.Scan(&id, &t.Up, &t.Down); err != nil {
+			return nil, err
+		}
+		out[id] = t
+	}
+	return out, rows.Err()
+}
+
+// ExitTrafficSeries: [Zeitfenster, Ausgang, hoch, runter] ab since, zusammengefasst je bucket Sekunden.
+func (s *Store) ExitTrafficSeries(since, bucket int64) ([][4]int64, error) {
+	if bucket < 3600 {
+		bucket = 3600
+	}
+	rows, err := s.db.Query(`SELECT (hour/?)*? AS b, exit_id, SUM(up), SUM(down) FROM exit_traffic WHERE hour >= ? GROUP BY b, exit_id ORDER BY b`,
+		bucket, bucket, since-since%3600)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := [][4]int64{}
+	for rows.Next() {
+		var r [4]int64
+		if err := rows.Scan(&r[0], &r[1], &r[2], &r[3]); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ---------- Ereignisse ----------
