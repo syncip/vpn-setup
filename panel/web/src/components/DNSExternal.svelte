@@ -64,6 +64,35 @@
       if (!d.settings.tls_host) editTLS();
     }
   });
+  // Cloudflare-Token: geht nur hin (secrets.env auf dem Server), kommt nie zurück
+  let cfOpen = $state(false);
+  let cfTok = $state('');
+  let cfBusy = $state(false);
+  let cfCheck = $state(null);
+  async function saveCF() {
+    cfBusy = true;
+    const r = await run(() => put('/dns/tls/token', { token: cfTok.trim() }));
+    cfBusy = false;
+    if (r) {
+      cfTok = '';
+      cfOpen = false;
+      cfCheck = r.check;
+      toast(r.check?.ok ? 'Token gespeichert und geprüft' : 'Token gespeichert', r.check && !r.check.ok ? 'error' : 'ok');
+      load();
+    }
+  }
+  async function verifyCF() {
+    cfBusy = true;
+    cfCheck = await run(() => post('/dns/tls/token/verify', {}));
+    cfBusy = false;
+  }
+  async function removeCF() {
+    if (!(await confirmDialog({ title: 'Token entfernen?', text: 'Das Zertifikat kann danach nicht mehr automatisch erneuert werden.', ok: 'Entfernen', danger: true }))) return;
+    if (await run(() => del('/dns/tls/token'), 'Token entfernt')) {
+      cfCheck = null;
+      load();
+    }
+  }
   let renewing = $state(false);
   async function renew() {
     renewing = true;
@@ -243,12 +272,32 @@
           <span class="grow"></span>
           <button class="btn sm" onclick={renew} disabled={renewing || T.issuing || !T.token_set}><Icon name="refresh" size={13} /> {T.has_cert ? 'Jetzt erneuern' : 'Zertifikat holen'}</button>
         </div>
-        {#if !T.token_set}
-          <div class="notice warn small">
-            <Icon name="alert" size={16} />
-            <span>Cloudflare-API-Token fehlt. Auf dem Server <code>CF_API_TOKEN=…</code> in <code>{T.token_file}</code> eintragen (Rechte: „Zone → DNS → Bearbeiten“ für die Zone von {T.host}), dann „Zertifikat holen“.</span>
+        <div class="cfbox">
+          <div class="row wrap" style="gap:8px">
+            <Icon name="key" size={15} />
+            <strong class="small">Cloudflare-API-Token</strong>
+            <Info title="Cloudflare-API-Token" wide>
+              <p>Damit legt das Panel den Prüfeintrag für Let's Encrypt an und erneuert das Zertifikat automatisch.</p>
+              <p><b>Anlegen:</b> Cloudflare → Profil → API-Tokens → „Token erstellen“ → Vorlage „DNS-Zone bearbeiten“, unter „Zonenressourcen“ nur die Zone von {T.host || 'deinem DNS-Namen'} wählen.</p>
+              <p><b>Speicherort:</b> nur auf dem Server in <code>{T.token_file}</code> (Rechte 600) – nicht in der Datenbank, nicht in Sicherungen des Panels. Die Oberfläche zeigt es nie wieder an; zum Ändern einfach neu eintragen.</p>
+            </Info>
+            {#if T.token_set}<span class="badge ok"><Icon name="check" size={12} /> hinterlegt</span>{:else}<span class="badge warn">fehlt</span>{/if}
+            <span class="grow"></span>
+            {#if T.token_set && !cfOpen}
+              <button class="btn sm" onclick={verifyCF} disabled={cfBusy}><Icon name="activity" size={13} /> Prüfen</button>
+              <button class="btn sm" onclick={() => (cfOpen = true)}><Icon name="edit" size={13} /> Ersetzen</button>
+              <button class="btn sm icon ghost danger" title="Entfernen" onclick={removeCF}><Icon name="trash" size={14} /></button>
+            {/if}
           </div>
-        {/if}
+          {#if !T.token_set || cfOpen}
+            <form class="row wrap" style="gap:8px;margin-top:8px" onsubmit={(e) => (e.preventDefault(), saveCF())}>
+              <input class="input mono grow" style="min-width:240px" type="password" autocomplete="off" spellcheck="false" bind:value={cfTok} placeholder="Token einfügen" aria-label="Cloudflare-API-Token" />
+              <button class="btn primary" type="submit" disabled={cfBusy || cfTok.trim().length < 20}>{cfBusy ? 'Prüfe …' : 'Speichern'}</button>
+              {#if cfOpen}<button class="btn" type="button" onclick={() => ((cfOpen = false), (cfTok = ''))}>Abbrechen</button>{/if}
+            </form>
+          {/if}
+          {#if cfCheck}<div class="tiny {cfCheck.ok ? 'ok-text' : 'bad-text'}" style="margin-top:6px">{cfCheck.message}</div>{/if}
+        </div>
         {#if T.error && !T.issuing}<div class="notice bad small"><Icon name="alert" size={16} /><span>{T.error}</span></div>{/if}
         <div class="tiny muted">
           Auf dem Proxmox-Host zusätzlich TCP {T.dot_port} weiterleiten <Info title="Port für DoT" wide><PortHelp ports={[{ proto: 'tcp', port: T.dot_port || 853, note: 'DNS-over-TLS' }]} /></Info> · DoH läuft über Port 443 (nginx). Links je Gerät stehen unten.
@@ -506,6 +555,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .cfbox {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
   }
   .certline {
     display: flex;

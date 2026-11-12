@@ -676,3 +676,36 @@ func (a *API) dnsLive(w http.ResponseWriter, r *http.Request) {
 	secs, _ := strconv.Atoi(r.URL.Query().Get("secs"))
 	writeJSON(w, a.E.DNSLiveData(secs))
 }
+
+// dnsCFToken: Cloudflare-API-Token setzen (landet nur in <data>/secrets.env, wird nie zurückgegeben).
+func (a *API) dnsCFToken(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token string `json:"token"`
+	}
+	if r.Method != http.MethodDelete {
+		if err := readJSON(r, &in); err != nil {
+			fail(w, err)
+			return
+		}
+		if strings.TrimSpace(in.Token) == "" {
+			errJSON(w, http.StatusBadRequest, "Token fehlt")
+			return
+		}
+	}
+	if err := a.E.SetCFToken(in.Token); err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if in.Token == "" {
+		a.E.Log("warn", "Cloudflare-API-Token entfernt von "+adminOf(r).Username)
+		writeJSON(w, map[string]any{"tls": a.E.EncDNSState()})
+		return
+	}
+	a.E.Log("info", "Cloudflare-API-Token hinterlegt von "+adminOf(r).Username)
+	writeJSON(w, map[string]any{"tls": a.E.EncDNSState(), "check": a.E.VerifyCFToken()})
+}
+
+// dnsCFTokenVerify: Token bei Cloudflare prüfen.
+func (a *API) dnsCFTokenVerify(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, a.E.VerifyCFToken())
+}

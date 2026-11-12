@@ -303,9 +303,9 @@ um – deshalb nach dem Update die Config neu laden.
   Heimnetz). DoH läuft über nginx auf Port 443, DoT direkt am Panel (TCP 853 auf dem Host weiterleiten).
   Das **Zertifikat** für `dns.example.org` und `*.dns.example.org` holt das Panel bei Let's Encrypt über
   die DNS-Prüfung mit der Cloudflare-API und erneuert es 30 Tage vor Ablauf; fehlende A-/AAAA-Einträge
-  (ohne Cloudflare-Proxy) legt es an. Das API-Token (Recht „Zone → DNS → Bearbeiten“) steht nur auf dem
-  Server: `CF_API_TOKEN=…` in `/etc/vpn/secrets.env` (vom Setup angelegt, Rechte 600, wird nie
-  überschrieben).
+  (ohne Cloudflare-Proxy) legt es an. Das API-Token (Recht „Zone → DNS → Bearbeiten“) lässt sich direkt in
+  der DoH/DoT-Karte eintragen, prüfen und entfernen. Es steht nur auf dem Server in `/etc/vpn/secrets.env`
+  (`CF_API_TOKEN=…`, Rechte 600) – nicht in der Datenbank – und wird in der Oberfläche nie wieder angezeigt.
 - **SmartDNS** (je Filterprofil): Domains wie `netflix.com` laufen über eine Ausgangsgruppe (Vorlagen für
   Netflix, Disney+, Prime Video, Max, BBC iPlayer u. a.). Für VPN-Geräte wirkt das wie eine Ziel-Regel.
   Geräte ohne VPN (Port 53, DoH, DoT) bekommen für diese Namen die Adresse des Servers; nginx reicht die

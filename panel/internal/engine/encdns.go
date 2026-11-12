@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -788,4 +789,99 @@ func (e *Engine) EncDNSState() EncDNSStatus {
 	x.mu.Unlock()
 	st.QDoH, st.QDoT, st.Denied = x.nDoH.Load(), x.nDoT.Load(), x.denied.Load()
 	return st
+}
+
+// ---------- Cloudflare-Token über die Oberfläche ----------
+
+var cfTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{20,200}$`)
+
+// SetCFToken schreibt das Token in <data>/secrets.env (Rechte 600) – nie in die Datenbank.
+// Leer = Zeile entfernen. Andere Zeilen der Datei bleiben unverändert.
+func (e *Engine) SetCFToken(tok string) error {
+	tok = strings.TrimSpace(tok)
+	if tok != "" && !cfTokenRe.MatchString(tok) {
+		return errors.New("das sieht nicht wie ein Cloudflare-API-Token aus (nur Buchstaben, Ziffern, - und _)")
+	}
+	path := filepath.Join(e.Cfg.DataDir, "secrets.env")
+	old, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var lines []string
+	done := false
+	for _, l := range strings.Split(strings.TrimRight(string(old), "\n"), "\n") {
+		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "export "))
+		if strings.HasPrefix(t, "CF_API_TOKEN=") {
+			if tok != "" && !done {
+				lines = append(lines, "CF_API_TOKEN="+tok)
+				done = true
+			}
+			continue
+		}
+		if l != "" || len(lines) > 0 {
+			lines = append(lines, l)
+		}
+	}
+	if tok != "" && !done {
+		if len(lines) == 0 {
+			lines = append(lines, "# Cloudflare-API-Token (Recht „Zone → DNS → Bearbeiten“) für das Let's-Encrypt-Zertifikat von DoH/DoT")
+		}
+		lines = append(lines, "CF_API_TOKEN="+tok)
+	}
+	if err := os.MkdirAll(e.Cfg.DataDir, 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	_ = os.Chmod(tmp, 0o600)
+	return os.Rename(tmp, path)
+}
+
+// CFTokenCheck: Ergebnis der Prüfung bei Cloudflare.
+type CFTokenCheck struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
+// VerifyCFToken fragt Cloudflare, ob das Token gültig ist und die Zone des DNS-Namens bearbeiten darf.
+func (e *Engine) VerifyCFToken() CFTokenCheck {
+	tok := e.cfToken()
+	if tok == "" {
+		return CFTokenCheck{Message: "Kein Token hinterlegt"}
+	}
+	if e.Sys.DryRun() {
+		return CFTokenCheck{OK: true, Message: "Testmodus: Token gespeichert, Cloudflare wird nicht gefragt"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cf := &cfAPI{token: tok}
+	var v struct {
+		Status    string `json:"status"`
+		ExpiresOn string `json:"expires_on"`
+	}
+	if err := cf.call(ctx, "GET", "/user/tokens/verify", nil, &v); err != nil {
+		return CFTokenCheck{Message: err.Error()}
+	}
+	if v.Status != "active" {
+		return CFTokenCheck{Message: "Token ist nicht aktiv (" + v.Status + ")"}
+	}
+	msg := "Token gültig"
+	if v.ExpiresOn != "" {
+		msg += ", läuft ab am " + strings.SplitN(v.ExpiresOn, "T", 2)[0]
+	}
+	host := e.encDNSHost()
+	if host == "" {
+		return CFTokenCheck{OK: true, Message: msg + " – Zone wird geprüft, sobald ein DNS-Name eingetragen ist"}
+	}
+	zone, err := cf.zoneFor(ctx, host)
+	if err != nil {
+		return CFTokenCheck{Message: msg + ", aber: " + err.Error()}
+	}
+	var recs []cfRecord
+	if err := cf.call(ctx, "GET", "/zones/"+zone+"/dns_records?per_page=1", nil, &recs); err != nil {
+		return CFTokenCheck{Message: msg + ", aber DNS-Einträge lesen geht nicht: " + err.Error()}
+	}
+	return CFTokenCheck{OK: true, Message: msg + " und hat Zugriff auf die Zone von " + host}
 }
