@@ -3,11 +3,13 @@
   import ProtoLogo from '../components/ProtoLogo.svelte';
   import PageHead from '../components/PageHead.svelte';
   import Modal from '../components/Modal.svelte';
+  import Info from '../components/Info.svelte';
   import Usage from '../components/Usage.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LimitsForm from '../components/LimitsForm.svelte';
   import { get, post, run } from '../lib/api.js';
-  import { ago, isOnline, onlineFor, sinceClock, rate, fromDateInput, limitsSummary } from '../lib/format.js';
+  import { ago, isOnline, onlineFor, sinceClock, rate, fromDateInput, limitsSummary, PROTO_LABEL } from '../lib/format.js';
+  import { tokens, matches } from '../lib/pick.js';
   // Uhr für die Online-Dauer
   let now = $state(Date.now() / 1000);
   $effect(() => {
@@ -39,9 +41,9 @@
     { id: 'disabled', label: 'Deaktiviert' },
   ];
   const shown = $derived.by(() => {
-    const s = q.trim().toLowerCase();
+    const t = tokens(q);
     let list = users.filter((u) => {
-      if (s && !u.name.toLowerCase().includes(s) && !(u.note || '').toLowerCase().includes(s) && !(u.plan_name || '').toLowerCase().includes(s)) return false;
+      if (t.length && !matches(`${u.name} ${u.note || ''} ${u.plan_name || ''} ${u.find || ''} ${(u.protocols || []).map((p) => PROTO_LABEL[p] || p).join(' ')}`, t)) return false;
       if (filter === 'online') return u.online;
       if (filter === 'blocked') return u.status === 'blocked' || u.status === 'expired';
       if (filter !== 'all') return u.status === filter;
@@ -101,7 +103,7 @@
   <div class="toolbar">
     <div class="search">
       <Icon name="search" size={16} />
-      <input class="input" placeholder="Suchen nach Name, Notiz, Tarif …" bind:value={q} />
+      <input class="input" placeholder="Name, Gerät, Dienst, Server, Adresse, Tarif …" bind:value={q} />
     </div>
     <div class="row wrap">
       {#each filters as f}
@@ -166,13 +168,11 @@
     <div class="grid cols-2">
       <div class="field">
         <label for="nu-name">Name</label>
-        <input id="nu-name" class="input" bind:value={nu.name} placeholder="z. B. anna" />
-        <div class="help">Buchstaben, Ziffern, _ - . (max. 32)</div>
+        <input id="nu-name" class="input" bind:value={nu.name} placeholder="z. B. anna (a–z, 0–9, _ - .)" maxlength="32" />
       </div>
       <div class="field">
-        <label for="nu-exp">Gültig bis</label>
-        <input id="nu-exp" class="input" type="date" bind:value={nu.expires} />
-        <div class="help">Leer = unbegrenzt</div>
+        <label for="nu-exp">Gültig bis <Info title="Gültig bis" text="Leer = unbegrenzt. Nach Ablauf werden alle Zugänge gesperrt." /></label>
+        <input id="nu-exp" class="input" type="date" bind:value={nu.expires} title="Leer = unbegrenzt" />
       </div>
     </div>
     <div class="field">
@@ -197,7 +197,7 @@
     </div>
 
     <div class="field">
-      <span class="label">Zugänge automatisch anlegen</span>
+      <span class="label">Zugänge automatisch anlegen <Info title="Zugänge" text="Für jeden gewählten Server wird ein Zugang angelegt. Weitere Geräte (z. B. Homelab-Netz) kannst du danach beim Nutzer hinzufügen." /></span>
       {#each servers as s}
         {#if nu.access?.[s.id]}
           {@const p = protocol(s.protocol)}
@@ -218,7 +218,6 @@
       {:else}
         <div class="muted small">Noch keine Server angelegt.</div>
       {/each}
-      <div class="help">Weitere Geräte (z. B. Homelab-Netz) kannst du danach beim Nutzer hinzufügen.</div>
     </div>
   </div>
   {#snippet footer()}

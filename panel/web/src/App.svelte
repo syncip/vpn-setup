@@ -118,11 +118,11 @@
       {:else if section === '/users'}
         <Users />
       {:else if section === '/network'}
-        <Network id={Number(parts[1]) || 0} view={parts[2] || 'map'} />
+        <Network id={Number(parts[1]) || 0} view={parts[2] || 'map'} tab={parts[1] === 'access' ? 'access' : ''} />
       {:else if section === '/servers'}
         <Servers />
       {:else if section === '/proxy'}
-        <Proxy />
+        <Proxy tab={parts[1] || 'overview'} />
       {:else if section === '/dns'}
         <DNS tab={parts[1] || 'overview'} />
       {:else if section === '/iplists'}

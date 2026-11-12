@@ -142,6 +142,18 @@ type DNSStats struct {
 	TopDomains []DNSCount `json:"top_domains"`
 	TopBlocked []DNSCount `json:"top_blocked"`
 	TopClients []DNSCount `json:"top_clients"`
+	// weitere Kennzahlen
+	NXDomain  int        `json:"nxdomain"`   // Antwort „gibt es nicht“ (ohne Sperren)
+	ServFail  int        `json:"servfail"`   // Serverfehler
+	P50       int        `json:"p50"`        // ms, aufgelöste Anfragen
+	P95       int        `json:"p95"`        // ms
+	Domains   int        `json:"domains"`    // verschiedene Namen
+	Clients   int        `json:"clients"`    // verschiedene Geräte
+	QTypes    []DNSCount `json:"qtypes"`     // Name = Typnummer
+	Reasons   []DNSCount `json:"reasons"`    // Sperrgründe (Liste bzw. Regel)
+	Via       []DNSCount `json:"via"`        // Anfragen je Ausgangsgruppe (PeerID = Gruppe)
+	TopNX     []DNSCount `json:"top_nx"`     // häufigste Namen ohne Antwort
+	BlockedBy []DNSCount `json:"blocked_by"` // Geräte mit den meisten Sperren
 }
 
 // DNSStats wertet das Protokoll aus (peerID 0 = alle Geräte).
@@ -200,5 +212,62 @@ func (s *Store) DNSStats(since, peerID int64) (*DNSStats, error) {
 		func(c *DNSCount) []any { return []any{&c.PeerID, &c.Client, &c.Count, &c.Bl} }, &st.TopClients); err != nil {
 		return nil, err
 	}
+	if err := s.dnsMoreStats(st, cond, args); err != nil {
+		return nil, err
+	}
 	return st, nil
+}
+
+func (s *Store) dnsMoreStats(st *DNSStats, cond string, args []any) error {
+	st.QTypes, st.Reasons, st.Via, st.TopNX, st.BlockedBy = []DNSCount{}, []DNSCount{}, []DNSCount{}, []DNSCount{}, []DNSCount{}
+	if err := s.db.QueryRow(`SELECT COALESCE(SUM(rcode=3 AND action!='blocked'),0), COALESCE(SUM(rcode=2),0), COUNT(DISTINCT name), COUNT(DISTINCT peer_id) FROM dns_log`+cond, args...).
+		Scan(&st.NXDomain, &st.ServFail, &st.Domains, &st.Clients); err != nil {
+		return err
+	}
+	var okN int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM dns_log`+cond+` AND action='ok'`, args...).Scan(&okN); err != nil {
+		return err
+	}
+	pct := func(p float64) int {
+		if okN == 0 {
+			return 0
+		}
+		var ms int
+		_ = s.db.QueryRow(`SELECT ms FROM dns_log`+cond+` AND action='ok' ORDER BY ms LIMIT 1 OFFSET ?`, append(append([]any{}, args...), int(float64(okN-1)*p))...).Scan(&ms)
+		return ms
+	}
+	st.P50, st.P95 = pct(0.5), pct(0.95)
+	q := func(sql string, scan func(*DNSCount) []any, out *[]DNSCount) error {
+		rows, err := s.db.Query(sql, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c DNSCount
+			if err := rows.Scan(scan(&c)...); err != nil {
+				return err
+			}
+			*out = append(*out, c)
+		}
+		return rows.Err()
+	}
+	nameScan := func(c *DNSCount) []any { return []any{&c.Name, &c.Count} }
+	if err := q(`SELECT CAST(qtype AS TEXT), COUNT(*) AS n FROM dns_log`+cond+` GROUP BY qtype ORDER BY n DESC LIMIT 10`, nameScan, &st.QTypes); err != nil {
+		return err
+	}
+	// Grund ohne die konkrete Domain: „Liste „X“: a.b“ → „Liste „X““
+	if err := q(`SELECT CASE WHEN instr(detail, ': ') > 0 THEN substr(detail, 1, instr(detail, ': ') - 1) ELSE detail END AS r, COUNT(*) AS n FROM dns_log`+cond+
+		` AND action='blocked' GROUP BY r ORDER BY n DESC LIMIT 10`, nameScan, &st.Reasons); err != nil {
+		return err
+	}
+	if err := q(`SELECT via, COUNT(*) AS n FROM dns_log`+cond+` GROUP BY via ORDER BY n DESC LIMIT 10`,
+		func(c *DNSCount) []any { return []any{&c.PeerID, &c.Count} }, &st.Via); err != nil {
+		return err
+	}
+	if err := q(`SELECT name, COUNT(*) AS n FROM dns_log`+cond+` AND rcode=3 AND action!='blocked' GROUP BY name ORDER BY n DESC LIMIT 10`, nameScan, &st.TopNX); err != nil {
+		return err
+	}
+	return q(`SELECT peer_id, MAX(client), COUNT(*) AS n FROM dns_log`+cond+` AND action='blocked' GROUP BY peer_id ORDER BY n DESC LIMIT 10`,
+		func(c *DNSCount) []any { return []any{&c.PeerID, &c.Client, &c.Count} }, &st.BlockedBy)
 }

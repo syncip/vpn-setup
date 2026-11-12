@@ -2,6 +2,8 @@
   import Icon from '../components/Icon.svelte';
   import PageHead from '../components/PageHead.svelte';
   import QR from '../components/QR.svelte';
+  import Info from '../components/Info.svelte';
+  import PortHelp from '../components/PortHelp.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { date } from '../lib/format.js';
@@ -35,8 +37,16 @@
   let totpCode = $state('');
   let disablePw = $state('');
   let sessions = $state([]);
+  let priv = $state(null);
   async function loadSecurity() {
     sessions = await get('/auth/sessions');
+    const all = await get('/settings');
+    priv = { block: all.private_block !== '0', allow: all.private_allow || '' };
+  }
+  async function savePrivate() {
+    if (!priv.block && !(await confirmDialog({ title: 'Lokale Netze freigeben?', text: 'VPN-Nutzer können dann das interne Netz des Servers erreichen – auch den Proxmox-Host und dessen Weboberfläche.', ok: 'Freigeben', danger: true }))) return;
+    const r = await run(() => put('/settings', { private_block: priv.block ? '1' : '0', private_allow: priv.allow }), 'Gespeichert');
+    if (r) priv = { block: r.private_block !== '0', allow: r.private_allow || '' };
   }
   async function changePw() {
     if (pw.new !== pw.again) return run(() => Promise.reject(new Error('Die neuen Passwörter stimmen nicht überein')));
@@ -138,7 +148,7 @@
   <div class="card card-pad" style="max-width:760px">
     <div class="stack">
       {#each generalFields as f}
-        <div class="field"><label for="s-{f.key}">{f.label}</label><input id="s-{f.key}" class="input" bind:value={s[f.key]} />{#if f.help}<div class="help">{f.help}</div>{/if}</div>
+        <div class="field"><label for="s-{f.key}">{f.label} {#if f.help}<Info title={f.label} text={f.help} />{/if}</label><input id="s-{f.key}" class="input" bind:value={s[f.key]} /></div>
       {/each}
       <label class="switch"><input type="checkbox" checked={s.trust_cloudflare === '1'} onchange={(e) => (s.trust_cloudflare = e.currentTarget.checked ? '1' : '0')} /><span class="track"></span> Echte Besucher-IP von Cloudflare übernehmen (CF-Connecting-IP)</label>
       <label class="switch"><input type="checkbox" checked={s.update_check !== '0'} onchange={(e) => (s.update_check = e.currentTarget.checked ? '1' : '0')} /><span class="track"></span> Nach neuen Versionen suchen (fragt alle 12 Stunden bei GitHub nach, ohne Daten mitzuschicken)</label>
@@ -146,7 +156,7 @@
       {#if showAdv}
         <div class="grid cols-2">
           {#each advFields as f}
-            <div class="field"><label for="s-{f.key}">{f.label}</label><input id="s-{f.key}" class="input" inputmode={f.num ? 'numeric' : 'text'} bind:value={s[f.key]} />{#if f.help}<div class="help">{f.help}</div>{/if}</div>
+            <div class="field"><label for="s-{f.key}">{f.label} {#if f.help}<Info title={f.label} text={f.help} />{/if}</label><input id="s-{f.key}" class="input" inputmode={f.num ? 'numeric' : 'text'} bind:value={s[f.key]} /></div>
           {/each}
         </div>
       {/if}
@@ -159,7 +169,7 @@
       <div class="card-head"><h3><Icon name="key" size={16} /> Passwort ändern</h3></div>
       <div class="card-pad stack">
         <div class="field"><label for="pw1">Aktuelles Passwort</label><input id="pw1" type="password" class="input" bind:value={pw.current} autocomplete="current-password" /></div>
-        <div class="field"><label for="pw2">Neues Passwort</label><input id="pw2" type="password" class="input" bind:value={pw.new} autocomplete="new-password" /><div class="help">Mindestens 10 Zeichen. Andere Sitzungen werden abgemeldet.</div></div>
+        <div class="field"><label for="pw2">Neues Passwort</label><input id="pw2" type="password" class="input" bind:value={pw.new} autocomplete="new-password" placeholder="mindestens 10 Zeichen" /></div>
         <div class="field"><label for="pw3">Wiederholen</label><input id="pw3" type="password" class="input" bind:value={pw.again} autocomplete="new-password" /></div>
         <div><button class="btn primary" onclick={changePw} disabled={!pw.current || !pw.new}>Ändern</button></div>
       </div>
@@ -187,6 +197,33 @@
         {/if}
       </div>
     </div>
+    {#if priv}
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-head">
+          <h3>
+            <Icon name="lock" size={16} /> Lokale Netze für VPN-Nutzer
+            <Info title="Lokale Netze" wide>
+              <p>Ohne Sperre könnten VPN-Nutzer über den Server private Adressen erreichen – das interne Netz des Containers (z. B. 10.10.10.0/24 mit dem Proxmox-Host und seiner Weboberfläche), andere VMs, Loopback-Dienste (Panel, Xray-API) und die öffentliche Adresse des Servers selbst.</p>
+              <ul>
+                <li>Gesperrt: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 (CGNAT/Tailscale), 127.0.0.0/8, 169.254.0.0/16, IPv6 fc00::/7, fe80::/10, ::1 – und die Adressen der Server-Domain.</li>
+                <li>Gilt für WireGuard, OpenVPN, VLESS, Hysteria2 und Proxy.</li>
+                <li>Netze zwischen VPN-Servern gibst du gezielt unter <a href="#/network/access">Netzwerk → Zugriff</a> frei. Geräte desselben WireGuard-Servers erreichen sich weiter nach dessen Einstellung.</li>
+                <li>Ausnahmen unten gelten für alle VPN-Nutzer.</li>
+              </ul>
+            </Info>
+          </h3>
+          {#if priv.block}<span class="badge ok">gesperrt</span>{:else}<span class="badge bad">offen</span>{/if}
+        </div>
+        <div class="card-pad stack">
+          <label class="switch"><input type="checkbox" bind:checked={priv.block} /><span class="track"></span> Private Netze, Proxmox-Host und den Server selbst für VPN-Nutzer sperren (empfohlen)</label>
+          <div class="field">
+            <label for="priv-allow">Ausnahmen für alle <span class="muted">(optional)</span></label>
+            <textarea id="priv-allow" class="input mono" rows="3" bind:value={priv.allow} disabled={!priv.block} placeholder="192.168.50.0/24"></textarea>
+          </div>
+          <div><button class="btn primary" onclick={savePrivate}>Speichern</button></div>
+        </div>
+      </div>
+    {/if}
     <div class="card" style="grid-column:1/-1">
       <div class="card-head"><h3><Icon name="eye" size={16} /> Angemeldete Sitzungen</h3><button class="btn sm" onclick={logoutOthers}>Alle anderen abmelden</button></div>
       <div class="table-wrap">
@@ -224,9 +261,9 @@
       <div class="card-head"><h3>Administrator hinzufügen</h3></div>
       <div class="card-pad stack">
         <div class="field"><label for="na-u">Benutzername</label><input id="na-u" class="input" bind:value={na.username} autocomplete="off" /></div>
-        <div class="field"><label for="na-p">Passwort</label><input id="na-p" type="password" class="input" bind:value={na.password} autocomplete="new-password" /><div class="help">Mindestens 10 Zeichen. 2FA richtet jeder selbst ein.</div></div>
+        <div class="field"><label for="na-p">Passwort</label><input id="na-p" type="password" class="input" bind:value={na.password} autocomplete="new-password" placeholder="mindestens 10 Zeichen" /></div>
         <div><button class="btn primary" onclick={addAdmin} disabled={!na.username || !na.password}>Anlegen</button></div>
-        <div class="help">Passwort vergessen? Auf dem Server: <code>vpn admin passwd &lt;name&gt;</code></div>
+        <div class="row small muted" style="gap:6px">Passwort vergessen? <Info title="Passwort vergessen" wide><p>Auf dem Server als root:</p><pre>vpn admin passwd &lt;name&gt;</pre><p>2FA abschalten: <code>vpn admin 2fa-off &lt;name&gt;</code>. 2FA richtet jeder Administrator selbst ein.</p></Info></div>
       </div>
     </div>
   </div>
@@ -255,9 +292,8 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Portweiterleitungen auf dem Host</h3></div>
+        <div class="card-head"><h3>Portweiterleitungen auf dem Host <Info title="Firewall-Regeln für den Proxmox-Host" wide><PortHelp ports={sys.ports} /></Info></h3></div>
         <div class="card-pad stack-sm">
-          <p class="muted small" style="margin:0">Diese Ports müssen auf dem Proxmox-Host (IPv4 und IPv6) an den Container weitergeleitet sein:</p>
           <table class="table">
             <tbody>
               {#each sys.ports as p}

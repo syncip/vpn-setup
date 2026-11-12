@@ -5,7 +5,9 @@
   import ProtoLogo from './ProtoLogo.svelte';
   import TimeChart from './TimeChart.svelte';
   import { get } from '../lib/api.js';
-  import { speed, duration } from '../lib/format.js';
+  import SearchInput from './SearchInput.svelte';
+  import { speed, duration, PROTO_LABEL } from '../lib/format.js';
+  import { tokens, matches } from '../lib/pick.js';
 
   let { user = 0, compact = false, connected = $bindable(0) } = $props();
 
@@ -54,11 +56,17 @@
     }
     return { up: d.total.up, down: d.total.down };
   });
-  const peers = $derived((d?.peers || []).filter((p) => !user || p.user_id === Number(user)));
+  const allPeers = $derived((d?.peers || []).filter((p) => !user || p.user_id === Number(user)));
   $effect(() => {
-    connected = peers.length;
+    connected = allPeers.length;
   });
-  const peak = $derived(Math.max(1, ...peers.map((p) => p.up + p.down)));
+  // Suche über verbundene Geräte
+  let lq = $state('');
+  const peers = $derived.by(() => {
+    const t = tokens(lq);
+    return allPeers.filter((p) => matches(`${p.user} ${p.name} ${PROTO_LABEL[p.protocol] || p.protocol} ${p.server} ${p.endpoint || ''}`, t));
+  });
+  const peak = $derived(Math.max(1, ...allPeers.map((p) => p.up + p.down)));
 </script>
 
 {#if err}<div class="notice bad" style="margin-bottom:12px">{err}</div>{/if}
@@ -99,7 +107,13 @@
     <TimeChart mode="line" points={hist} from={now - win * 1000} to={now} format={speed} gap={25000} height={compact ? 160 : 200} legendNow />
   </div>
 
-  {#if !compact || peers.length}
+  {#if !compact || allPeers.length}
+    {#if allPeers.length > 8}
+      <div class="lsearch">
+        <SearchInput bind:value={lq} placeholder="Verbundene Geräte durchsuchen …" width="300px" />
+        <span class="muted small">{lq ? `${peers.length} von ${allPeers.length}` : `${allPeers.length} verbunden`}</span>
+      </div>
+    {/if}
     <div class="table-wrap">
       <table class="table">
         <thead>
@@ -126,7 +140,7 @@
               </td>
             </tr>
           {:else}
-            <tr><td colspan="6" class="empty small"><Icon name="moon" size={16} /> Gerade ist niemand verbunden</td></tr>
+            <tr><td colspan="6" class="empty small">{#if allPeers.length}Keine Treffer für „{lq}“{:else}<Icon name="moon" size={16} /> Gerade ist niemand verbunden{/if}</td></tr>
           {/each}
         </tbody>
       </table>
@@ -138,6 +152,13 @@
 </div>
 
 <style>
+  .lsearch {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 0 18px 10px;
+  }
   .kpis {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

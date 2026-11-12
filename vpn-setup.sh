@@ -137,6 +137,10 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx openvpn   iputils-ping conntrack nftables
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnginx-mod-stream || true
+# Unbound: wahlweise Auflösung für den Panel-DNS (DNS → Einstellungen). Das Panel schreibt die
+# Konfiguration selbst (127.0.0.1:5335) und startet den Dienst nur, wenn Unbound gewählt ist.
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends unbound || true
+if [[ ! -f /etc/unbound/unbound.conf.d/vpnpanel.conf ]]; then systemctl disable --now unbound 2>/dev/null || true; fi
 
 echo ">> Forwarding aktivieren"
 cat > /etc/sysctl.d/99-vpn.conf <<EOF

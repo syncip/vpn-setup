@@ -548,6 +548,25 @@ func applyServer(env *proto.Env, sb *proto.ServerBundle) error {
 		}
 		cfg["acl"] = map[string]any{"inline": acl}
 	}
+	// Private Ziele (internes Netz, Proxmox-Host, Loopback) und der Server selbst sind gesperrt –
+	// Hysteria kann Nutzer nicht einzeln unterscheiden, deshalb gelten nur die Ausnahmen für alle.
+	if pg := env.Global.Private; pg != nil {
+		var pre []string
+		for _, p := range pg.Allow {
+			pre = append(pre, fmt.Sprintf("direct(%s)", p))
+		}
+		for _, p := range pg.Nets {
+			pre = append(pre, fmt.Sprintf("reject(%s)", p))
+		}
+		var rest []string
+		if a, ok := cfg["acl"].(map[string]any); ok {
+			rest, _ = a["inline"].([]string)
+		}
+		if rest == nil {
+			rest = []string{"direct(all)"}
+		}
+		cfg["acl"] = map[string]any{"inline": append(pre, rest...)}
+	}
 	// JSON ist gültiges YAML – Hysteria liest die Datei mit einem YAML-Parser.
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	data = append([]byte("# Vom VPN-Panel erzeugt – Änderungen werden überschrieben.\n"), append(data, '\n')...)

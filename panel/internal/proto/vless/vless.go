@@ -261,6 +261,7 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 	}
 	classes := map[string]*class{}
 	var classKeys []string
+	grantEmails := map[string][]string{} // freigegebene Netze (Netzwerk → Zugriff) → Zugänge
 
 	var inbounds []map[string]any
 	for _, in := range ins {
@@ -270,6 +271,10 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 				continue
 			}
 			clients = append(clients, map[string]any{"id": proto.Str(pb.Peer.Secrets, "uuid"), "flow": in.cfg.Flow, "email": email(pb.Peer), "level": 0})
+			for _, t := range env.Global.Net.For(pb.Peer.ID) {
+				k := strings.Join(proto.PrefixStrings(t.Nets), ",")
+				grantEmails[k] = appendUnique(grantEmails[k], email(pb.Peer))
+			}
 			uid := int64(0)
 			if in.cfg.Shaping && (pb.RateDown > 0 || pb.RateUp > 0) {
 				limited[pb.User.ID] = lim{pb.RateDown, pb.RateUp}
@@ -370,6 +375,25 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		outbounds = append(outbounds, map[string]any{"protocol": "freedom", "tag": tag, "settings": freedom,
 			"streamSettings": map[string]any{"sockopt": map[string]any{"mark": markBase + id}}})
 		rules = append(rules, map[string]any{"type": "field", "user": byUser[id], "outboundTag": tag})
+	}
+	// Private Ziele (internes Netz, Proxmox-Host, Loopback mit Xray-API und Panel) und der Server
+	// selbst sind gesperrt – außer Ausnahmen und Freigaben. Steht vor allen anderen Regeln.
+	if pg := env.Global.Private; pg != nil {
+		var pre []map[string]any
+		var keys []string
+		for k := range grantEmails {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			pre = append(pre, map[string]any{"type": "field", "user": grantEmails[k], "ip": strings.Split(k, ","), "outboundTag": "direct"})
+		}
+		if len(pg.Allow) > 0 {
+			pre = append(pre, map[string]any{"type": "field", "ip": proto.PrefixStrings(pg.Allow), "outboundTag": "direct"})
+		}
+		pre = append(pre, map[string]any{"type": "field", "ip": proto.PrefixStrings(pg.Nets), "outboundTag": "block"})
+		rules = append(pre, rules...)
+		ipRules = true // auch Namen, die auf private Adressen zeigen, müssen auffallen
 	}
 	rules = aclRules(env, ins, rules)
 	routing := map[string]any{"rules": orEmpty(rules)}

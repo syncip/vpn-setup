@@ -7,6 +7,10 @@
   import { get, post, put, del, run } from '../lib/api.js';
   import { ago, fmtNum } from '../lib/format.js';
   import { go } from '../lib/state.svelte.js';
+  import Picker from '../components/Picker.svelte';
+  import Info from '../components/Info.svelte';
+  import { peerItems, userItems, serverItems } from '../lib/pick.js';
+  import DNSExternal from '../components/DNSExternal.svelte';
 
   let { tab = 'overview' } = $props();
 
@@ -24,6 +28,7 @@
     ['log', 'Protokoll', 'list'],
     ['profiles', 'Filterprofile', 'shield'],
     ['lists', 'Blocklisten', 'filter'],
+    ['external', 'Ohne VPN', 'globe'],
     ['settings', 'Einstellungen', 'settings'],
   ];
 
@@ -32,11 +37,17 @@
   const srvById = $derived(Object.fromEntries(d.choices.servers.map((s) => [s.id, s])));
   const groupById = $derived(Object.fromEntries(d.choices.groups.map((g) => [g.id, g])));
   const dnsPeers = $derived(d.choices.peers.filter((p) => p.protocol === 'wireguard' || p.protocol === 'openvpn'));
+  const extById = $derived(Object.fromEntries((d.ext || []).map((c) => [c.id, c])));
   const peerLabel = (id) => {
+    if (id < 0) return `Ohne VPN · ${extById[-id]?.name || `#${-id}`}`;
     const p = peerById[id];
     if (!p) return id ? `Gerät #${id}` : 'unbekannt';
     return `${userById[p.user_id]?.name || '?'} · ${p.name}`;
   };
+  // Auswahl mit Suche: Geräte mit Dienst und Server, gleichnamige Geräte unterscheidbar
+  const dnsServers = $derived(d.choices.servers.filter((s) => s.protocol === 'wireguard' || s.protocol === 'openvpn'));
+  const peerPick = $derived(peerItems(dnsPeers, d.choices.users, d.choices.servers));
+  const peerSub = $derived(Object.fromEntries(peerPick.map((i) => [i.value, i])));
   const when = (ts) => (ago(ts) === 'online' ? 'gerade eben' : ago(ts));
   const clock = (ts) => new Date(ts * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const day = (ts) => new Date(ts * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
@@ -158,33 +169,37 @@
   let pOpen = $state(false);
   let pCur = $state(null);
   let pf = $state({});
-  let addKind = $state('user');
-  let addId = $state(0);
   function openProfile(p = null) {
     pCur = p;
     pf = p
       ? { name: p.name, enabled: p.enabled, lists: [...p.lists], rules: p.rules, assign: [...p.assign], block_doh: p.block_doh, nxdomain: p.nxdomain }
       : { name: d.profiles.length ? '' : 'Standard', enabled: true, lists: d.lists.filter((l) => l.mode === 'block').map((l) => l.id), rules: '', assign: d.profiles.length ? [] : ['global'], block_doh: true, nxdomain: false };
-    addKind = 'user';
-    addId = 0;
     pOpen = true;
   }
   function toggleList(id) {
     pf.lists = pf.lists.includes(id) ? pf.lists.filter((x) => x !== id) : [...pf.lists, id];
   }
+  // [Icon, Text, Protokoll, Zusatz]
   function assignLabel(a) {
-    if (a === 'global') return ['globe', 'Alle Geräte'];
+    if (a === 'global') return ['globe', 'Alle Geräte', '', ''];
     const [k, idText] = a.split(':');
     const id = Number(idText);
-    if (k === 'server') return ['server', srvById[id]?.name || `Server #${id}`];
-    if (k === 'user') return ['user', userById[id]?.name || `Nutzer #${id}`];
-    return ['phone', peerLabel(id)];
+    if (k === 'server') return ['server', srvById[id]?.name || `Server #${id}`, srvById[id]?.protocol || '', 'Server'];
+    if (k === 'user') return ['user', userById[id]?.name || `Nutzer #${id}`, '', 'Nutzer'];
+    const it = peerSub[id];
+    return ['phone', peerLabel(id), it?.proto || '', it?.sub || ''];
   }
-  const addOptions = $derived(addKind === 'server' ? d.choices.servers.filter((s) => s.protocol === 'wireguard' || s.protocol === 'openvpn') : addKind === 'user' ? d.choices.users : dnsPeers);
-  function addAssign() {
-    const v = addKind === 'global' ? 'global' : `${addKind}:${addId}`;
-    if ((addKind === 'global' || Number(addId)) && !pf.assign.includes(v)) pf.assign = [...pf.assign, v];
-    addId = 0;
+  // eine Suche über alle: Server, Nutzer, Geräte
+  const assignPick = $derived(
+    [
+      { value: 'global', label: 'Alle Geräte', icon: 'globe', sub: 'alle WireGuard- und OpenVPN-Geräte', search: 'alle geräte global' },
+      ...serverItems(dnsServers, 'server'),
+      ...userItems(d.choices.users, 'user', dnsPeers),
+      ...peerItems(dnsPeers, d.choices.users, d.choices.servers, 'peer'),
+    ].filter((i) => !(pf.assign || []).includes(i.value)),
+  );
+  function addAssign(it) {
+    if (!pf.assign.includes(it.value)) pf.assign = [...pf.assign, it.value];
   }
   async function saveProfile() {
     const body = $state.snapshot(pf);
@@ -207,23 +222,54 @@
   let lOpen = $state(false);
   let lCur = $state(null);
   let lf = $state({});
+  // Profile, in denen eine neue Liste gleich landet: die für alle Geräte, sonst das einzige Profil
+  const globalProfiles = $derived(d.profiles.filter((p) => p.assign.includes('global')));
+  function defaultProfiles() {
+    if (globalProfiles.length) return globalProfiles.map((p) => p.id);
+    return d.profiles.length === 1 ? [d.profiles[0].id] : [];
+  }
   function openList(l = null, preset = null) {
     lCur = l;
     lf = l
-      ? { name: l.name, enabled: l.enabled, mode: l.mode, url: l.url, refresh: l.refresh, entries: l.entries.join('\n') }
-      : { name: preset?.name || '', enabled: true, mode: 'block', url: preset?.url || '', refresh: 24, entries: '' };
+      ? { name: l.name, enabled: l.enabled, mode: l.mode, url: l.url, refresh: l.refresh, entries: l.entries.join('\n'), profiles: d.profiles.filter((p) => p.lists.includes(l.id)).map((p) => p.id), mkStd: false }
+      : { name: preset?.name || '', enabled: true, mode: 'block', url: preset?.url || '', refresh: 24, entries: '', profiles: defaultProfiles(), mkStd: !d.profiles.length };
     lOpen = true;
   }
+  function toggleLP(id) {
+    lf.profiles = lf.profiles.includes(id) ? lf.profiles.filter((x) => x !== id) : [...lf.profiles, id];
+  }
+  // Liste in die gewählten Profile eintragen bzw. austragen (oder Profil „Standard“ anlegen)
+  async function syncProfiles(listId, want, mkStd) {
+    if (mkStd && !d.profiles.length) {
+      await run(() => post('/dns/profiles', { name: 'Standard', enabled: true, lists: [listId], rules: '', assign: ['global'], block_doh: true, nxdomain: false }), 'Profil „Standard“ für alle Geräte angelegt');
+      return;
+    }
+    for (const p of d.profiles) {
+      const has = p.lists.includes(listId);
+      const on = want.includes(p.id);
+      if (has === on) continue;
+      const lists = on ? [...p.lists, listId] : p.lists.filter((x) => x !== listId);
+      await run(() => put(`/dns/profiles/${p.id}`, { lists }));
+    }
+  }
   async function saveList() {
-    const body = $state.snapshot(lf);
-    body.refresh = Number(body.refresh) || 0;
+    const { profiles, mkStd, ...rest } = $state.snapshot(lf);
+    const body = { ...rest, refresh: Number(rest.refresh) || 0 };
     const r = lCur ? await run(() => put(`/dns/lists/${lCur.id}`, body), 'Liste gespeichert') : await run(() => post('/dns/lists', body), 'Liste angelegt – wird geladen');
     if (r) {
+      await syncProfiles(lCur ? lCur.id : r.id, profiles, mkStd);
       lOpen = false;
       load();
       setTimeout(load, 3000);
     }
   }
+  // Übersicht „So wird gefiltert“: Listen ohne Profil wirken nicht
+  const unusedLists = $derived(d.lists.filter((l) => l.enabled && !d.profiles.some((p) => p.enabled && p.lists.includes(l.id))));
+  const activeProfiles = $derived(d.profiles.filter((p) => p.enabled));
+  async function addUnusedTo(p) {
+    if (await run(() => put(`/dns/profiles/${p.id}`, { lists: [...new Set([...p.lists, ...unusedLists.map((l) => l.id)])] }), `Listen in „${p.name}“ aufgenommen`)) load();
+  }
+  const listDomains = (p) => p.lists.reduce((a, id) => a + (d.lists.find((l) => l.id === id && l.enabled)?.total || 0), 0);
   let busy = $state(0);
   async function refreshList(l) {
     busy = l.id;
@@ -248,11 +294,121 @@
   // ---------- Einstellungen ----------
   let sf = $state(null);
   $effect(() => {
-    if (loaded && !sf) sf = { enabled: d.settings.enabled === '1', upstream: d.settings.upstream, log_days: Number(d.settings.log_days) };
+    if (loaded && !sf)
+      sf = {
+        enabled: d.settings.enabled === '1',
+        upstream: d.settings.upstream,
+        log_days: Number(d.settings.log_days),
+        cache_size: Number(d.settings.cache_size ?? 50000),
+        ttl_min: Number(d.settings.ttl_min || 0),
+        ttl_max: Number(d.settings.ttl_max || 86400),
+        nocache: d.settings.nocache || '',
+        strategy: d.settings.strategy || 'order',
+        resolver: d.settings.resolver || 'upstream',
+        auto: d.settings.auto === '1',
+        auto_hours: Number(d.settings.auto_hours || 24),
+        auto_count: Number(d.settings.auto_count || 2),
+      };
   });
+  const STRATEGY = [
+    ['order', 'Reihenfolge', 'Der erste Server antwortet; die weiteren nur, wenn er ausfällt.'],
+    ['fastest', 'Schnellster', 'Zuerst der Server mit der besten gemessenen Antwortzeit (wird laufend gemessen).'],
+    ['roundrobin', 'Reihum (Round Robin)', 'Anfragen gleichmäßig verteilen – keiner der Anbieter sieht alles.'],
+    ['parallel', 'Parallel', 'An bis zu drei Server gleichzeitig, die erste Antwort gilt – am schnellsten, mehr Last.'],
+  ];
+  const TTLS = [
+    [0, 'wie vom Server'],
+    [30, '30 Sekunden'],
+    [60, '1 Minute'],
+    [300, '5 Minuten'],
+    [600, '10 Minuten'],
+    [1800, '30 Minuten'],
+    [3600, '1 Stunde'],
+    [21600, '6 Stunden'],
+    [86400, '1 Tag'],
+  ];
+  const CACHES = [
+    [0, 'aus'],
+    [5000, '5 000 Antworten'],
+    [20000, '20 000 Antworten'],
+    [50000, '50 000 Antworten'],
+    [100000, '100 000 Antworten'],
+    [250000, '250 000 Antworten'],
+  ];
+  // DNS-Speedtest
+  let speed = $state(null);
+  let speedBusy = $state(false);
+  async function runSpeed() {
+    speedBusy = true;
+    const r = await run(() => post('/dns/speedtest', {}));
+    speedBusy = false;
+    if (r) speed = r.results;
+  }
+  // Liste der Server für Speedtest und automatische Wahl
+  const cands = $derived(
+    (d.settings.candidates || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const i = l.indexOf(' ');
+        return i < 0 ? { addr: l, name: l } : { addr: l.slice(0, i), name: l.slice(i + 1) };
+      }),
+  );
+  const candSet = $derived(new Set(cands.map((c) => c.addr)));
+  let newCand = $state({ addr: '', name: '' });
+  async function saveCands(list, msg) {
+    const text = list.map((c) => `${c.addr} ${c.name}`).join('\n');
+    if (await run(() => put('/dns/settings', { candidates: text }), msg)) {
+      await load();
+      return true;
+    }
+    return false;
+  }
+  async function addCand() {
+    const addr = newCand.addr.trim();
+    if (!addr) return;
+    if (await saveCands([...cands, { addr, name: newCand.name.trim() || addr }], 'Server hinzugefügt')) newCand = { addr: '', name: '' };
+  }
+  async function dropCand(addr) {
+    if ((await saveCands(cands.filter((c) => c.addr !== addr), 'Server entfernt')) && speed) speed = speed.filter((x) => x.addr !== addr || x.current);
+  }
+  async function resetCands() {
+    if (!(await confirmDialog({ title: 'Liste zurücksetzen?', text: 'Die eingebaute Liste bekannter DNS-Server wird wiederhergestellt.', ok: 'Zurücksetzen' }))) return;
+    if (await run(() => put('/dns/settings', { candidates: '' }), 'Liste zurückgesetzt')) load();
+  }
+  const isLocal = (a) => a.startsWith('127.') || a.startsWith('[::1]');
+  const srvName = (a) => (a.replace(/:53$/, '') === '127.0.0.1:5335' ? 'Unbound' : a.replace(/:53$/, ''));
+  // automatische Wahl
+  let autoBusy = $state(false);
+  async function autoNow() {
+    autoBusy = true;
+    const r = await run(() => post('/dns/auto', {}));
+    autoBusy = false;
+    if (r) {
+      await load();
+      sf = null;
+    }
+  }
+  const HOURS = [
+    [1, 'stündlich'],
+    [6, 'alle 6 Stunden'],
+    [12, 'alle 12 Stunden'],
+    [24, 'täglich'],
+    [72, 'alle 3 Tage'],
+    [168, 'wöchentlich'],
+  ];
+  function useServers(n) {
+    sf.upstream = speed
+      .filter((x) => x.ok)
+      .slice(0, n)
+      .map((x) => x.addr)
+      .join(', ');
+  }
   async function saveSettings() {
     const body = $state.snapshot(sf);
     body.log_days = Number(body.log_days) || 0;
+    for (const k of ['cache_size', 'ttl_min', 'ttl_max']) body[k] = Number(body[k]) || 0;
     if (body.log_days === 0 && Number(d.settings.log_days) > 0) {
       if (!(await confirmDialog({ title: 'Protokoll abschalten?', text: 'Das vorhandene DNS-Protokoll wird gelöscht.', ok: 'Abschalten', danger: true }))) return;
     }
@@ -260,7 +416,7 @@
   }
 </script>
 
-<PageHead title="DNS" subtitle="Eigener DNS für WireGuard- und OpenVPN-Geräte: Werbung und Tracker sperren, eigene Antworten, Protokoll">
+<PageHead title="DNS" subtitle="Eigener DNS für WireGuard- und OpenVPN-Geräte">
   {#if tab === 'profiles'}<button class="btn primary" onclick={() => openProfile()}><Icon name="plus" size={16} /> Profil anlegen</button>{/if}
   {#if tab === 'lists'}<button class="btn primary" onclick={() => openList()}><Icon name="plus" size={16} /> Liste anlegen</button>{/if}
 </PageHead>
@@ -292,6 +448,54 @@
       {#each [[24, '24 h'], [168, '7 Tage'], [720, '30 Tage']] as [h, label]}
         <button class:active={hours === h} onclick={() => (hours = h)}>{label}</button>
       {/each}
+    </div>
+  </div>
+
+  <div class="card filtercard">
+    <div class="card-head">
+      <h3>
+        So wird gefiltert
+        <Info title="Blocklisten und Filterprofile" wide>
+          <p><b>Blocklisten</b> sagen, <i>was</i> gesperrt wird – große Sammlungen von Domains (Werbung, Tracker, …), die der Server regelmäßig neu lädt.</p>
+          <p><b>Filterprofile</b> sagen, <i>für wen</i> welche Listen gelten – plus eigene Regeln (sperren, freigeben, eigene Antworten). So bekommt z. B. ein Profil „Kinder“ strengere Listen als „Standard“.</p>
+          <p>Eine Liste wirkt erst, wenn sie in einem aktiven Profil steckt. Beim Anlegen einer Liste kannst du die Profile gleich mit auswählen; gibt es noch keins, legt das Panel „Standard“ für alle Geräte an.</p>
+          <p>Für jedes Gerät gilt genau ein Profil: Gerät vor Nutzer vor Server vor „Alle Geräte“.</p>
+        </Info>
+      </h3>
+      <button class="btn sm" onclick={() => go('/dns/lists')}><Icon name="filter" size={14} /> Blocklisten</button>
+    </div>
+    <div class="card-pad stack" style="gap:8px;padding-top:0">
+      {#if loaded && !activeProfiles.length}
+        <div class="notice warn small">
+          <Icon name="alert" size={16} />
+          <span>Es wird noch nichts gefiltert – kein aktives Filterprofil.{#if d.lists.length}&nbsp;{d.lists.length} {d.lists.length === 1 ? 'Liste ist' : 'Listen sind'} angelegt, aber keinem Profil zugeordnet.{/if}</span>
+          <button class="btn sm primary" onclick={() => openProfile()}>Profil „Standard“ anlegen</button>
+        </div>
+      {/if}
+      {#each activeProfiles as p}
+        <div class="fline">
+          <Icon name="shield" size={15} />
+          <button class="linkbtn strong" onclick={() => openProfile(p)}>{p.name}</button>
+          <Icon name="arrow-right" size={13} />
+          {#each p.assign.slice(0, 4) as a}
+            {@const [ic, label] = assignLabel(a)}
+            <span class="badge"><Icon name={ic} size={12} /> {label}</span>
+          {:else}
+            <span class="warn-t small">noch niemandem zugeordnet</span>
+          {/each}
+          {#if p.assign.length > 4}<span class="muted small">+{p.assign.length - 4}</span>{/if}
+          <span class="muted small">· {p.lists.length} {p.lists.length === 1 ? 'Liste' : 'Listen'} ({fmtNum(listDomains(p))} Domains) · {ruleCount(p.rules)} eigene Regeln{p.block_doh ? ' · DoH gesperrt' : ''}</span>
+        </div>
+      {/each}
+      {#if unusedLists.length && activeProfiles.length}
+        <div class="notice warn small">
+          <Icon name="alert" size={16} />
+          <span>{unusedLists.map((l) => l.name).join(', ')} {unusedLists.length === 1 ? 'steckt' : 'stecken'} in keinem aktiven Profil und {unusedLists.length === 1 ? 'wirkt' : 'wirken'} nicht.</span>
+          {#each (globalProfiles.length ? globalProfiles : activeProfiles).filter((p) => p.enabled).slice(0, 2) as p}
+            <button class="btn sm" onclick={() => addUnusedTo(p)}>In „{p.name}“ aufnehmen</button>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -352,16 +556,65 @@
         </div>
       </div>
     </div>
+
+    <div class="grid cols-4 kpis" style="margin-top:14px">
+      <div class="card card-pad"><div class="muted tiny">Verschiedene Domains</div><div class="kpi">{fmtNum(stats.domains || 0)}</div><div class="tiny muted">von {fmtNum(stats.clients || 0)} {stats.clients === 1 ? 'Gerät' : 'Geräten'}</div></div>
+      <div class="card card-pad"><div class="muted tiny">Antwortzeit Median / 95 % <Info title="Antwortzeit" text="Nur Anfragen, die das Panel bei einem DNS-Server nachfragen musste. 95 % = so schnell waren 95 von 100 Antworten." /></div><div class="kpi">{fmtNum(stats.p50 || 0)} <span class="tiny muted">/ {fmtNum(stats.p95 || 0)} ms</span></div></div>
+      <div class="card card-pad"><div class="muted tiny">„Gibt es nicht“ (NXDOMAIN) <Info title="NXDOMAIN" text="Namen, die es nicht gibt (Tippfehler, abgeschaltete Dienste, Suchanfragen von Geräten). Gesperrte Namen zählen hier nicht mit." /></div><div class="kpi">{pct(stats.nxdomain || 0, stats.total)} %</div><div class="tiny muted">{fmtNum(stats.nxdomain || 0)} Anfragen</div></div>
+      <div class="card card-pad"><div class="muted tiny">Fehler (keine Antwort, SERVFAIL)</div><div class="kpi" class:bad-text={stats.errors + (stats.servfail || 0) > 0}>{pct(stats.errors + (stats.servfail || 0), stats.total)} %</div><div class="tiny muted">{fmtNum(stats.errors)} ohne Antwort · {fmtNum(stats.servfail || 0)} SERVFAIL</div></div>
+    </div>
+
+    <div class="grid cols-3" style="margin-top:14px">
+      <div class="card">
+        <div class="card-head"><h3>Abfragetypen <Info title="Abfragetypen" text="A = IPv4-Adresse, AAAA = IPv6-Adresse, HTTPS/SVCB = Verbindungshinweise für Browser, PTR = Rückwärtsauflösung, TXT/SRV = Dienstinfos." /></h3></div>
+        <div class="toplist">
+          {#each stats.qtypes || [] as r}
+            <div class="toprow"><span class="small grow">{QTYPE[r.name] || `Typ ${r.name}`}</span><span class="share"><span style="width:{pct(r.count, stats.total)}%"></span></span><span class="tiny muted num">{pct(r.count, stats.total)} %</span></div>
+          {:else}<div class="muted small" style="padding:12px 14px">Noch nichts.</div>{/each}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Sperrgründe</h3></div>
+        <div class="toplist">
+          {#each stats.reasons || [] as r}
+            <div class="toprow"><span class="small ellipsis grow" title={r.name}>{r.name || 'unbekannt'}</span><span class="tiny muted">{fmtNum(r.count)}</span></div>
+          {:else}<div class="muted small" style="padding:12px 14px">Nichts gesperrt.</div>{/each}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Weg der Anfragen <Info title="Weg" text="Direkt = über die DNS-Server des Panels (bzw. Unbound). Gruppe = Ziel-Regel: Der Name wurde über die Ausgangsgruppe aufgelöst." /></h3></div>
+        <div class="toplist">
+          {#each stats.via || [] as r}
+            <div class="toprow"><span class="small ellipsis grow">{r.peer_id ? `Gruppe „${groupById[r.peer_id]?.name || r.peer_id}“` : 'direkt'}</span><span class="share"><span style="width:{pct(r.count, stats.total)}%"></span></span><span class="tiny muted num">{pct(r.count, stats.total)} %</span></div>
+          {:else}<div class="muted small" style="padding:12px 14px">Noch nichts.</div>{/each}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Namen ohne Antwort <Info title="NXDOMAIN" text="Häufig gefragte Namen, die es nicht gibt – oft Geräte, die nach abgeschalteten Diensten suchen, oder Tippfehler in eigenen Regeln." /></h3></div>
+        <div class="toplist">
+          {#each stats.top_nx || [] as r}
+            <div class="toprow"><span class="mono tiny ellipsis grow" title={r.name}>{r.name}</span><span class="tiny muted">{fmtNum(r.count)}</span></div>
+          {:else}<div class="muted small" style="padding:12px 14px">Keine.</div>{/each}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Meiste Sperren je Gerät</h3></div>
+        <div class="toplist">
+          {#each stats.blocked_by || [] as r}
+            <button class="toprow linkrow" onclick={() => {
+              filter = { q: '', peer: r.peer_id, action: 'blocked' };
+              go('/dns/log');
+            }}><span class="small ellipsis grow">{peerLabel(r.peer_id)}</span><span class="tiny bad-text">{fmtNum(r.count)}</span></button>
+          {:else}<div class="muted small" style="padding:12px 14px">Nichts gesperrt.</div>{/each}
+        </div>
+      </div>
+    </div>
   {/if}
 
   <div class="card card-pad" style="margin-top:14px">
-    <strong class="small">Domain prüfen</strong>
-    <div class="muted tiny" style="margin-bottom:8px">Was der Panel-DNS für ein Gerät mit einem Namen machen würde – ohne ihn aufzulösen.</div>
+    <div style="margin-bottom:8px"><strong class="small">Domain prüfen</strong> <Info title="Domain prüfen" text="Zeigt, was der Panel-DNS für ein Gerät mit einem Namen machen würde – ohne ihn aufzulösen: Profil, Sperre oder Freigabe und den Weg." /></div>
     <div class="row wrap" style="gap:8px">
-      <select class="input" style="width:auto;min-width:200px" bind:value={check.peer}>
-        <option value={0}>Gerät wählen …</option>
-        {#each dnsPeers as p}<option value={p.id}>{peerLabel(p.id)}</option>{/each}
-      </select>
+      <Picker items={peerPick} bind:value={check.peer} placeholder="Gerät suchen …" width="300px" />
       <input class="input mono grow" style="min-width:200px" placeholder="werbung.de" bind:value={check.name} onkeydown={(e) => e.key === 'Enter' && runCheck()} />
       <button class="btn" onclick={runCheck} disabled={!Number(check.peer) || !check.name}><Icon name="search" size={15} /> Prüfen</button>
     </div>
@@ -382,10 +635,7 @@
 {:else if tab === 'log'}
   <div class="row wrap" style="gap:8px;margin-bottom:12px">
     <input class="input grow" style="min-width:180px" placeholder="Domain suchen …" bind:value={filter.q} />
-    <select class="input" style="width:auto" bind:value={filter.peer}>
-      <option value={0}>Alle Geräte</option>
-      {#each dnsPeers as p}<option value={p.id}>{peerLabel(p.id)}</option>{/each}
-    </select>
+    <Picker items={peerPick} bind:value={filter.peer} none="Alle Geräte" width="280px" />
     <select class="input" style="width:auto" bind:value={filter.action}>
       <option value="">Alle Ergebnisse</option>
       <option value="ok">aufgelöst</option>
@@ -430,6 +680,8 @@
     </table>
   </div>
   {#if more}<div style="text-align:center;margin-top:10px"><button class="btn" onclick={() => loadLog(true)}>Ältere laden</button></div>{/if}
+{:else if tab === 'external'}
+  <DNSExternal onchange={load} />
 {:else if tab === 'profiles'}
   <div class="grid cols-2">
     {#each d.profiles as p}
@@ -474,10 +726,7 @@
       <button class="btn primary" onclick={() => openProfile()}>Profil anlegen</button>
     </div>
   {/if}
-  <div class="notice" style="margin-top:18px">
-    <Icon name="info" />
-    <span>Für jedes Gerät gilt genau ein Profil: das am Gerät, sonst das des Nutzers, sonst das des Servers, sonst das für alle Geräte. Gelten auf einer Ebene mehrere, gewinnt das ältere.</span>
-  </div>
+  <div class="row infoline"><Info title="Welches Profil gilt?" text="Für jedes Gerät gilt genau ein Profil: das am Gerät, sonst das des Nutzers, sonst das des Servers, sonst das für alle Geräte. Gelten auf einer Ebene mehrere, gewinnt das ältere." label="Welches Profil gilt?" /></div>
 {:else if tab === 'lists'}
   <div class="grid cols-2">
     {#each d.lists as l}
@@ -502,7 +751,11 @@
               {/if}
             </div>
           {/if}
-          <div class="tiny muted">{l.used_by.length ? `In ${l.used_by.join(', ')}` : 'In keinem Filterprofil'}</div>
+          {#if l.used_by.length}
+            <div class="tiny muted">In {l.used_by.join(', ')}</div>
+          {:else}
+            <div class="tiny warn-t row" style="gap:6px"><Icon name="alert" size={12} /> In keinem Filterprofil – wirkt nicht <button class="btn sm ghost" onclick={() => openList(l)}>Profil wählen</button></div>
+          {/if}
         </div>
         <div class="actions">
           <button class="btn sm" onclick={() => openList(l)}><Icon name="edit" size={15} /> Bearbeiten</button>
@@ -515,7 +768,11 @@
     {/each}
   </div>
   <div class="card" style="margin-top:16px">
-    <div class="card-head"><h3>Bekannte Listen</h3></div>
+    <div class="card-head"><h3>Bekannte Listen <Info title="Blocklisten">
+      <p>Listen lädt der Server regelmäßig neu – Hosts-Dateien, Adblock-Listen („||domain^“, Ausnahmen „@@“) oder eine Domain pro Zeile.</p>
+      <p>Eine Domain sperrt auch alle Unterdomains. Schlägt ein Abruf fehl, bleibt der letzte Stand aktiv.</p>
+      <p>Damit eine Liste wirkt, muss sie in einem Filterprofil gewählt sein.</p>
+    </Info></h3></div>
     <div class="toplist">
       {#each d.presets as pr}
         <div class="toprow">
@@ -532,32 +789,180 @@
       {/each}
     </div>
   </div>
-  <div class="notice" style="margin-top:16px">
-    <Icon name="info" />
-    <span>Listen lädt der Server regelmäßig neu – Hosts-Dateien, Adblock-Listen („||domain^“, Ausnahmen „@@“) oder eine Domain pro Zeile. Eine Domain sperrt auch alle Unterdomains. Schlägt ein Abruf fehl, bleibt der letzte Stand aktiv. Damit eine Liste wirkt, muss sie in einem Filterprofil gewählt sein.</span>
-  </div>
 {:else if tab === 'settings' && sf}
   <div class="card card-pad stack" style="max-width:760px">
-    <label class="switch"><input type="checkbox" bind:checked={sf.enabled} /><span class="track"></span> Panel-DNS für WireGuard- und OpenVPN-Geräte</label>
-    <div class="help" style="margin-top:-6px">
-      DNS-Anfragen dieser Geräte gehen an das Panel – egal, welchen DNS-Server das Gerät eingetragen hat. Configs mit DNS „auto“ (Vorgabe) nennen die Tunneladresse des Servers.
-      Bei bestehenden Geräten mit eigenem DNS-Eintrag (z. B. 1.1.1.1) schalten Browser gern auf verschlüsseltes DNS um – dann die Config neu herunterladen bzw. den DNS des Servers auf „auto“ stellen.
+    <div class="row" style="gap:6px">
+      <label class="switch"><input type="checkbox" bind:checked={sf.enabled} /><span class="track"></span> Panel-DNS für WireGuard- und OpenVPN-Geräte</label>
+      <Info title="Panel-DNS">
+        <p>DNS-Anfragen dieser Geräte gehen an das Panel – egal, welchen DNS-Server das Gerät eingetragen hat. Configs mit DNS „auto“ (Vorgabe) nennen die Tunneladresse des Servers.</p>
+        <p>Bei bestehenden Geräten mit eigenem DNS-Eintrag (z. B. 1.1.1.1) schalten Browser gern auf verschlüsseltes DNS um – dann die Config neu herunterladen bzw. den DNS des Servers auf „auto“ stellen.</p>
+      </Info>
     </div>
     <div class="field">
-      <label for="dns-up">DNS-Server für die Auflösung</label>
+      <span class="label"
+        >Auflösung <Info title="Wer löst die Namen auf?" wide>
+          <p><b>Öffentliche DNS-Server</b> (z. B. Cloudflare, Quad9): schnell, weil sie fast alles schon im Speicher haben – der Anbieter sieht aber alle Namen, die der Server nachfragt.</p>
+          <p><b>Unbound</b> läuft auf dem Server selbst und fragt die zuständigen Nameserver direkt (rekursiv, mit DNSSEC-Prüfung). Kein Anbieter sieht die Anfragen gesammelt; der erste Abruf eines Namens dauert etwas länger, danach antwortet der Speicher. Die DNS-Server unten springen ein, falls Unbound nicht antwortet.</p>
+          <p>Für Ziel-Regeln gelten weiter die DNS-Server der Ausgangsgruppe.</p>
+        </Info></span
+      >
+      <div class="segmented">
+        <button class:active={sf.resolver === 'upstream'} onclick={() => (sf.resolver = 'upstream')}>Öffentliche DNS-Server</button>
+        <button class:active={sf.resolver === 'unbound'} onclick={() => (sf.resolver = 'unbound')}>Unbound (selbst auflösen)</button>
+      </div>
+      {#if sf.resolver === 'unbound' && !d.unbound_installed}
+        <div class="notice warn small" style="margin-top:6px"><Icon name="alert" size={16} /><span>Unbound ist auf dem Server nicht installiert. Das Setup-Script installiert das Paket „unbound“ – bis dahin fragt das Panel die DNS-Server unten.</span></div>
+      {/if}
+    </div>
+    <div class="field">
+      <label for="dns-up">{sf.resolver === 'unbound' ? 'Ersatz-DNS-Server (falls Unbound nicht antwortet)' : 'DNS-Server für die Auflösung'} <Info title="DNS-Server" text="Fragt das Panel für Namen ohne Ziel-Regel. Für Ziel-Regeln gelten die DNS-Server der Ausgangsgruppe. Die automatische Wahl (unten) kann diese Liste selbst anpassen." /></label>
       <input id="dns-up" class="input mono" bind:value={sf.upstream} placeholder="1.1.1.1, 9.9.9.9" />
-      <div class="help">Fragt das Panel für Namen ohne Ziel-Regel. Für Ziel-Regeln gelten die DNS-Server der Ausgangsgruppe.</div>
     </div>
     <div class="field">
-      <label for="dns-days">Protokoll aufbewahren</label>
+      <label for="dns-days">Protokoll aufbewahren <Info title="Protokoll" text="Jede Anfrage mit Gerät, Domain und Ergebnis. Ältere Einträge löscht der Server stündlich." /></label>
       <select id="dns-days" class="input" style="width:auto" bind:value={sf.log_days}>
         <option value={0}>nicht protokollieren</option>
         {#each [1, 3, 7, 14, 30, 90] as n}<option value={n}>{n} {n === 1 ? 'Tag' : 'Tage'}</option>{/each}
         {#if ![0, 1, 3, 7, 14, 30, 90].includes(Number(sf.log_days))}<option value={sf.log_days}>{sf.log_days} Tage</option>{/if}
       </select>
-      <div class="help">Jede Anfrage mit Gerät, Domain und Ergebnis. Ältere Einträge löscht der Server stündlich.</div>
+    </div>
+    <div class="field">
+      <span class="label"
+        >Verteilung auf die DNS-Server <Info title="Verteilung" wide>
+          <ul>{#each STRATEGY as [, l, t]}<li><b>{l}:</b> {t}</li>{/each}</ul>
+          <p>Gilt auch für die DNS-Server der Ausgangsgruppen.</p>
+        </Info></span
+      >
+      <div class="segmented">
+        {#each STRATEGY as [k, l, t]}<button class:active={sf.strategy === k} title={t} onclick={() => (sf.strategy = k)}>{l}</button>{/each}
+      </div>
+      {#if d.upstreams?.length}
+        <div class="tiny muted" style="margin-top:6px">
+          Gemessen seit dem Start:
+          {#each d.upstreams as u, i}{i ? ' · ' : ' '}<span class="mono">{srvName(u.server)}</span> {u.ms} ms{u.fail ? ` (${u.fail} Ausfälle)` : ''}{/each}
+        </div>
+      {/if}
+    </div>
+    <h4 class="sub-h">Zwischenspeicher</h4>
+    <div class="grid cols-3">
+      <div class="field">
+        <label for="dns-cs">Größe <Info title="Größe" text="So viele Antworten merkt sich das Panel (eine Antwort ≈ 0,2–0,5 KB Arbeitsspeicher). 0 = aus – jede Anfrage geht an die DNS-Server." /></label>
+        <select id="dns-cs" class="input" bind:value={sf.cache_size}>
+          {#each CACHES as [v, l]}<option value={v}>{l}</option>{/each}
+          {#if !CACHES.some((c) => c[0] === Number(sf.cache_size))}<option value={sf.cache_size}>{sf.cache_size} Antworten</option>{/if}
+        </select>
+      </div>
+      <div class="field">
+        <label for="dns-tmin">Mindestens merken <Info title="Mindestdauer" text="Manche Dienste geben sehr kurze Gültigkeiten an (z. B. 20 s). Eine Mindestdauer spart Anfragen, kann bei Umzügen aber kurz veraltete Adressen liefern." /></label>
+        <select id="dns-tmin" class="input" bind:value={sf.ttl_min} disabled={!Number(sf.cache_size)}>
+          {#each TTLS.slice(0, 6) as [v, l]}<option value={v}>{l}</option>{/each}
+          {#if !TTLS.some((t) => t[0] === Number(sf.ttl_min))}<option value={sf.ttl_min}>{sf.ttl_min} s</option>{/if}
+        </select>
+      </div>
+      <div class="field">
+        <label for="dns-tmax">Höchstens merken <Info title="Höchstdauer" text="Auch wenn ein Server längere Gültigkeiten angibt, fragt das Panel spätestens nach dieser Zeit neu." /></label>
+        <select id="dns-tmax" class="input" bind:value={sf.ttl_max} disabled={!Number(sf.cache_size)}>
+          {#each TTLS.slice(2) as [v, l]}<option value={v}>{l}</option>{/each}
+          {#if !TTLS.some((t) => t[0] === Number(sf.ttl_max))}<option value={sf.ttl_max}>{sf.ttl_max} s</option>{/if}
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="dns-nc">Nie zwischenspeichern <Info title="Ohne Zwischenspeicher" text="Diese Domains (mit Unterdomains) fragt das Panel jedes Mal neu – z. B. DynDNS-Namen oder Lastverteiler. Eine pro Zeile." /></label>
+      <textarea id="dns-nc" class="input mono" rows="3" bind:value={sf.nocache} placeholder="meinname.ddns.net"></textarea>
     </div>
     <div><button class="btn primary" onclick={saveSettings}>Speichern</button></div>
+  </div>
+
+  <div class="card" style="max-width:760px;margin-top:14px">
+    <div class="card-head">
+      <h3>
+        DNS-Speedtest
+        <Info title="DNS-Speedtest" wide>
+          <p>Misst vom Server aus (nicht über Ausgangsgruppen) die eingestellten und bekannte öffentliche DNS-Server:</p>
+          <ul>
+            <li><b>Bekannte Namen:</b> Median über 24 Anfragen nach beliebten Domains – meist aus dem Speicher des Anbieters, also vor allem die Wegzeit.</li>
+            <li><b>Neue Namen:</b> zufällige Unterdomains, die der Anbieter erst selbst nachfragen muss.</li>
+          </ul>
+          <p>Das Panel speichert Antworten selbst zwischen – nach dem ersten Abruf zählt vor allem, wie schnell und zuverlässig neue Namen kommen.</p>
+          <p><b>Unbound</b> (eigener rekursiver Resolver) fragt ohne Anbieter direkt die zuständigen Server: mehr Privatsphäre, aber der erste Abruf eines Namens dauert länger. Läuft Unbound z. B. auf 127.0.0.1:5335, rechts als weiteren Server eintragen, testen und oben als DNS-Server übernehmen.</p>
+        </Info>
+      </h3>
+      <button class="btn" onclick={runSpeed} disabled={speedBusy}><Icon name="gauge" size={15} /> {speedBusy ? 'Misst … (bis ~20 s)' : 'Testen'}</button>
+    </div>
+    <div class="card-pad stack" style="gap:8px;padding-top:0">
+      <div class="small"><strong>Getestete Server</strong> <span class="muted">({cands.length}{d.settings.candidates_custom ? ', eigene Liste' : ', eingebaute Liste'})</span> <Info title="Liste" text="Diese Server misst der Speedtest und aus ihnen wählt die Automatik. Die eingestellten DNS-Server und Unbound (falls installiert) werden immer mitgemessen." /></div>
+      <div class="cands">
+        {#each cands as c (c.addr)}
+          <span class="chip" title={c.addr}>{c.name}{#if c.name !== c.addr}&nbsp;<span class="mono tiny muted">{c.addr}</span>{/if}<button type="button" title="Aus der Liste entfernen" onclick={() => dropCand(c.addr)} disabled={cands.length < 2}><Icon name="x" size={12} /></button></span>
+        {/each}
+      </div>
+      <div class="row wrap" style="gap:8px">
+        <input class="input mono" style="width:180px" bind:value={newCand.addr} placeholder="IP, z. B. 9.9.9.10" onkeydown={(e) => e.key === 'Enter' && addCand()} />
+        <input class="input" style="width:180px" bind:value={newCand.name} placeholder="Name (optional)" onkeydown={(e) => e.key === 'Enter' && addCand()} />
+        <button class="btn sm" onclick={addCand} disabled={!newCand.addr.trim()}><Icon name="plus" size={14} /> Hinzufügen</button>
+        {#if d.settings.candidates_custom}<button class="btn sm ghost" onclick={resetCands}>Eingebaute Liste</button>{/if}
+      </div>
+    </div>
+    {#if speed}
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Server</th><th class="right">Bekannte Namen</th><th class="right">Neue Namen</th><th class="right">Antworten</th><th></th></tr></thead>
+          <tbody>
+            {#each speed as x, i}
+              <tr class:best={i < 2 && x.ok}>
+                <td>
+                  <span class="strong">{x.name}</span> <span class="mono tiny muted">{x.addr}</span>
+                  {#if x.current}<span class="badge accent">eingestellt</span>{/if}
+                  {#if x.note}<div class="tiny muted">{x.note}</div>{/if}
+                </td>
+                <td class="right">{x.ok ? `${x.median} ms` : '–'}</td>
+                <td class="right">{x.ok ? `${x.uncached} ms` : '–'}</td>
+                <td class="right" class:bad-text={x.ok < x.total}>{x.ok ? `${x.ok}/${x.total}` : 'keine'}</td>
+                <td class="right">{#if candSet.has(x.addr) && !isLocal(x.addr)}<button class="btn sm icon ghost" title="Aus der Liste entfernen" onclick={() => dropCand(x.addr)}><Icon name="trash" size={13} /></button>{/if}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      <div class="row card-pad" style="gap:8px">
+        <span class="small muted grow">Oben stehen die schnellsten. „Übernehmen“ trägt sie oben als DNS-Server ein – danach speichern.</span>
+        <button class="btn sm" onclick={() => useServers(2)}>Die 2 schnellsten übernehmen</button>
+        <button class="btn sm" onclick={() => useServers(3)}>Die 3 schnellsten</button>
+      </div>
+    {:else}
+      <div class="card-pad muted small" style="padding-top:0">Noch nicht gemessen.</div>
+    {/if}
+  </div>
+
+  <div class="card card-pad stack" style="max-width:760px;margin-top:14px">
+    <div class="row" style="gap:6px">
+      <label class="switch"><input type="checkbox" bind:checked={sf.auto} /><span class="track"></span> Schnellste DNS-Server automatisch wählen</label>
+      <Info title="Automatische Wahl" wide>
+        <p>Der Server misst regelmäßig alle Server der Liste (wie der Speedtest) und trägt die schnellsten als DNS-Server ein.</p>
+        <p>Gewechselt wird nur, wenn die neue Auswahl mindestens 15 % schneller ist oder ein eingestellter Server nicht zuverlässig antwortet – kleine Messschwankungen führen nicht zu ständigem Umschalten. Jeder Wechsel steht im Ereignisprotokoll.</p>
+        <p>Mit Unbound gilt die Wahl für die Ersatz-Server.</p>
+      </Info>
+    </div>
+    <div class="row wrap" style="gap:10px">
+      <select class="input" style="width:auto" bind:value={sf.auto_hours} disabled={!sf.auto}>
+        {#each HOURS as [v, l]}<option value={v}>{l} prüfen</option>{/each}
+      </select>
+      <select class="input" style="width:auto" bind:value={sf.auto_count} disabled={!sf.auto}>
+        {#each [1, 2, 3, 4] as n}<option value={n}>die {n === 1 ? 'schnellste' : `${n} schnellsten`} übernehmen</option>{/each}
+      </select>
+      <button class="btn" onclick={saveSettings}>Speichern</button>
+      <button class="btn ghost" onclick={autoNow} disabled={autoBusy}><Icon name="refresh" size={14} /> {autoBusy ? 'Misst …' : 'Jetzt prüfen'}</button>
+    </div>
+    {#if d.auto_last}
+      {@const a = d.auto_last}
+      <div class="notice {a.changed ? 'okn' : ''} small">
+        <Icon name={a.changed ? 'check' : 'info'} size={16} />
+        <span
+          >Zuletzt {when(a.at)}: {a.reason}{#if a.chosen?.length}&nbsp;– {a.changed ? 'jetzt' : 'beste'}: <span class="mono">{a.chosen.join(', ')}</span>{/if}{#if a.best_ms}&nbsp;(Ø {a.best_ms} ms{a.old_ms ? `, vorher ${a.old_ms} ms` : ''}){/if}</span
+        >
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -565,11 +970,10 @@
   {#if quick}
     {#if d.profiles.length}
       <div class="field">
-        <label for="q-prof">In Filterprofil</label>
+        <label for="q-prof">In Filterprofil <Info title="Regel" text="Fügt die Regel „{quick.allow ? 'allow ' : ''}{quick.name}“ hinzu (gilt auch für Unterdomains)." /></label>
         <select id="q-prof" class="input" bind:value={quickProfile}>
           {#each d.profiles as p}<option value={p.id}>{p.name}</option>{/each}
         </select>
-        <div class="help">Fügt die Regel „{quick.allow ? 'allow ' : ''}{quick.name}“ hinzu (gilt auch für Unterdomains).</div>
       </div>
     {:else}
       <div class="notice warn small"><Icon name="alert" size={16} /><span>Es gibt noch kein Filterprofil – bitte zuerst eins anlegen.</span></div>
@@ -585,30 +989,20 @@
   <div class="stack">
     <div class="field"><label for="p-name">Name</label><input id="p-name" class="input" bind:value={pf.name} placeholder="z. B. Standard, Kinder, Ohne Filter" /></div>
     <div class="field">
-      <span class="label">Gilt für</span>
+      <span class="label">Gilt für <Info title="Suche" text="Suche nach Name, Gerät, Dienst (z. B. „WireGuard“), Server oder Adresse. Mehrere Wörter grenzen ein: „martin xiaomi wire“. Für jedes Gerät gilt genau ein Profil: Gerät vor Nutzer vor Server vor „Alle Geräte“." /></span>
       <div class="row wrap" style="gap:6px;margin:4px 0 8px">
         {#each pf.assign as a}
-          {@const [ic, label] = assignLabel(a)}
-          <span class="badge"><Icon name={ic} size={12} /> {label}<button class="x" title="Entfernen" onclick={() => (pf.assign = pf.assign.filter((x) => x !== a))}><Icon name="x" size={11} /></button></span>
+          {@const [ic, label, proto, sub] = assignLabel(a)}
+          <span class="badge" title={sub}>
+            {#if proto}<ProtoLogo id={proto} size={13} />{:else}<Icon name={ic} size={12} />{/if}
+            {label}{#if sub && ic === 'phone'}<span class="muted">&nbsp;· {sub}</span>{/if}
+            <button class="x" title="Entfernen" onclick={() => (pf.assign = pf.assign.filter((x) => x !== a))}><Icon name="x" size={11} /></button>
+          </span>
         {:else}
           <span class="muted small">Noch niemandem – unten hinzufügen</span>
         {/each}
       </div>
-      <div class="row wrap" style="gap:6px">
-        <select class="input" style="width:auto" bind:value={addKind}>
-          <option value="global">Alle Geräte</option>
-          <option value="server">Server</option>
-          <option value="user">Nutzer</option>
-          <option value="peer">Gerät</option>
-        </select>
-        {#if addKind !== 'global'}
-          <select class="input grow" bind:value={addId}>
-            <option value={0}>wählen …</option>
-            {#each addOptions as o}<option value={o.id}>{addKind === 'peer' ? peerLabel(o.id) : o.name}</option>{/each}
-          </select>
-        {/if}
-        <button class="btn" onclick={addAssign} disabled={addKind !== 'global' && !Number(addId)}><Icon name="plus" size={14} /> Hinzufügen</button>
-      </div>
+      <Picker items={assignPick} keep={false} placeholder="Server, Nutzer oder Gerät suchen und hinzufügen …" onpick={addAssign} />
     </div>
     <div class="field">
       <span class="label">Blocklisten</span>
@@ -625,12 +1019,17 @@
       </div>
     </div>
     <div class="field">
-      <label for="p-rules">Eigene Regeln <span class="muted">({ruleCount(pf.rules)})</span></label>
+      <label for="p-rules">Eigene Regeln <span class="muted">({ruleCount(pf.rules)})</span> <Info title="Eigene Regeln">
+        <p>Eine Regel pro Zeile:</p>
+        <ul><li><code>werbung.de</code> – sperren</li><li><code>allow cdn.beispiel.de</code> – freigeben (geht vor Listen)</li><li><code>nas.home = 192.168.1.10</code> – eigene Antwort</li></ul>
+        <p>Unterdomains sind immer eingeschlossen. „#“ leitet einen Kommentar ein.</p>
+      </Info></label>
       <textarea id="p-rules" class="input mono" rows="8" bind:value={pf.rules} placeholder={'werbung.de              # sperren\nallow cdn.beispiel.de   # freigeben (geht vor)\nnas.home = 192.168.1.10 # eigene Antwort'}></textarea>
-      <div class="help">Eine Regel pro Zeile. Domain = sperren, „allow domain“ = freigeben (geht vor Listen), „domain = IP“ = eigene Antwort. Unterdomains sind immer eingeschlossen.</div>
     </div>
-    <label class="switch"><input type="checkbox" bind:checked={pf.block_doh} /><span class="track"></span> Verschlüsseltes DNS der Geräte sperren (DoH/DoT)</label>
-    <div class="help" style="margin-top:-8px">Browser und Android („Privates DNS“) gehen sonst am Filter vorbei. Mit fest eingestelltem eigenem Anbieter (z. B. Brave „Sicheres DNS“ = Cloudflare) lädt dann keine Seite mehr – dort „automatisch“ oder „aus“ wählen.</div>
+    <div class="row" style="gap:6px">
+      <label class="switch"><input type="checkbox" bind:checked={pf.block_doh} /><span class="track"></span> Verschlüsseltes DNS der Geräte sperren (DoH/DoT)</label>
+      <Info title="Verschlüsseltes DNS" text="Browser und Android („Privates DNS“) gehen sonst am Filter vorbei. Mit fest eingestelltem eigenem Anbieter (z. B. Brave „Sicheres DNS“ = Cloudflare) lädt dann keine Seite mehr – dort „automatisch“ oder „aus“ wählen." />
+    </div>
     <label class="switch"><input type="checkbox" bind:checked={pf.nxdomain} /><span class="track"></span> Gesperrte Namen mit „gibt es nicht“ beantworten (statt 0.0.0.0)</label>
     <label class="switch"><input type="checkbox" bind:checked={pf.enabled} /><span class="track"></span> Aktiv</label>
   </div>
@@ -653,7 +1052,7 @@
       </div>
     </div>
     <div class="field">
-      <label for="l-url">Online-Liste</label>
+      <label for="l-url">Online-Liste <Info title="Online-Liste" text="Hosts-Datei, Adblock-Liste oder eine Domain pro Zeile, bis 1 000 000 Einträge. Der Server lädt sie im gewählten Abstand neu." /></label>
       <div class="row" style="gap:8px">
         <input id="l-url" class="input mono grow" bind:value={lf.url} placeholder="https://…/liste.txt" />
         <select class="input" style="width:auto" bind:value={lf.refresh} disabled={!lf.url}>
@@ -661,11 +1060,27 @@
           {#if !REFRESH.some((r) => r[0] === lf.refresh)}<option value={lf.refresh}>alle {lf.refresh} Stunden</option>{/if}
         </select>
       </div>
-      <div class="help">Hosts-Datei, Adblock-Liste oder eine Domain pro Zeile, bis 1 000 000 Einträge.</div>
     </div>
     <div class="field">
       <label for="l-entries">Eigene Einträge <span class="muted">(optional)</span></label>
       <textarea id="l-entries" class="input mono" rows="6" bind:value={lf.entries} placeholder={'werbung.example\ntracker.example'}></textarea>
+    </div>
+    <div class="field">
+      <span class="label">Gilt in Filterprofil <Info title="Filterprofil" text="Eine Liste wirkt nur in einem Filterprofil. Das Profil bestimmt, für welche Geräte sie gilt (z. B. „Standard“ für alle Geräte)." /></span>
+      {#if d.profiles.length}
+        <div class="srvs">
+          {#each d.profiles as p}
+            <label class="srv">
+              <input type="checkbox" checked={lf.profiles?.includes(p.id)} onchange={() => toggleLP(p.id)} />
+              <span class="grow">{p.name}{p.enabled ? '' : ' (aus)'}</span>
+              <span class="tiny muted">{p.assign.map((a) => assignLabel(a)[1]).slice(0, 3).join(', ') || 'niemandem zugeordnet'}</span>
+            </label>
+          {/each}
+        </div>
+        {#if !lf.profiles?.length}<div class="tiny warn-t" style="margin-top:6px">Ohne Profil wird die Liste nur geladen, sperrt aber nichts.</div>{/if}
+      {:else}
+        <label class="switch"><input type="checkbox" bind:checked={lf.mkStd} /><span class="track"></span> Profil „Standard“ für alle Geräte anlegen</label>
+      {/if}
     </div>
     <label class="switch"><input type="checkbox" bind:checked={lf.enabled} /><span class="track"></span> Aktiv</label>
   </div>
@@ -676,6 +1091,61 @@
 </Modal>
 
 <style>
+  .cands {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .cands .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 4px 1px 9px;
+    font-size: 12px;
+  }
+  .cands .chip button {
+    border: 0;
+    background: none;
+    cursor: pointer;
+    color: var(--text-2);
+    display: inline-flex;
+    padding: 2px;
+  }
+  .cands .chip button:hover:not(:disabled) {
+    color: var(--bad, #c33);
+  }
+  .infoline {
+    margin-top: 14px;
+  }
+  .sub-h {
+    margin: 6px 0 -4px;
+    font-size: 14px;
+  }
+  tr.best td {
+    background: var(--ok-soft);
+  }
+  .filtercard {
+    margin-bottom: 14px;
+  }
+  .fline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .linkbtn {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .warn-t {
+    color: var(--warn, #b7791f);
+  }
   .notice.okn {
     background: var(--ok-soft);
   }
@@ -728,6 +1198,23 @@
   .toplist {
     display: flex;
     flex-direction: column;
+  }
+  .share {
+    width: 80px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border);
+    overflow: hidden;
+    flex: none;
+  }
+  .share span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+  .num {
+    width: 44px;
+    text-align: right;
   }
   .toprow {
     display: flex;

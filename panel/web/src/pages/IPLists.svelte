@@ -3,6 +3,7 @@
   import ProtoLogo from '../components/ProtoLogo.svelte';
   import PageHead from '../components/PageHead.svelte';
   import Modal from '../components/Modal.svelte';
+  import Info from '../components/Info.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { PROTO_LABEL, ago, fmtNum } from '../lib/format.js';
@@ -87,7 +88,13 @@
   const entryCount = $derived((form.entries || '').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean).length);
 </script>
 
-<PageHead title="IP-Listen" subtitle="Sperr- und Freigabelisten für die Verbindung zu deinen Diensten, Ziellisten für Ziel-Regeln – auch als Online-Listen">
+<PageHead title="IP-Listen" subtitle="Sperr-, Freigabe- und Ziellisten" helpTitle="IP-Listen">
+  {#snippet help()}
+    <p><b>Sperrliste:</b> Gesperrte Adressen können sich nicht mehr verbinden; bestehende Verbindungen werden getrennt.</p>
+    <p><b>Freigabeliste:</b> Gibt es für einen Dienst eine, dürfen nur deren Adressen verbinden – Sperrlisten gelten trotzdem.</p>
+    <p><b>Zielliste:</b> Ziele für Ziel-Regeln (Proxy & Ausgänge).</p>
+    <p>Das Webinterface und die Abo-Links sind nicht betroffen. Online-Listen lädt der Server regelmäßig neu (eine Adresse oder ein Netz pro Zeile, z. B. Sperrlisten von FireHOL oder Spamhaus); schlägt ein Abruf fehl, bleibt der letzte Stand aktiv.</p>
+  {/snippet}
   <button class="btn primary" onclick={() => openList()}><Icon name="plus" size={16} /> Liste anlegen</button>
 </PageHead>
 
@@ -151,14 +158,6 @@
   <div class="card empty"><h3>Noch keine IP-Listen</h3><p>Sperre einzelne Adressen oder Netze – oder erlaube einem Dienst nur bestimmte Adressen.</p><button class="btn primary" onclick={() => openList()}>Liste anlegen</button></div>
 {/if}
 
-<div class="notice" style="margin-top:18px">
-  <Icon name="info" />
-  <span>
-    Gesperrte Adressen können sich nicht mehr verbinden; bestehende Verbindungen werden getrennt. Gibt es für einen Dienst eine Freigabeliste, dürfen nur deren
-    Adressen verbinden – Sperrlisten gelten trotzdem. Das Webinterface und die Abo-Links sind davon nicht betroffen. Online-Listen lädt der Server regelmäßig
-    neu (eine Adresse oder ein Netz pro Zeile, z. B. Sperrlisten von FireHOL oder Spamhaus); schlägt ein Abruf fehl, bleibt der letzte Stand aktiv.
-  </span>
-</div>
 
 <Modal bind:open title={cur ? `Liste ${cur.name}` : 'IP-Liste anlegen'} width={680}>
   <div class="stack">
@@ -174,12 +173,11 @@
       </div>
     </div>
     <div class="field">
-      <label for="ipl-entries">Adressen und Netze <span class="muted">({entryCount})</span></label>
+      <label for="ipl-entries">Adressen und Netze <span class="muted">({entryCount})</span> <Info title="Adressen und Netze" text="Eine Adresse oder ein Netz (CIDR) pro Zeile, IPv4 und IPv6. „#“ leitet einen Kommentar ein. Für Ziel-Regeln zählen nur IPv4-Einträge." /></label>
       <textarea id="ipl-entries" class="input mono" rows="9" bind:value={form.entries} placeholder={'203.0.113.7\n198.51.100.0/24\n2001:db8::/48   # Kommentar'}></textarea>
-      <div class="help">Eine Adresse oder ein Netz (CIDR) pro Zeile, IPv4 und IPv6. „#“ leitet einen Kommentar ein.{#if form.mode === 'targets'}&nbsp;Für Ziel-Regeln zählen nur IPv4-Einträge.{/if}</div>
     </div>
     <div class="field">
-      <label for="ipl-url">Online-Liste <span class="muted">(optional)</span></label>
+      <label for="ipl-url">Online-Liste <span class="muted">(optional)</span> <Info title="Online-Liste" text="Adresse einer Textdatei mit einer Adresse oder einem Netz pro Zeile. Ihr Inhalt gilt zusätzlich zu den Einträgen oben (bis 300 000 Einträge). Schlägt ein Abruf fehl, bleibt der letzte Stand aktiv." /></label>
       <div class="row" style="gap:8px">
         <input id="ipl-url" class="input mono grow" bind:value={form.url} placeholder="https://beispiel.de/liste.txt" />
         <select class="input" style="width:auto" bind:value={form.refresh} disabled={!form.url} title="Wie oft die Liste neu geladen wird">
@@ -187,7 +185,6 @@
           {#if !REFRESH.some((r) => r[0] === form.refresh)}<option value={form.refresh}>alle {form.refresh} Stunden</option>{/if}
         </select>
       </div>
-      <div class="help">Adresse einer Textdatei mit einer Adresse oder einem Netz pro Zeile. Ihr Inhalt gilt zusätzlich zu den Einträgen oben (bis 300 000 Einträge).</div>
     </div>
     {#if form.mode !== 'targets'}
     <div class="field">

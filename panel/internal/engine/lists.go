@@ -300,6 +300,8 @@ func (e *Engine) RunLists(stop <-chan struct{}) {
 			return
 		case <-t.C:
 		}
+		e.refreshExtHosts()
+		e.RunDNSAuto(false)
 		if ch1, ch2 := e.refreshLists(time.Now()), e.refreshDNSLists(time.Now()); ch1 || ch2 {
 			e.RequestApply()
 		}

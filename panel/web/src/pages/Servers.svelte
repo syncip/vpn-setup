@@ -4,6 +4,8 @@
   import PageHead from '../components/PageHead.svelte';
   import Modal from '../components/Modal.svelte';
   import FieldForm from '../components/FieldForm.svelte';
+  import Info from '../components/Info.svelte';
+  import PortHelp from '../components/PortHelp.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { bytes, copy, clone } from '../lib/format.js';
@@ -71,7 +73,11 @@
   }
 </script>
 
-<PageHead title="Server" subtitle="VPN-Instanzen auf diesem System – mehrere pro Protokoll möglich">
+<PageHead title="Server" subtitle="VPN-Instanzen auf diesem System" helpTitle="Server und Portweiterleitungen" helpWide>
+  {#snippet help()}
+    <p>Pro Protokoll sind mehrere Server möglich, z. B. ein zweiter WireGuard-Server auf UDP 51821 für ein eigenes Netz.</p>
+    <PortHelp ports={servers.filter((s) => s.enabled).flatMap((s) => (s.ports || []).map((p) => ({ ...p, server: s.name })))} />
+  {/snippet}
   <button class="btn primary" onclick={openNew}><Icon name="plus" size={16} /> Server hinzufügen</button>
 </PageHead>
 
@@ -111,7 +117,7 @@
             <dd class="row"><code class="ellipsis grow">{s.public_key}</code><button class="btn sm icon ghost" title="Kopieren" onclick={() => copy(s.public_key).then(() => toast('Kopiert'))}><Icon name="copy" size={14} /></button></dd>
           {/if}
           <dt>Port</dt>
-          <dd>{#each s.ports || [] as pt}<span class="badge">{pt.proto.toUpperCase()} {pt.port}{pt.to ? `–${pt.to}` : ''}</span> {/each}</dd>
+          <dd>{#each s.ports || [] as pt}<span class="badge">{pt.proto.toUpperCase()} {pt.port}{pt.to ? `–${pt.to}` : ''}</span> {/each}<Info title="Firewall-Regeln für {s.name}" wide><PortHelp ports={(s.ports || []).map((p) => ({ ...p, server: s.name }))} /></Info></dd>
         </dl>
       </div>
       <div class="actions">
@@ -129,10 +135,6 @@
   <div class="card empty"><h3>Noch keine Server</h3><p>Lege einen WireGuard-, VLESS-, Hysteria2- oder OpenVPN-Server an.</p><button class="btn primary" onclick={openNew}>Server hinzufügen</button></div>
 {/if}
 
-<div class="notice" style="margin-top:18px">
-  <Icon name="info" />
-  <span>Neue Ports (z. B. ein zweiter WireGuard-Server auf UDP 51821) müssen auf dem Proxmox-Host an den Container weitergeleitet werden. Die Liste findest du unter <a href="#/settings/system">Einstellungen → System</a>.</span>
-</div>
 
 <Modal bind:open title={cur ? `${cur.name} bearbeiten` : 'Server hinzufügen'} width={680}>
   <div class="stack">
@@ -156,7 +158,7 @@
       {/key}
     {/if}
     {#if cur?.protocol === 'wireguard'}
-      <div class="notice warn small"><Icon name="alert" size={16} /> Änderungen an Tunnelnetz, Port oder Adresse erfordern neue Konfigurationen auf allen Geräten.</div>
+      <div class="row small muted" style="gap:6px"><Icon name="alert" size={15} /> Tunnelnetz, Port oder Adresse ändern <Info title="Achtung" text="Änderungen an Tunnelnetz, Port oder Adresse erfordern neue Konfigurationen auf allen Geräten. Ein neuer Port muss außerdem auf dem Proxmox-Host weitergeleitet werden (Firewall-Regeln über das „i“ beim Port)." /></div>
     {/if}
   </div>
   {#snippet footer()}

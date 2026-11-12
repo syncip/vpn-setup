@@ -299,6 +299,13 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 			fmt.Fprintf(&chains, "\tchain vp_fwd {\n\t\ttype filter hook forward priority -10; policy accept;\n%s\t}\n", fwd.String())
 		}
 	}
+	// DNS von außen (Geräte ohne VPN): Port 53 der Außenschnittstelle an den Panel-DNS; wer nicht
+	// freigegeben ist, bekommt dort keine Antwort.
+	if e.dnsPublic() {
+		out := e.Setting("out_interface")
+		fmt.Fprintf(&chains, "\tchain vp_dnsext {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n"+
+			"\t\tiifname %q udp dport 53 redirect to :%d\n\t\tiifname %q tcp dport 53 redirect to :%d\n\t}\n", out, dnsPort, out, dnsPort)
+	}
 	if chains.Len() == 0 {
 		return "", "", false
 	}
@@ -325,6 +332,7 @@ func (e *Engine) applyNft(env *proto.Env, snap *Snapshot, rt *routing, plan *acl
 // applyNftWith: wie applyNft, mit vorgegebenen Quellen (Labortests ohne echte VPN-Dienste).
 func (e *Engine) applyNftWith(snap *Snapshot, rt *routing, plan *aclPlan, srcs []srcPolicy) error {
 	e.removeLegacyACL()
+	e.configureExt()
 	e.dns.configure(e, srcs, rt)
 	script, static, needed := e.nftScript(snap, rt, plan, srcs, e.dns.elements)
 	const stateKey = "state:nft"

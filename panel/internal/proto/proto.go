@@ -21,16 +21,16 @@ import (
 
 // Field beschreibt ein Eingabefeld der Oberfläche.
 type Field struct {
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Type     string   `json:"type"` // text | number | bool | select | cidr | cidrlist | textlist | targets | peers | secret
-	Default  any      `json:"default,omitempty"`
-	Options  []Option `json:"options,omitempty"`
-	Help     string   `json:"help,omitempty"`
-	Advanced bool     `json:"advanced,omitempty"`
-	Kinds    []string `json:"kinds,omitempty"`    // nur für diese Zugangsarten anzeigen
-	ReadOnly bool     `json:"readonly,omitempty"` // nur anzeigen (z. B. Schlüssel)
-	Placeholder string `json:"placeholder,omitempty"`
+	Key         string   `json:"key"`
+	Label       string   `json:"label"`
+	Type        string   `json:"type"` // text | number | bool | select | cidr | cidrlist | textlist | targets | peers | secret
+	Default     any      `json:"default,omitempty"`
+	Options     []Option `json:"options,omitempty"`
+	Help        string   `json:"help,omitempty"`
+	Advanced    bool     `json:"advanced,omitempty"`
+	Kinds       []string `json:"kinds,omitempty"`    // nur für diese Zugangsarten anzeigen
+	ReadOnly    bool     `json:"readonly,omitempty"` // nur anzeigen (z. B. Schlüssel)
+	Placeholder string   `json:"placeholder,omitempty"`
 }
 
 type Option struct {
@@ -40,10 +40,10 @@ type Option struct {
 
 // Kind ist eine Zugangsart mit Vorgaben (z. B. „Handy/Laptop“, „Netzwerk/Homelab“).
 type Kind struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	Icon        string `json:"icon"`
+	ID          string  `json:"id"`
+	Label       string  `json:"label"`
+	Description string  `json:"description"`
+	Icon        string  `json:"icon"`
 	Defaults    store.M `json:"defaults"`
 }
 
@@ -82,6 +82,10 @@ type Global struct {
 	// PanelDNS: Geräte, deren Verkehr weitergeleitet wird (WireGuard, OpenVPN), bekommen als DNS-Server
 	// die Tunneladresse des Servers – dort antwortet das Panel (Filter, Protokoll, Domain-Regeln).
 	PanelDNS bool
+	// Net: Zugriff auf andere Netze (Netzwerk → Zugriff), nil = keine Freigaben.
+	Net *NetAccess
+	// Private: Sperre für private Ziele und die eigenen Adressen des Servers (nil = aus).
+	Private *PrivateGuard
 }
 
 // ACL: Wer darf sich mit einem Server verbinden?
@@ -172,10 +176,10 @@ type Usage struct {
 
 // ClientConfig ist alles, was ein Nutzer zum Verbinden braucht.
 type ClientConfig struct {
-	Title        string     `json:"title"`
-	Files        []File     `json:"files,omitempty"` // z. B. wg-Konfiguration
-	Links        []Link     `json:"links,omitempty"` // z. B. vless://
-	Instructions []string   `json:"instructions,omitempty"`
+	Title        string      `json:"title"`
+	Files        []File      `json:"files,omitempty"` // z. B. wg-Konfiguration
+	Links        []Link      `json:"links,omitempty"` // z. B. vless://
+	Instructions []string    `json:"instructions,omitempty"`
 	Info         [][2]string `json:"info,omitempty"`
 }
 

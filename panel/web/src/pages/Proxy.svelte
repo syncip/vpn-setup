@@ -4,13 +4,25 @@
   import PageHead from '../components/PageHead.svelte';
   import Modal from '../components/Modal.svelte';
   import FieldForm from '../components/FieldForm.svelte';
+  import Info from '../components/Info.svelte';
+  import PortHelp from '../components/PortHelp.svelte';
   import RouteRules from '../components/RouteRules.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { ago, clone, date, fmtNum } from '../lib/format.js';
-  import { protocol, toast } from '../lib/state.svelte.js';
+  import { protocol, toast, go } from '../lib/state.svelte.js';
+
+  let { tab = 'overview' } = $props();
+  const TABS = [
+    ['overview', 'Übersicht', 'activity'],
+    ['exits', 'Ausgänge', 'globe'],
+    ['groups', 'Gruppen', 'layers'],
+    ['rules', 'Ziel-Regeln', 'route'],
+    ['proxy', 'Proxy-Server', 'server'],
+  ];
 
   let d = $state({ exits: [], groups: [], error: '' });
+  let ruleCount = $state(null);
   let servers = $state([]);
   let loaded = $state(false);
 
@@ -20,6 +32,7 @@
       d = x;
       servers = s.filter((v) => v.protocol === 'proxy');
       loaded = true;
+      if (tab === 'overview') get('/routes').then((r) => (ruleCount = { all: r.routes.length, on: r.routes.filter((x) => x.enabled).length })).catch(() => {});
     } catch (e) {
       toast(e.message, 'error');
     }
@@ -51,6 +64,15 @@
     if (s.loss > 10 || s.rtt > 300) return ['warn', 'instabil'];
     return ['ok', 'verbunden'];
   }
+
+  // ---------- Übersicht ----------
+  const exitHealth = $derived.by(() => {
+    const c = { ok: 0, warn: 0, bad: 0, muted: 0 };
+    for (const e of d.exits) c[health(e)[0]]++;
+    return c;
+  });
+  const groupIssues = $derived(d.groups.filter((g) => g.enabled && ['blocked', 'direct', 'failover'].includes(g.status?.state)));
+  const badExits = $derived(d.exits.filter((e) => e.enabled && health(e)[0] === 'bad'));
 
   // ---------- Prüfen ----------
   let checking = $state(false);
@@ -180,18 +202,88 @@
   }
 </script>
 
-<PageHead title="Proxy & Ausgänge" subtitle="SOCKS5/HTTP-Proxy, Ausgänge über externe VPNs (WireGuard- oder OpenVPN-Konfigurationen) und Regeln, welcher Verkehr darüber läuft">
-  <button class="btn" onclick={() => check(false)} disabled={checking || !d.exits.length}><Icon name="refresh" size={16} /> Jetzt prüfen</button>
-  <button class="btn" onclick={() => check(true)} disabled={checking || !d.exits.length} title="Lädt 5 MB über jeden Ausgang"><Icon name="gauge" size={16} /> Geschwindigkeit messen</button>
+<PageHead title="Proxy & Ausgänge" subtitle="Proxy, Ausgänge über externe VPNs und Ziel-Regeln" helpTitle="Proxy & Ausgänge">
+  {#snippet help()}
+    <p><b>Proxy:</b> SOCKS5/HTTP-Zugänge für Geräte ohne VPN-App (z. B. Fernseher). Zugänge legst du beim Nutzer an (Zugang hinzufügen → Proxy).</p>
+    <p><b>Ausgänge:</b> WireGuard- oder OpenVPN-Konfigurationen externer Anbieter. Hochgeladene Konfigurationen werden bereinigt: Skripte (PostUp, up/down), Routen, DNS-Änderungen und Dateiverweise fallen weg.</p>
+    <p><b>Gruppen:</b> Der Server prüft alle 30 Sekunden Antwortzeit und Verlust jedes Ausgangs (Ping und HTTPS über den Tunnel) und schaltet bei Störung auf den nächsten Ausgang der Gruppe; zurück geht es, wenn der bevorzugte Ausgang 10 Minuten stabil war. Nur IPv4.</p>
+    <p><b>Ziel-Regeln:</b> legen fest, welcher Verkehr über welche Gruppe läuft.</p>
+  {/snippet}
+  {#if tab === 'overview' || tab === 'exits' || tab === 'groups'}
+    <button class="btn" onclick={() => check(false)} disabled={checking || !d.exits.length}><Icon name="refresh" size={16} /> Jetzt prüfen</button>
+    <button class="btn" onclick={() => check(true)} disabled={checking || !d.exits.length} title="Lädt 5 MB über jeden Ausgang"><Icon name="gauge" size={16} /> Geschwindigkeit messen</button>
+  {/if}
+  {#if tab === 'exits'}<button class="btn primary" onclick={() => openExit()}><Icon name="upload" size={16} /> Ausgang hochladen</button>{/if}
+  {#if tab === 'groups'}<button class="btn primary" onclick={() => openGroup()} disabled={!d.exits.length}><Icon name="plus" size={16} /> Gruppe anlegen</button>{/if}
+  {#if tab === 'proxy'}<button class="btn primary" onclick={() => openServer()}><Icon name="plus" size={16} /> Proxy anlegen</button>{/if}
 </PageHead>
+
+<div class="tabs">
+  {#each TABS as [id, label, icon]}
+    <button class:active={tab === id} onclick={() => go(id === 'overview' ? '/proxy' : `/proxy/${id}`)}><Icon name={icon} size={14} /> {label}</button>
+  {/each}
+</div>
 
 {#if d.error}<div class="notice bad" style="margin-bottom:16px"><Icon name="alert" /><span>{d.error}</span></div>{/if}
 
-<!-- Proxy-Server -->
+{#if tab === 'overview'}
+  <div class="flow">
+    <button class="tile" onclick={() => go('/proxy/rules')}>
+      <span class="tl"><Icon name="route" size={16} /> Ziel-Regeln</span>
+      <span class="big">{ruleCount ? ruleCount.on : '…'}</span>
+      <span class="tiny muted">{ruleCount ? `aktiv${ruleCount.all > ruleCount.on ? `, ${ruleCount.all - ruleCount.on} aus` : ''}` : ''} · welcher Verkehr über welche Gruppe läuft</span>
+    </button>
+    <span class="arrow"><Icon name="chevron" size={18} /></span>
+    <button class="tile" onclick={() => go('/proxy/groups')}>
+      <span class="tl"><Icon name="layers" size={16} /> Gruppen</span>
+      <span class="big">{d.groups.length}</span>
+      <span class="tiny muted">{groupIssues.length ? `${groupIssues.length} mit Störung` : 'alle auf dem bevorzugten Ausgang'} · Reihenfolge mit Ausweich-Ausgängen</span>
+    </button>
+    <span class="arrow"><Icon name="chevron" size={18} /></span>
+    <button class="tile" onclick={() => go('/proxy/exits')}>
+      <span class="tl"><Icon name="globe" size={16} /> Ausgänge</span>
+      <span class="big">{d.exits.length}</span>
+      <span class="tiny"><span class="ok-text">{exitHealth.ok} verbunden</span>{#if exitHealth.warn}&nbsp;· <span class="warn-text">{exitHealth.warn} instabil</span>{/if}{#if exitHealth.bad}&nbsp;· <span class="bad-text">{exitHealth.bad} gestört</span>{/if}</span>
+    </button>
+  </div>
+  <div class="muted small" style="margin:6px 0 14px">Daneben gibt es <button class="linkbtn" onclick={() => go('/proxy/proxy')}>{servers.length} Proxy-Server</button> (SOCKS5/HTTP) für Geräte ohne VPN-App – sie nutzen ebenfalls eine Gruppe als Ausgang.</div>
+
+  {#if badExits.length || groupIssues.length}
+    <div class="notice warn small" style="margin-bottom:14px">
+      <Icon name="alert" size={16} />
+      <span>
+        {#each groupIssues as g}<span>Gruppe <b>{g.name}</b>: {STATE[g.status.state]?.[1]}. </span>{/each}
+        {#each badExits as e}<span>Ausgang <b>{e.name}</b>: {health(e)[1]}. </span>{/each}
+      </span>
+    </div>
+  {/if}
+
+  <div class="card">
+    <div class="card-head"><h3>Gruppen und aktiver Ausgang</h3></div>
+    <div class="list">
+      {#each d.groups as g}
+        {@const st = STATE[g.status?.state || (g.enabled ? 'waiting' : '')] || ['muted', 'deaktiviert']}
+        {@const act = exitById[g.status?.active]}
+        <button class="item linkitem" onclick={() => go('/proxy/groups')}>
+          <Icon name="layers" size={18} />
+          <div class="grow">
+            <div class="strong">{g.name}</div>
+            <div class="muted tiny">{g.exits.length} Ausgänge · {g.users.length ? `genutzt von ${g.users.map((u) => u.name).slice(0, 4).join(', ')}${g.users.length > 4 ? ' …' : ''}` : 'von keiner Regel genutzt'}</div>
+          </div>
+          <span class="small">{act ? act.name : '–'}{#if act?.status?.loc}&nbsp;<span class="badge">{act.status.loc}</span>{/if}</span>
+          <span class="badge {st[0]}">{g.enabled ? st[1] : 'deaktiviert'}</span>
+        </button>
+      {:else}
+        <div class="empty small">{d.exits.length ? 'Noch keine Gruppe.' : 'Noch keine Ausgänge – lade unter „Ausgänge“ die Konfiguration deines VPN-Anbieters hoch.'}</div>
+      {/each}
+    </div>
+  </div>
+{/if}
+
+{#if tab === 'proxy'}
 <div class="card">
   <div class="card-head">
-    <div><h2>Proxy-Server</h2><div class="muted tiny">Zugänge legst du beim Nutzer an (Zugang hinzufügen → Proxy)</div></div>
-    <button class="btn sm primary" onclick={() => openServer()}><Icon name="plus" size={15} /> Proxy anlegen</button>
+    <div><h2>Proxy-Server <Info title="Proxy-Server" wide><p>Zugänge legst du beim Nutzer an (Zugang hinzufügen → Proxy).</p><PortHelp ports={servers.filter((s) => s.enabled).flatMap((s) => (s.ports || []).map((p) => ({ ...p, server: s.name })))} /></Info></h2></div>
   </div>
   <div class="list">
     {#each servers as s}
@@ -211,13 +303,14 @@
   </div>
 </div>
 
-<RouteRules reload={d.groups.length + servers.length} />
+{/if}
 
-<!-- Gruppen -->
-<div class="section-head">
-  <div><h2>Ausgangsgruppen</h2><div class="muted small">Mehrere Ausgänge in fester Reihenfolge – fällt einer aus, übernimmt der nächste automatisch</div></div>
-  <button class="btn sm" onclick={() => openGroup()} disabled={!d.exits.length}><Icon name="plus" size={15} /> Gruppe anlegen</button>
-</div>
+{#if tab === 'rules'}
+<RouteRules reload={d.groups.length + servers.length} />
+{/if}
+
+{#if tab === 'groups'}
+<div class="muted small" style="margin-bottom:12px">Mehrere Ausgänge in fester Reihenfolge – fällt einer aus, übernimmt der nächste automatisch.</div>
 <div class="grid cols-2">
   {#each d.groups as g}
     {@const st = STATE[g.status?.state || (g.enabled ? 'waiting' : '')] || ['muted', 'deaktiviert']}
@@ -276,11 +369,10 @@
   {/each}
 </div>
 
-<!-- Ausgänge -->
-<div class="section-head">
-  <div><h2>Ausgänge</h2><div class="muted small">Externe VPN-Verbindungen – nur für Gruppen, der Server selbst nutzt sie nicht</div></div>
-  <button class="btn sm primary" onclick={() => openExit()}><Icon name="upload" size={15} /> Ausgang hochladen</button>
-</div>
+{/if}
+
+{#if tab === 'exits'}
+<div class="muted small" style="margin-bottom:12px">Externe VPN-Verbindungen – nur für Gruppen, der Server selbst nutzt sie nicht.</div>
 <div class="card">
   <div class="table-wrap">
     <table class="table">
@@ -322,27 +414,21 @@
     </table>
   </div>
 </div>
-
-<div class="notice" style="margin-top:18px">
-  <Icon name="info" />
-  <span>Hochgeladene Konfigurationen werden bereinigt: Skripte (PostUp, up/down), Routen, DNS-Änderungen und Dateiverweise fallen weg. Der Server prüft alle 30 Sekunden Antwortzeit und Verlust jedes Ausgangs (Ping und HTTPS über den Tunnel) und schaltet bei Störung auf den nächsten Ausgang der Gruppe; zurück geht es, wenn der bevorzugte Ausgang 10 Minuten stabil war. Nur IPv4.</span>
-</div>
+{/if}
 
 <Modal bind:open={exOpen} title={exCur ? `Ausgang ${exCur.name}` : 'Ausgang hochladen'} width={680}>
   <div class="stack">
     <div class="field"><label for="ex-name">Name</label><input id="ex-name" class="input" bind:value={ex.name} placeholder="z. B. Anbieter USA" /></div>
     <div class="field">
-      <label for="ex-file">Konfiguration (.conf von WireGuard oder .ovpn von OpenVPN)</label>
+      <label for="ex-file">Konfiguration <Info title="Konfiguration" text="Eine .conf von WireGuard oder eine .ovpn von OpenVPN. Skripte (PostUp, up/down), Routen, DNS-Änderungen und Dateiverweise werden entfernt." />{#if exType}&nbsp;<span class="badge ok">erkannt: {exType === 'wireguard' ? 'WireGuard' : 'OpenVPN'}</span>{/if}</label>
       <input id="ex-file" type="file" accept=".conf,.ovpn,.txt" onchange={readFile} />
       <textarea class="input mono" rows="8" bind:value={ex.config} placeholder={exCur ? 'leer lassen = Konfiguration behalten' : '[Interface] … bzw. client / remote … <ca> …'}></textarea>
-      {#if exType}<div class="help">Erkannt: <b>{exType === 'wireguard' ? 'WireGuard' : 'OpenVPN'}</b></div>{/if}
     </div>
     {#if exType === 'openvpn'}
       <div class="grid cols-2">
-        <div class="field"><label for="ex-user">Benutzername</label><input id="ex-user" class="input" bind:value={ex.username} autocomplete="off" /></div>
+        <div class="field"><label for="ex-user">Benutzername <Info title="Zugangsdaten" text="Nur nötig, wenn die Konfiguration „auth-user-pass“ enthält (bei vielen Anbietern die OpenVPN-Zugangsdaten aus dem Kundenbereich, nicht das Login-Passwort)." /></label><input id="ex-user" class="input" bind:value={ex.username} autocomplete="off" /></div>
         <div class="field"><label for="ex-pw">Passwort</label><input id="ex-pw" class="input" type="password" bind:value={ex.password} autocomplete="new-password" placeholder={exCur?.has_auth ? 'gespeichert – leer = unverändert' : ''} /></div>
       </div>
-      <div class="help">Nur nötig, wenn die Konfiguration „auth-user-pass“ enthält (bei vielen Anbietern die OpenVPN-Zugangsdaten aus dem Kundenbereich, nicht das Login-Passwort).</div>
     {/if}
     <label class="switch"><input type="checkbox" bind:checked={ex.enabled} /><span class="track"></span> Aktiv</label>
   </div>
@@ -389,10 +475,10 @@
     </div>
     <div class="grid cols-3">
       <div class="field"><label for="gr-loss">Max. Verlust (%)</label><input id="gr-loss" class="input" type="number" bind:value={gr.max_loss} /></div>
-      <div class="field"><label for="gr-rtt">Max. Antwortzeit (ms)</label><input id="gr-rtt" class="input" type="number" bind:value={gr.max_rtt} /><div class="help">0 = egal</div></div>
-      <div class="field"><label for="gr-mbit">Min. Tempo (Mbit/s)</label><input id="gr-mbit" class="input" type="number" bind:value={gr.min_mbit} /><div class="help">0 = egal; braucht den Geschwindigkeitstest</div></div>
+      <div class="field"><label for="gr-rtt">Max. Antwortzeit (ms) <Info title="Max. Antwortzeit" text="Ist der Ausgang langsamer, gilt er als gestört. 0 = egal." /></label><input id="gr-rtt" class="input" type="number" bind:value={gr.max_rtt} placeholder="0 = egal" /></div>
+      <div class="field"><label for="gr-mbit">Min. Tempo (Mbit/s) <Info title="Min. Tempo" text="Ist der Ausgang langsamer, gilt er als gestört. 0 = egal. Braucht den Geschwindigkeitstest („Geschwindigkeit messen“)." /></label><input id="gr-mbit" class="input" type="number" bind:value={gr.min_mbit} placeholder="0 = egal" /></div>
     </div>
-    <div class="field"><label for="gr-dns">DNS-Server (über den Ausgang)</label><input id="gr-dns" class="input mono" bind:value={gr.dns} /><div class="help">Namen werden über den aktiven Ausgang aufgelöst, damit Dienste den passenden Standort sehen.</div></div>
+    <div class="field"><label for="gr-dns">DNS-Server (über den Ausgang) <Info title="DNS über den Ausgang" text="Namen werden über den aktiven Ausgang aufgelöst, damit Dienste den passenden Standort sehen." /></label><input id="gr-dns" class="input mono" bind:value={gr.dns} /></div>
     <label class="switch"><input type="checkbox" bind:checked={gr.enabled} /><span class="track"></span> Aktiv</label>
   </div>
   {#snippet footer()}
@@ -406,7 +492,7 @@
     <div class="field"><label for="sv-name">Name</label><input id="sv-name" class="input" bind:value={sv.name} /></div>
     {#if pxProto}<FieldForm fields={pxProto.server_fields} bind:values={svValues} />{/if}
     <label class="switch"><input type="checkbox" bind:checked={sv.enabled} /><span class="track"></span> Aktiv</label>
-    <div class="notice small"><Icon name="info" size={16} /><span>Die Ports müssen auf dem Proxmox-Host per TCP an den Container weitergeleitet werden (Einstellungen → Ports).</span></div>
+    <div class="row small muted" style="gap:6px">Ports auf dem Host weiterleiten <Info title="Firewall-Regeln" wide><PortHelp ports={[svValues.socks_port && { proto: 'tcp', port: Number(svValues.socks_port), note: 'SOCKS5' }, svValues.http_port && { proto: 'tcp', port: Number(svValues.http_port), note: 'HTTP' }].filter(Boolean)} /></Info></div>
   </div>
   {#snippet footer()}
     <button class="btn" onclick={() => (svOpen = false)}>Abbrechen</button>
@@ -415,6 +501,71 @@
 </Modal>
 
 <style>
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tile {
+    flex: 1 1 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    text-align: left;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    padding: 12px 14px;
+    cursor: pointer;
+    font: inherit;
+    color: var(--text);
+  }
+  .tile:hover {
+    border-color: var(--accent);
+  }
+  .tile .tl {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+  }
+  .tile .big {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .arrow {
+    display: flex;
+    align-items: center;
+    color: var(--text-2);
+  }
+  .linkitem {
+    width: 100%;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .linkitem:hover {
+    background: var(--hover, rgba(127, 127, 127, 0.06));
+  }
+  .linkbtn {
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+  }
+  @media (max-width: 700px) {
+    .arrow {
+      display: none;
+    }
+  }
   .list {
     display: flex;
     flex-direction: column;

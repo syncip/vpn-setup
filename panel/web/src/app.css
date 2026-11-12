@@ -212,6 +212,16 @@ pre,
   flex: 1;
   min-width: 0;
 }
+.ok-text {
+  color: var(--ok);
+}
+.warn-text,
+.warn-t {
+  color: var(--warn);
+}
+.bad-text {
+  color: var(--bad);
+}
 .muted {
   color: var(--muted);
 }

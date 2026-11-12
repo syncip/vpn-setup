@@ -107,6 +107,9 @@ iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 1194 -j DNAT --to-destinat
 
 ## Proxy und Ausgänge (externe VPNs)
 
+Die Seite **Proxy & Ausgänge** hat Reiter: **Übersicht** (Ziel-Regeln → Gruppen → Ausgänge mit Zahlen,
+Störungen und dem aktiven Ausgang je Gruppe), **Ausgänge**, **Gruppen**, **Ziel-Regeln** und **Proxy-Server**.
+
 Menü **Proxy & Ausgänge**: SOCKS5- und HTTP-Proxy mit Benutzername und Passwort, z. B. für Fernseher und Apps.
 Der Verkehr läuft direkt über den Server oder über eine **Ausgangsgruppe** – also über externe
 VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anbieter) hochgeladen wird.
@@ -215,7 +218,24 @@ dann die Server, die Ausgänge („Direkt“ und die Ausgangsgruppen mit ihren A
   Zugriff bzw. entzieht ihn, wenn er schon besteht. Der Zugriff des Geräts wird dabei auf „Ausgewählte
   Geräte“ umgestellt (bisher erreichbare Geräte bleiben erreichbar). Vor jeder Änderung fragt die Seite nach.
 
-Die Reiter daneben zeigen wie bisher je WireGuard-Server die Geräte, die Sternkarte und die Zugriffsmatrix.
+Die Reiter daneben zeigen je WireGuard-Server die Geräte (nach Nutzer gruppiert, mit Filter und Suche),
+die Sternkarte und die Zugriffsmatrix (bis 40 Geräte).
+
+### Zugriff zwischen Netzen
+
+**Netzwerk** → **Zugriff**: Die Netze der WireGuard-Server sind voneinander getrennt. Eine **Freigabe**
+erlaubt Nutzern, Tarifen oder einzelnen Geräten (WireGuard, OpenVPN, VLESS) den Zugriff auf ein anderes
+WireGuard-Netz samt der Netze hinter dessen Geräten (z. B. Homelab). Das Panel ergänzt dafür die
+Firewall, NAT auf dem Ziel-Netz, bei Split-Tunnel die AllowedIPs bzw. die OpenVPN-Routen und bei VLESS
+die Xray-Regeln. Hysteria2 und Proxy können Nutzer nicht einzeln leiten – für sie wirken Freigaben nicht.
+
+### Lokale Netze für VPN-Nutzer gesperrt
+
+**Einstellungen** → **Sicherheit**: VPN-Nutzer erreichen private Adressen (10/8, 172.16/12, 192.168/16,
+100.64/10, Loopback, fc00::/7 …) und die eigene Server-Adresse nicht – weder über WireGuard/OpenVPN
+(Firewall) noch über VLESS (Xray), Hysteria2 (ACL) oder den Proxy. So bleibt z. B. das interne Netz des
+Proxmox-Hosts geschützt. Ausnahmen (Netze, eine pro Zeile) lassen sich eintragen; Freigaben unter
+„Zugriff“ gehen vor. Abschalten geht, ist aber nicht empfohlen.
 
 ## DNS (Panel-DNS, Werbefilter)
 
@@ -242,8 +262,29 @@ um – deshalb nach dem Update die Config neu laden.
 - **Protokoll** (Aufbewahrung einstellbar, Vorgabe 7 Tage, 0 = aus): jede Anfrage mit Gerät, Domain,
   Ergebnis und Weg; Suche und Filter, Sperren/Freigeben mit einem Klick. Die **Übersicht** zeigt
   Anfragen je Stunde, Anteil gesperrt, häufigste und gesperrte Domains, Geräte und „Domain prüfen“.
-- Antworten werden zwischengespeichert (TTL der Antwort). Aufgelöst wird über die eingestellten
-  DNS-Server, für Ziel-Regeln über die DNS-Server der Ausgangsgruppe.
+- Die **Übersicht** zeigt außerdem: verschiedene Domains und Geräte, Antwortzeit (Median/95 %),
+  Anteil „gibt es nicht“ und Fehler, Abfragetypen, Sperrgründe, Weg (direkt/Gruppe), häufige Namen ohne
+  Antwort und die Geräte mit den meisten Sperren. Die Karte „So wird gefiltert“ zeigt, welches Profil für
+  wen gilt und welche Listen in keinem Profil stecken (eine Liste wirkt nur in einem aktiven Profil).
+- **Zwischenspeicher** (Einstellungen): Größe, Mindest- und Höchstdauer und Domains, die nie gespeichert
+  werden. **Verteilung** auf die DNS-Server: Reihenfolge, schnellster (laufend gemessen), reihum oder
+  parallel.
+- **Auflösung:** über öffentliche DNS-Server oder **Unbound** (läuft im Container, löst selbst rekursiv
+  auf, 127.0.0.1:5335; das Setup-Script installiert das Paket, das Panel schreibt die Konfiguration und
+  startet den Dienst nur, wenn Unbound gewählt ist). Antwortet Unbound nicht, springen die eingestellten
+  DNS-Server ein. Für Ziel-Regeln gelten weiter die DNS-Server der Ausgangsgruppe.
+- **DNS-Speedtest:** misst die Server einer bearbeitbaren Liste (hinzufügen/entfernen, eingebaute Liste
+  wiederherstellen) plus die eingestellten Server und Unbound – bekannte Namen und neue (zufällige)
+  Namen getrennt. **Automatische Wahl** (abschaltbar): misst regelmäßig (stündlich bis wöchentlich) und
+  übernimmt die schnellsten 1–4 Server; gewechselt wird nur bei mindestens 15 % Vorteil oder wenn ein
+  Server nicht zuverlässig antwortet. Jeder Wechsel steht im Ereignisprotokoll.
+- **Ohne VPN** (Fernseher, Konsole, Router zu Hause): „DNS von außen“ leitet Port 53 der
+  Außenschnittstelle an den Panel-DNS. Antworten bekommen nur **freigegebene Geräte** (IP-Adressen,
+  Netze oder DynDNS-Namen, die alle 5 Minuten neu aufgelöst werden), jeweils mit eigenem Filterprofil.
+  Alle anderen Anfragen werden verworfen, aber mit IP, Hostname (Rückwärtsauflösung), Anzahl und letzter
+  Domain angezeigt – so sieht man, ob das eigene Gerät ankommt oder Fremde es versuchen; mit einem Klick
+  freigeben. Ein offener DNS-Server für alle wird bewusst nicht angeboten (DNS-Verstärkungsangriffe).
+  Auf dem Proxmox-Host UDP und TCP 53 an den Container weiterleiten (die Seite zeigt die Befehle).
 - VLESS, Hysteria2 und Proxy nutzen den Panel-DNS (noch) nicht.
 
 ## IP-Listen

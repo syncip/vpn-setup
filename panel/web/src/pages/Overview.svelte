@@ -7,8 +7,12 @@
   import { get, post, run } from '../lib/api.js';
   import { bytes, date, ago } from '../lib/format.js';
   import { protocol, meta } from '../lib/state.svelte.js';
+  import SearchInput from '../components/SearchInput.svelte';
+  import Fold from '../components/Fold.svelte';
+  import { tokens, matches } from '../lib/pick.js';
 
   let d = $state(null);
+  let aq = $state('');
   let refresh = $state(0);
   let err = $state('');
 
@@ -50,12 +54,10 @@
 
 {#if d}
   {#if Object.keys(d.errors || {}).length}
-    <div class="notice bad" style="margin-bottom:16px">
-      <Icon name="alert" />
-      <div>
-        <div class="strong">Beim Anwenden ist ein Fehler aufgetreten</div>
+    <div style="margin-bottom:16px">
+      <Fold id="ov-errors" icon="alert" tone="bad" title="Beim Anwenden ist ein Fehler aufgetreten" count={Object.keys(d.errors).length}>
         {#each Object.entries(d.errors) as [k, v]}<div class="small"><b>{k}:</b> {v}</div>{/each}
-      </div>
+      </Fold>
     </div>
   {/if}
 
@@ -90,7 +92,7 @@
             {/each}
           </div>
         {:else}
-          <div class="tiny muted">Keine – im Menü Proxy lassen sich externe VPNs als Ausgang einrichten.</div>
+          <div class="tiny muted">Keine eingerichtet</div>
         {/if}
       </div>
     </a>
@@ -150,10 +152,10 @@
   </div>
 
   <div class="grid cols-3" style="margin-top:16px">
-    <div class="card">
-      <div class="card-head"><h2>Hinweise</h2><span class="badge">{d.alerts.length}</span></div>
-      <div class="list">
-        {#each d.alerts as a}
+    <Fold id="ov-alerts" icon="alert" tone={d.alerts.length ? 'warn' : ''} title="Hinweise" count={d.alerts.length}>
+      {#if d.alerts.length > 6}<div style="padding:0 0 6px"><SearchInput bind:value={aq} placeholder="Hinweise durchsuchen …" width="100%" /></div>{/if}
+      <div class="list" style="max-height:420px;overflow:auto;padding:0">
+        {#each d.alerts.filter((a) => matches(`${a.name} ${a.text}`, tokens(aq))) as a}
           <a class="item" href="#/users/{a.user_id}">
             <span class="badge {alertTone[a.kind]}" style="width:28px;padding:0;justify-content:center"><Icon name={alertIcon[a.kind]} size={14} /></span>
             <div class="grow">
@@ -165,7 +167,7 @@
           <div class="empty small"><Icon name="check" /> Alles in Ordnung</div>
         {/each}
       </div>
-    </div>
+    </Fold>
 
     <div class="card">
       <div class="card-head"><h2>Top-Nutzer</h2><span class="muted small">30 Tage</span></div>

@@ -49,7 +49,11 @@
   }
 </script>
 
-<PageHead title="Tarife & Limits" subtitle="Wiederverwendbare Limits für Datenvolumen, Geschwindigkeit und Drosselung">
+<PageHead title="Tarife & Limits" subtitle="Wiederverwendbare Limits für Datenvolumen und Tempo" helpTitle="Tarife & Limits">
+  {#snippet help()}
+    <p>Limits gelten pro Nutzer über alle seine Zugänge zusammen. Geschwindigkeitsgrenzen gelten pro Gerät bzw. pro VLESS-Nutzer.</p>
+    <p>Individuelle Limits stellst du direkt beim Nutzer ein.</p>
+  {/snippet}
   <button class="btn primary" onclick={() => openNew()}><Icon name="plus" size={16} /> Tarif anlegen</button>
 </PageHead>
 
@@ -98,10 +102,6 @@
   </div>
 {/if}
 
-<div class="notice" style="margin-top:18px">
-  <Icon name="info" />
-  <span>Limits gelten pro Nutzer über alle seine Zugänge (WireGuard + VLESS zusammen). Geschwindigkeitsgrenzen gelten pro Gerät bzw. pro VLESS-Nutzer. Individuelle Limits stellst du direkt beim Nutzer ein.</span>
-</div>
 
 <Modal bind:open title={cur ? `Tarif ${cur.name} bearbeiten` : 'Tarif anlegen'} width={720}>
   <div class="stack">

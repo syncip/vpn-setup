@@ -36,7 +36,7 @@ import (
 )
 
 // version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
-var version = "0.10.0"
+var version = "0.11.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -48,6 +48,7 @@ func env(k, def string) string {
 type opts struct {
 	db, dataDir, listen, direct, hook, cert, key, legacy string
 	proxy, dev, demo                                     bool
+	demoUsers                                            int
 }
 
 func parseOpts(args []string) (*opts, []string) {
@@ -63,6 +64,7 @@ func parseOpts(args []string) (*opts, []string) {
 	fs.BoolVar(&o.proxy, "proxy-protocol", env("VPNPANEL_PROXY", "1") == "1", "PROXY-Protocol von nginx erwarten")
 	fs.BoolVar(&o.dev, "dev", false, "Testmodus: keine Systembefehle, Dateien unter <data>/dryroot")
 	fs.BoolVar(&o.demo, "demo", false, "Demo-Daten anlegen (nur mit -dev)")
+	fs.IntVar(&o.demoUsers, "demo-users", 0, "zusätzliche Demo-Nutzer mit Geräten anlegen, um viele Nutzer zu testen (nur mit -dev -demo)")
 	fs.StringVar(&o.legacy, "legacy", env("VPNPANEL_LEGACY", "/etc/vpn"), "Verzeichnis des bisherigen Setups (Übernahme)")
 	_ = fs.Parse(args)
 	if o.db == "" {
@@ -126,6 +128,9 @@ func serve(args []string) {
 		}
 		if err := seedDemoExits(e); err != nil {
 			log.Printf("Demo-Ausgänge: %v", err)
+		}
+		if err := seedDemoMany(e, o.demoUsers); err != nil {
+			log.Printf("Demo-Nutzer: %v", err)
 		}
 		if err := seedDemoDNS(e); err != nil {
 			log.Printf("Demo-DNS: %v", err)

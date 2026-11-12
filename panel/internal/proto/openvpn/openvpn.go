@@ -501,13 +501,27 @@ func hostHasIPv6(env *proto.Env) bool {
 	return err == nil && len(strings.TrimSpace(string(b))) > 0
 }
 
-func ccdConf(sc serverCfg, pc peerCfg) string {
+func ccdConf(sc serverCfg, pc peerCfg, targets []proto.NetTarget) string {
 	n4, _ := netip.ParsePrefix(sc.Net4)
 	s := fmt.Sprintf("ifconfig-push %s %s\n", pc.Address4, mask4(n4))
-	if sc.Net6 != "" && pc.Address6 != "" {
+	has6 := sc.Net6 != "" && pc.Address6 != ""
+	if has6 {
 		n6, _ := netip.ParsePrefix(sc.Net6)
 		srv6, _ := addrAt(n6, 1)
 		s += fmt.Sprintf("ifconfig-ipv6-push %s/%d %s\n", pc.Address6, n6.Bits(), srv6)
+	}
+	// Freigegebene Netze (Netzwerk → Zugriff): ohne Internet über den Server braucht das Gerät
+	// Routen dafür (mit „redirect-gateway“ geht ohnehin alles durch den Tunnel)
+	if !sc.Internet {
+		for _, t := range targets {
+			for _, p := range t.Nets {
+				if p.Addr().Is4() {
+					s += fmt.Sprintf("push \"route %s %s\"\n", p.Masked().Addr(), mask4(p))
+				} else if has6 {
+					s += fmt.Sprintf("push \"route-ipv6 %s\"\n", p.Masked())
+				}
+			}
+		}
 	}
 	return s
 }
@@ -599,7 +613,7 @@ func applyServer(env *proto.Env, sb *proto.ServerBundle) error {
 		}
 		cn := proto.Str(pb.Peer.Secrets, "cn")
 		pc := loadPeer(pb.Peer)
-		if _, err := sys.WriteFile(confDir+"/"+n+"-ccd/"+cn, []byte(ccdConf(c, pc)), 0o644); err != nil {
+		if _, err := sys.WriteFile(confDir+"/"+n+"-ccd/"+cn, []byte(ccdConf(c, pc, env.Global.Net.For(pb.Peer.ID))), 0o644); err != nil {
 			return err
 		}
 		active[cn] = true
@@ -705,11 +719,44 @@ func applyFirewall(env *proto.Env, servers []*proto.ServerBundle) error {
 				net = c.Net6
 			}
 			if c.Internet && net != "" {
+				// keine privaten Ziele (internes Netz, Proxmox-Host) und nicht der Server selbst
+				for _, p := range env.Global.Private.Allowed() {
+					if p.Addr().Is4() != v6 {
+						fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -o %s -d %s -j ACCEPT\n", iface, out, p)
+					}
+				}
+				for _, p := range env.Global.Private.Blocked() {
+					if p.Addr().Is4() != v6 {
+						fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -o %s -d %s -j DROP\n", iface, out, p)
+					}
+				}
 				fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -o %s -s %s -j ACCEPT\n", iface, out, net)
 				if !v6 { // über Ausgänge (externe VPNs, Schnittstellen ex<ID>) – siehe Ziel-Regeln
 					fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -o ex+ -s %s -j ACCEPT\n", iface, net)
 				}
 				fmt.Fprintf(&nat, "-A VPNOV-NAT -s %s -o %s -j MASQUERADE\n", net, out)
+			}
+			// Freigaben (Netzwerk → Zugriff): WireGuard-Netze, die einzelne Geräte erreichen dürfen
+			for _, pb := range sb.Peers {
+				if !ready(sb, pb) {
+					continue
+				}
+				pc := loadPeer(pb.Peer)
+				src := pc.Address4
+				if v6 {
+					src = pc.Address6
+				}
+				if src == "" {
+					continue
+				}
+				for _, t := range env.Global.Net.For(pb.Peer.ID) {
+					for _, p := range t.Nets {
+						if p.Addr().Is4() != !v6 {
+							continue
+						}
+						fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -o %s -s %s -d %s -j ACCEPT\n", iface, t.Iface, src, p)
+					}
+				}
 			}
 			fmt.Fprintf(&filter, "-A VPNOV-FWD -i %s -j DROP\n", iface)
 		}

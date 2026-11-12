@@ -8,6 +8,10 @@
   import { get, post, run } from '../lib/api.js';
   import { ago, speed, fmtNum, PROTO_LABEL } from '../lib/format.js';
   import { meta } from '../lib/state.svelte.js';
+  import SearchInput from './SearchInput.svelte';
+  import Fold from './Fold.svelte';
+  import Info from './Info.svelte';
+  import { tokens, matches } from '../lib/pick.js';
 
   let topo = $state({ peers: [], users: [], server_via: {}, issues: [] });
   let servers = $state([]);
@@ -56,20 +60,64 @@
 
   const withOffline = $derived(showOffline ?? topo.peers.length <= 24);
 
+  // Suche: Nutzer, Gerät, Dienst, Server, Adresse – zeigt Treffer auch offline
+  let tq = $state('');
+  const toks = $derived(tokens(tq));
+  function peerShown(p, u) {
+    if (toks.length) {
+      const s = serverById[p.server_id];
+      return matches(`${u.name} ${p.name} ${PROTO_LABEL[p.protocol] || p.protocol} ${s?.name || ''} ${p.address || p.address4 || ''}`, toks);
+    }
+    return withOffline || p.online;
+  }
+  const hitCount = $derived(toks.length ? topo.peers.filter((p) => userById[p.user_id] && peerShown(p, userById[p.user_id])).length : 0);
+
   // ---------- Anordnung ----------
   const W = 1090;
   const COL = { dev: 36, devW: 286, srv: 420, srvW: 176, out: 700, outW: 214, net: 1000 };
   const ROW = 28;
 
+  // Viele Nutzer: kompakt – eine Zeile je Nutzer (aufklappbar), Linien je Nutzer und Server gebündelt,
+  // nur die ersten „limit“ Nutzer (aktive zuerst), Rest über „weitere anzeigen“ bzw. die Suche.
+  const COMPACT_FROM = 25;
+  let openUsers = $state({});
+  let limit = $state(20);
+  const usersWithPeers = $derived(
+    topo.users.map((u) => ({ u, ps: topo.peers.filter((p) => p.user_id === u.id && peerShown(p, u)) })).filter((x) => x.ps.length),
+  );
+  const compact = $derived(!toks.length && usersWithPeers.length > COMPACT_FROM);
+  function toggleUser(id) {
+    openUsers = { ...openUsers, [id]: !openUsers[id] };
+  }
+
   const layout = $derived.by(() => {
     const rows = []; // Nutzer-Köpfe und Geräte
+    const bundles = []; // kompakt: Linie Nutzer → Server
     const peerY = {};
     const userY = {};
     let y = 8;
-    for (const u of topo.users) {
-      const ps = topo.peers.filter((p) => p.user_id === u.id && (withOffline || p.online));
-      if (!ps.length) continue;
-      rows.push({ type: 'user', u, y, n: ps.length });
+    let list = usersWithPeers;
+    let hidden = 0;
+    if (compact) {
+      const on = (x) => x.ps.some((p) => p.online);
+      list = [...list].sort((a, b) => on(b) - on(a) || a.u.name.localeCompare(b.u.name));
+      hidden = Math.max(0, list.length - limit);
+      list = list.slice(0, limit);
+    }
+    for (const { u, ps } of list) {
+      if (compact && !openUsers[u.id]) {
+        rows.push({ type: 'user', u, y, n: ps.length, ps, collapsed: true });
+        userY[u.id] = y + 15;
+        const bySrv = {};
+        for (const p of ps) {
+          peerY[p.id] = y + 15;
+          (bySrv[p.server_id] ||= []).push(p);
+        }
+        for (const [sid, list2] of Object.entries(bySrv)) bundles.push({ uid: u.id, sid: Number(sid), y: y + 15, ps: list2 });
+        y += 36;
+        continue;
+      }
+      rows.push({ type: 'user', u, y, n: ps.length, ps });
       userY[u.id] = y + 14;
       y += 30;
       for (const p of ps) {
@@ -78,6 +126,10 @@
         y += ROW;
       }
       y += 12;
+    }
+    if (hidden) {
+      rows.push({ type: 'more', y, n: hidden });
+      y += 44;
     }
     const devH = y;
     // Server: auf Höhe ihrer Geräte, ohne Überlappung
@@ -106,7 +158,7 @@
       outY[o.id] = oy + (o.type === 'group' ? 23 : o.h / 2);
       oy += o.h + 16;
     }
-    return { rows, peerY, userY, srvY, outs, outY, H, SH };
+    return { rows, bundles, peerY, userY, srvY, outs, outY, H, SH };
   });
 
   // ---------- Verkehr je Weg ----------
@@ -300,7 +352,10 @@
     }
   }
 
-  const KIND_ICON = { client: 'phone', server: 'server', site: 'network', access: 'key' };
+  // lange Namenslisten kürzen: „a, b, c … und 40 weitere“
+  const short = (l, n = 8) => (l.length > n ? `${l.slice(0, n).join(', ')} … und ${l.length - n} weitere` : l.join(', '));
+
+  const KIND_ICON ={ client: 'phone', server: 'server', site: 'network', access: 'key' };
   const total = $derived(live.total || {});
   const srvRate = (id) => topo.peers.filter((p) => p.server_id === id).reduce((a, p) => a + sum(rateOf[p.id]), 0);
   const onlineN = $derived(topo.peers.filter((p) => p.online).length);
@@ -326,28 +381,43 @@
 </div>
 
 <!-- Wo hakt es? -->
-<div class="card issues" class:clean={loaded && !topo.issues.length}>
+<div class="issues">
   {#if !topo.issues.length}
-    <div class="row ok-line"><Icon name="check" size={16} /> <span>{loaded ? 'Keine Störungen – alle Server, Ausgänge und Regeln arbeiten.' : 'Lädt …'}</span></div>
+    <div class="card row ok-line"><Icon name="check" size={16} /> <span>{loaded ? 'Keine Störungen – alle Server, Ausgänge und Regeln arbeiten.' : 'Lädt …'}</span></div>
   {:else}
-    <div class="ihead"><Icon name="alert" size={16} /> <b>{topo.issues.length === 1 ? 'Eine Auffälligkeit' : `${topo.issues.length} Auffälligkeiten`}</b></div>
-    {#each topo.issues as i}
-      <div class="issue {i.level}">
-        <span class="dotl"></span>
-        <span class="grow">{i.text}</span>
-        {#if i.link}<a class="small" href={i.link}>Ansehen</a>{/if}
+    <Fold id="net-issues" icon="alert" tone={topo.issues.some((i) => i.level === 'bad') ? 'bad' : 'warn'} title={topo.issues.length === 1 ? 'Eine Auffälligkeit' : `${topo.issues.length} Auffälligkeiten`}>
+      <div class="ilist">
+        {#each topo.issues as i}
+          <div class="issue {i.level}">
+            <span class="dotl"></span>
+            <span class="grow">{i.text}</span>
+            {#if i.link}<a class="small" href={i.link}>Ansehen</a>{/if}
+          </div>
+        {/each}
       </div>
-    {/each}
+    </Fold>
   {/if}
 </div>
 
 <div class="card">
   <div class="card-head">
     <div>
-      <h2>Karte</h2>
-      <div class="muted tiny">Anklicken zeigt den Weg. Gerät, Nutzer oder Server auf eine Gruppe ziehen = Ausgang zuweisen. WireGuard-Gerät auf ein anderes ziehen = Zugriff erlauben oder entziehen.</div>
+      <h2>Karte <Info title="Bedienung der Karte">
+        <ul>
+          <li>Anklicken zeigt den Weg vom Gerät über den Server zum Ausgang.</li>
+          <li>Gerät, Nutzer oder Server auf eine Gruppe ziehen = Ausgang zuweisen (legt eine Ziel-Regel an).</li>
+          <li>WireGuard-Gerät auf ein anderes desselben Servers ziehen = Zugriff erlauben oder entziehen.</li>
+        </ul>
+      </Info></h2>
     </div>
-    <label class="switch small"><input type="checkbox" checked={withOffline} onchange={(e) => (showOffline = e.currentTarget.checked)} /><span class="track"></span> Offline-Geräte zeigen</label>
+    <div class="row wrap" style="gap:10px;justify-content:flex-end">
+      <SearchInput bind:value={tq} placeholder="Nutzer, Gerät, Dienst, Server …" width="250px" />
+      {#if toks.length}
+        <span class="muted small">{hitCount} {hitCount === 1 ? 'Treffer' : 'Treffer'}</span>
+      {:else}
+        <label class="switch small"><input type="checkbox" checked={withOffline} onchange={(e) => (showOffline = e.currentTarget.checked)} /><span class="track"></span> Offline-Geräte zeigen</label>
+      {/if}
+    </div>
   </div>
   <div class="scroll">
     <div class="stage" bind:this={stage} style="width:{W}px;height:{layout.H}px" class:dragging={drag?.moved}>
@@ -364,6 +434,21 @@
               class:flow={moving(rt)}
               class:off={!p.active || !p.enabled}
               class:dim={sel?.kind === 'peer' ? sel.id !== p.id : !peerHot(p)}
+              style="stroke-width:{width(rt)}"
+            />
+          {/if}
+        {/each}
+        <!-- kompakt: Nutzer → Server, gebündelt -->
+        {#each layout.bundles as b (b.uid + ':' + b.sid)}
+          {@const rt = b.ps.reduce((a, p) => a + sum(rateOf[p.id]), 0)}
+          {#if layout.srvY[b.sid] != null}
+            <path
+              d={curve(COL.dev + COL.devW, b.y, COL.srv, layout.srvY[b.sid])}
+              class="edge"
+              class:on={b.ps.some((p) => p.online)}
+              class:flow={moving(rt)}
+              class:off={b.ps.every((p) => !p.active || !p.enabled)}
+              class:dim={!b.ps.some((p) => peerHot(p))}
               style="stroke-width:{width(rt)}"
             />
           {/if}
@@ -413,22 +498,40 @@
       </svg>
 
       <!-- Geräte -->
-      {#each layout.rows as r (r.type + (r.type === 'user' ? r.u.id : r.p.id))}
-        {#if r.type === 'user'}
+      {#each layout.rows as r (r.type + (r.type === 'user' ? r.u.id : r.type === 'more' ? '' : r.p.id))}
+        {#if r.type === 'more'}
+          <div class="morerow" style="left:{COL.dev}px;top:{r.y}px;width:{COL.devW}px">
+            <button type="button" class="btn sm" onclick={() => (limit += 25)}><Icon name="plus" size={14} /> {Math.min(25, r.n)} weitere von {r.n}</button>
+            <span class="tiny muted">oder oben suchen</span>
+          </div>
+        {:else if r.type === 'user'}
           {@const u = r.u}
+          {@const urate = r.collapsed ? r.ps.reduce((a, p) => a + sum(rateOf[p.id]), 0) : 0}
           <div
             class="urow"
+            class:compact={r.collapsed}
             class:sel={isSel('user', u.id)}
+            class:dim={r.collapsed && !r.ps.some((p) => peerHot(p))}
             style="left:{COL.dev}px;top:{r.y}px;width:{COL.devW}px"
-            onpointerdown={(e) => startDrag(e, 'user', u.id, COL.dev + COL.devW, r.y + 14)}
+            onpointerdown={(e) => startDrag(e, 'user', u.id, COL.dev + COL.devW, r.y + (r.collapsed ? 15 : 14))}
             role="button"
             tabindex="0"
             onkeydown={(e) => e.key === 'Enter' && pick('user', u.id)}
             title="Nutzer – ziehen, um alle seine Zugänge über eine Gruppe zu leiten"
           >
-            <Icon name="user" size={14} />
-            <span class="grow strong">{u.name}</span>
+            {#if compact}
+              <button type="button" class="ux" class:open={!r.collapsed} onpointerdown={(e) => e.stopPropagation()} onclick={() => toggleUser(u.id)} title={r.collapsed ? 'Geräte zeigen' : 'Geräte einklappen'} aria-label="Geräte zeigen"><Icon name="chevron" size={14} /></button>
+            {:else}
+              <Icon name="user" size={14} />
+            {/if}
+            {#if r.collapsed}<span class="dot" class:on={r.ps.some((p) => p.online)}></span>{/if}
+            <span class="grow strong ellipsis">{u.name}</span>
             {#if u.status && u.status !== 'ok'}<span class="badge {u.status === 'throttled' ? 'warn' : 'bad'}">{{ throttled: 'gedrosselt', blocked: 'gesperrt', expired: 'abgelaufen', disabled: 'aus' }[u.status] || u.status}</span>{/if}
+            {#if r.collapsed}
+              {#each [...new Set(r.ps.map((p) => p.protocol))] as pr}<ProtoLogo id={pr} size={14} />{/each}
+              <span class="tiny muted">{r.n}</span>
+              {#if urate > 0}<span class="rate">{speed(urate)}</span>{/if}
+            {/if}
           </div>
         {:else}
           {@const p = r.p}
@@ -584,7 +687,7 @@
         <div><span class="muted">Weg nach außen</span><b>{viaText(p.via)}</b></div>
         {#if p.protocol === 'wireguard'}
           <div>
-            <span class="muted">Darf erreichen</span><b>{(p.reach || []).map((id) => peerById[id]?.name).filter(Boolean).join(', ') || 'kein anderes Gerät'}</b>
+            <span class="muted">Darf erreichen</span><b>{short((p.reach || []).map((id) => peerById[id]?.name).filter(Boolean)) || 'kein anderes Gerät'}</b>
           </div>
         {/if}
         {#if p.protocol === 'hysteria2'}<div><span class="muted">Hinweis</span><b>Hysteria2 folgt nur Regeln für den Server und „alle“ – zum Zuweisen den Server ziehen.</b></div>{/if}
@@ -638,12 +741,12 @@
               : 'sperren'}
           </div>
         </div>
-        <a class="btn sm" href="#/proxy"><Icon name="edit" size={14} /> Gruppen und Regeln</a>
+        <a class="btn sm" href="#/proxy/rules"><Icon name="edit" size={14} /> Gruppen und Regeln</a>
         <button class="btn sm ghost" onclick={() => (sel = null)}>Schließen</button>
       </div>
       <div class="facts2">
         <div><span class="muted">Verkehr gerade</span><b>{speed(outRate[g.id])}</b></div>
-        <div><span class="muted">Genutzt von</span><b>{ps.length ? ps.map((p) => `${userById[p.user_id]?.name} · ${p.name}`).join(', ') : 'niemandem'}</b></div>
+        <div><span class="muted">Genutzt von</span><b>{ps.length ? short(ps.map((p) => `${userById[p.user_id]?.name} · ${p.name}`)) : 'niemandem'}</b></div>
       </div>
     {:else if sel.kind === 'direct'}
       <div class="row">
@@ -668,18 +771,20 @@
   }
   .issues {
     margin: 16px 0;
-    padding: 12px 16px;
+  }
+  .ilist {
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-  .issues.clean {
-    border-color: var(--ok-soft);
+    max-height: 260px;
+    overflow: auto;
   }
   .ok-line {
     color: var(--ok);
     gap: 8px;
     font-size: 14px;
+    padding: 10px 16px;
+    border-color: var(--ok-soft);
   }
   .ihead {
     display: flex;
@@ -806,6 +911,49 @@
   }
   .urow.sel {
     outline: 2px solid var(--accent);
+  }
+  .urow.compact {
+    height: 30px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    gap: 6px;
+    transition: opacity 0.15s;
+  }
+  .urow.dim {
+    opacity: 0.3;
+  }
+  .urow .strong {
+    min-width: 56px;
+  }
+  .urow.compact .badge {
+    font-size: 10.5px;
+    padding: 0 5px;
+    height: 18px;
+  }
+  .ux {
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    transition: transform 0.15s;
+  }
+  .ux:hover {
+    color: var(--accent);
+    background: var(--panel-2);
+  }
+  .ux.open {
+    transform: rotate(90deg);
+  }
+  .morerow {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 34px;
   }
   .prow {
     padding: 0 8px 0 10px;

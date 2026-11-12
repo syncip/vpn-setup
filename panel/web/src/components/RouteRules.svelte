@@ -4,7 +4,11 @@
   import Modal from './Modal.svelte';
   import { confirmDialog } from './Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
+  import Picker from './Picker.svelte';
+  import Info from './Info.svelte';
+  import SearchInput from './SearchInput.svelte';
   import { PROTO_LABEL, ago, fmtNum } from '../lib/format.js';
+  import { peerItems, userItems, serverItems, tokens, matches } from '../lib/pick.js';
 
   // reload: Zähler der Elternseite – ändert er sich (z. B. neue Gruppe), wird neu geladen
   let { reload = 0 } = $props();
@@ -45,7 +49,7 @@
     if (r.scope === 'user') return userById[r.scope_id]?.name || '?';
     if (r.scope === 'peer') {
       const p = peerById[r.scope_id];
-      return p ? `${userById[p.user_id]?.name || '?'} · ${p.name}` : '?';
+      return p ? `${userById[p.user_id]?.name || '?'} · ${p.name} (${PROTO_LABEL[p.protocol] || p.protocol})` : '?';
     }
     return 'alle Nutzer und Geräte';
   }
@@ -61,6 +65,19 @@
   const sorted = $derived(
     [...d.routes].sort((a, b) => ORDER[a.scope] - ORDER[b.scope] || a.scope_id - b.scope_id || (a.match === 'all') - (b.match === 'all') || a.id - b.id),
   );
+  // Suche über Regeln: Nutzer, Gerät, Server, Ziele, Gruppe, Notiz
+  let rq = $state('');
+  const peerPicks = $derived(Object.fromEntries(peerItems(d.peers, d.users, d.servers).map((i) => [i.value, i])));
+  const shownRoutes = $derived.by(() => {
+    const t = tokens(rq);
+    if (!t.length) return sorted;
+    return sorted.filter((r) =>
+      matches(
+        [SCOPE[r.scope], scopeText(r), r.scope === 'peer' ? peerPicks[r.scope_id]?.search : '', targetText(r), r.group ? groupById[r.group]?.name : 'direkt', r.name].join(' '),
+        t,
+      ),
+    );
+  });
 
   let open = $state(false);
   let cur = $state(null);
@@ -74,8 +91,10 @@
     open = true;
   }
   function setScope(s) {
+    if (f.scope === s) return;
     f.scope = s;
-    f.scope_id = s === 'server' ? d.servers[0]?.id || 0 : s === 'user' ? d.users[0]?.id || 0 : s === 'peer' ? d.peers[0]?.id || 0 : 0;
+    // bei vielen Nutzern nichts vorwählen – erst suchen
+    f.scope_id = s === 'server' && d.servers.length === 1 ? d.servers[0].id : 0;
   }
   function toggleList(id) {
     f.lists = f.lists.includes(id) ? f.lists.filter((x) => x !== id) : [...f.lists, id];
@@ -114,12 +133,15 @@
     <h2>Ziel-Regeln</h2>
     <div class="muted small">Welcher Verkehr über welche Ausgangsgruppe läuft – für WireGuard, OpenVPN, VLESS, Hysteria2 und Proxy</div>
   </div>
-  <button class="btn sm primary" onclick={() => openRule()} disabled={!loaded}><Icon name="plus" size={15} /> Regel anlegen</button>
+  <div class="row" style="gap:8px">
+    {#if d.routes.length > 5}<SearchInput bind:value={rq} placeholder="Regeln durchsuchen …" width="230px" />{/if}
+    <button class="btn sm primary" onclick={() => openRule()} disabled={!loaded}><Icon name="plus" size={15} /> Regel anlegen</button>
+  </div>
 </div>
 {#if d.error}<div class="notice bad" style="margin-bottom:12px"><Icon name="alert" /><span>{d.error}</span></div>{/if}
 <div class="card">
   <div class="list">
-    {#each sorted as r (r.id)}
+    {#each shownRoutes as r (r.id)}
       {@const g = groupById[r.group]}
       <div class="item" class:off={!r.enabled}>
         <span class="badge scope {r.scope}" title="Gilt für">{SCOPE[r.scope]}</span>
@@ -161,8 +183,8 @@
       </div>
     {:else}
       <div class="empty small">
-        Noch keine Regel – aller Verkehr geht direkt über den Server.{#if loaded && !d.groups.length}
-          Lege zuerst unten einen Ausgang und eine Gruppe an.{/if}
+        {#if sorted.length}Keine Regel passt zu „{rq}“.{:else}Noch keine Regel – aller Verkehr geht direkt über den Server.{#if loaded && !d.groups.length}
+          Lege zuerst unten einen Ausgang und eine Gruppe an.{/if}{/if}
       </div>
     {/each}
   </div>
@@ -182,28 +204,21 @@
 <Modal bind:open title={cur ? 'Regel bearbeiten' : 'Regel anlegen'} width={620}>
   <div class="stack">
     <div class="field">
-      <span class="label">Gilt für</span>
+      <span class="label">Gilt für <Info title="Gilt für" text="Rangfolge: Gerät vor Nutzer vor Server vor „Alle“. „Nutzer“ gilt für alle Zugänge des Nutzers. Hysteria2-Zugänge folgen nur Regeln für „Server“ und „Alle“." /></span>
       <div class="seg">
         {#each Object.entries(SCOPE) as [k, label]}
           <button class="btn sm" class:primary={f.scope === k} onclick={() => setScope(k)} disabled={k !== 'global' && !d[k + 's']?.length}>{label}</button>
         {/each}
       </div>
       {#if f.scope === 'server'}
-        <select class="input" bind:value={f.scope_id}>
-          {#each d.servers as s}<option value={s.id}>{s.name} ({PROTO_LABEL[s.protocol] || s.protocol})</option>{/each}
-        </select>
+        <Picker items={serverItems(d.servers)} bind:value={f.scope_id} placeholder="Server suchen …" />
       {:else if f.scope === 'user'}
-        <select class="input" bind:value={f.scope_id}>
-          {#each d.users as u}<option value={u.id}>{u.name}</option>{/each}
-        </select>
+        <Picker items={userItems(d.users, '', d.peers)} bind:value={f.scope_id} placeholder="Nutzer suchen …" />
       {:else if f.scope === 'peer'}
-        <select class="input" bind:value={f.scope_id}>
-          {#each d.peers as p}<option value={p.id}>{userById[p.user_id]?.name || '?'} · {p.name} ({PROTO_LABEL[p.protocol] || p.protocol})</option>{/each}
-        </select>
+        <Picker items={peerItems(d.peers, d.users, d.servers)} bind:value={f.scope_id} placeholder="Gerät suchen (Name, Nutzer, Dienst, Server) …" />
       {:else}
-        <div class="help">Für alle Nutzer und Geräte auf allen Servern, solange keine genauere Regel greift.</div>
+        <div class="muted small">Alle Nutzer und Geräte, solange keine genauere Regel greift</div>
       {/if}
-      {#if f.scope === 'user'}<div class="help">Gilt für alle Zugänge des Nutzers. Hysteria2-Zugänge folgen nur Regeln für „Server“ und „Alle“.</div>{/if}
       {#if hyOnly && f.scope === 'peer'}<div class="help warn-text">Hysteria2 kann Geräte nicht einzeln leiten – für diesen Zugang bitte eine Regel für den Server anlegen.</div>{/if}
     </div>
 
@@ -216,13 +231,8 @@
     </div>
     {#if f.match === 'targets'}
       <div class="field">
-        <label for="rt-dom">Domains</label>
+        <label for="rt-dom">Domains <Info title="Domains" text="Eine pro Zeile, Unterdomains sind eingeschlossen. Bei WireGuard und OpenVPN erkennt der Server die Ziele an den DNS-Anfragen des Geräts. Eine neue Regel greift, sobald das Gerät den Namen neu auflöst (VPN kurz trennen und verbinden hilft). Fest erzwungenes verschlüsseltes DNS (DoH, „Privates DNS“ mit Anbieter) umgeht das." /></label>
         <textarea id="rt-dom" class="input mono" rows="3" bind:value={f.domains} placeholder={'netflix.com\nnflxvideo.net'}></textarea>
-        <div class="help">
-          Eine pro Zeile, Unterdomains sind eingeschlossen. Bei WireGuard und OpenVPN erkennt der Server die Ziele an den DNS-Anfragen des Geräts. Eine neue
-          Regel greift, sobald das Gerät den Namen neu auflöst (VPN kurz trennen und verbinden hilft). Fest erzwungenes verschlüsseltes DNS (DoH, „Privates
-          DNS“ mit Anbieter) umgeht das.
-        </div>
       </div>
       <div class="field">
         <label for="rt-nets">IP-Netze (IPv4)</label>
@@ -243,16 +253,11 @@
     {/if}
 
     <div class="field">
-      <label for="rt-via">Über</label>
+      <label for="rt-via">Über <Info title="Über" text="Ausgangsgruppe oder direkt über den Server. „Direkt“ ist nützlich als Ausnahme, z. B. „Alles über Mullvad, nur die Bank direkt“. Ausgänge können nur IPv4 – bei „Alles“ wird IPv6 ins Internet für diese Geräte gesperrt, damit nichts am Ausgang vorbeigeht." /></label>
       <select id="rt-via" class="input" bind:value={f.group}>
         {#each d.groups as g}<option value={g.id}>Ausgangsgruppe {g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
         <option value={0}>Direkt über den Server (Ausnahme)</option>
       </select>
-      {#if f.group === 0}
-        <div class="help">Nützlich als Ausnahme, z. B. „Alles über Mullvad, nur die Bank direkt“.</div>
-      {:else if f.match === 'all'}
-        <div class="help">Ausgänge können nur IPv4 – IPv6 ins Internet wird für diese Geräte gesperrt, damit nichts am Ausgang vorbeigeht.</div>
-      {/if}
     </div>
 
     <div class="field"><label for="rt-name">Notiz (optional)</label><input id="rt-name" class="input" bind:value={f.name} placeholder="z. B. Streaming über USA" maxlength="60" /></div>

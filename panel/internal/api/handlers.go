@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -59,8 +60,32 @@ func (a *API) meta(w http.ResponseWriter, r *http.Request) {
 	for _, d := range proto.All() {
 		infos = append(infos, d.Info())
 	}
+	lan4, lan6 := lanAddrs()
 	writeJSON(w, map[string]any{"protocols": infos, "version": a.Version, "update": a.E.Update(a.Version), "dry_run": a.E.Sys.DryRun(),
-		"server_host": a.E.Setting("server_host"), "sub_host": a.E.Setting("sub_host")})
+		"server_host": a.E.Setting("server_host"), "sub_host": a.E.Setting("sub_host"), "lan4": lan4, "lan6": lan6})
+}
+
+// lanAddrs: Adressen des Containers auf eth0 – Ziel der Portweiterleitungen auf dem Host (für die Hilfe in der Oberfläche).
+func lanAddrs() (v4, v6 string) {
+	ifc, err := net.InterfaceByName("eth0")
+	if err != nil {
+		return "", ""
+	}
+	addrs, _ := ifc.Addrs()
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok || ipn.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		if ipn.IP.To4() != nil {
+			if v4 == "" {
+				v4 = ipn.IP.String()
+			}
+		} else if v6 == "" {
+			v6 = ipn.IP.String()
+		}
+	}
+	return v4, v6
 }
 
 type userRow struct {
@@ -73,13 +98,17 @@ type userRow struct {
 	OnlineSince int64    `json:"online_since,omitempty"`
 	NextReset   int64    `json:"next_reset"`
 	Protocols   []string `json:"protocols"`
+	// Find: Gerätenamen, Server und Adressen für die Suche in der Nutzerliste
+	Find string `json:"find"`
 }
 
 func (a *API) userRows(snap *engine.Snapshot) []*userRow {
 	byUser := map[int64][]*proto.PeerBundle{}
 	proto2 := map[int64]string{}
+	srvName := map[int64]string{}
 	for _, sb := range snap.Servers {
 		proto2[sb.Server.ID] = sb.Server.Protocol
+		srvName[sb.Server.ID] = sb.Server.Name
 	}
 	for _, pb := range snap.Peers {
 		byUser[pb.Peer.UserID] = append(byUser[pb.Peer.UserID], pb)
@@ -95,8 +124,13 @@ func (a *API) userRows(snap *engine.Snapshot) []*userRow {
 			}
 		}
 		seen := map[string]bool{}
+		var find []string
 		for _, pb := range byUser[u.ID] {
 			row.Devices++
+			find = append(find, pb.Peer.Name, srvName[pb.Peer.ServerID])
+			if a4, ok := pb.Peer.Settings["address4"].(string); ok {
+				find = append(find, a4)
+			}
 			if peerOn(pb.Peer) {
 				row.Online = true
 				if s := liveSince(pb.Peer.ID); s > 0 && (row.OnlineSince == 0 || s < row.OnlineSince) {
@@ -109,6 +143,7 @@ func (a *API) userRows(snap *engine.Snapshot) []*userRow {
 			}
 		}
 		sort.Strings(row.Protocols)
+		row.Find = strings.Join(find, " ")
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })

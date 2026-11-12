@@ -1,8 +1,11 @@
 <script>
   import Icon from './Icon.svelte';
   import ListInput from './ListInput.svelte';
+  import Info from './Info.svelte';
   import TargetsInput from './TargetsInput.svelte';
+  import SearchInput from './SearchInput.svelte';
   import { get } from '../lib/api.js';
+  import { tokens, matches } from '../lib/pick.js';
 
   // Formular aus Feldbeschreibungen der Protokolltreiber.
   // fields: [{key,label,type,default,options,help,advanced,kinds,placeholder}]
@@ -26,6 +29,13 @@
     if (f.type === 'peers') return values.access === 'custom';
     return true;
   }
+  // Suche in „Ausgewählte Geräte“
+  let pq = $state('');
+  let onlyPicked = $state(false);
+  function peerHits(list, picked) {
+    const t = tokens(pq);
+    return list.filter((p) => (!onlyPicked || picked.includes(p.id)) && matches(`${p.name} ${p.user_name || ''} ${p.settings?.address4 || ''}`, t));
+  }
   function togglePeer(id) {
     const cur = values.access_peers || [];
     values.access_peers = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
@@ -39,13 +49,16 @@
 {#snippet field(f)}
   <div class="field">
     {#if f.type === 'bool'}
-      <label class="switch">
-        <input type="checkbox" bind:checked={values[f.key]} />
-        <span class="track"></span>
-        <span class="strong">{f.label}</span>
-      </label>
+      <div class="row" style="gap:6px">
+        <label class="switch">
+          <input type="checkbox" bind:checked={values[f.key]} />
+          <span class="track"></span>
+          <span class="strong">{f.label}</span>
+        </label>
+        {#if f.help}<Info title={f.label} text={f.help} />{/if}
+      </div>
     {:else}
-      <label for="f-{f.key}">{f.label}</label>
+      <label for="f-{f.key}">{f.label} {#if f.help}<Info title={f.label} text={f.help} />{/if}</label>
       {#if f.type === 'select'}
         <select id="f-{f.key}" class="input" bind:value={values[f.key]}>
           {#each f.options as o}<option value={o.value}>{o.label}</option>{/each}
@@ -55,7 +68,7 @@
           <option value={0}>Direkt über den Server</option>
           {#each groups || [] as g}<option value={g.id}>{g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
         </select>
-        {#if groups && !groups.length}<div class="help">Noch keine Ausgangsgruppen – im Menü <a href="#/proxy">Proxy</a> anlegen.</div>{/if}
+        {#if groups && !groups.length}<div class="help">Noch keine Ausgangsgruppen – im Menü <a href="#/proxy/groups">Proxy &amp; Ausgänge → Gruppen</a> anlegen.</div>{/if}
       {:else if f.type === 'number'}
         <input id="f-{f.key}" class="input" type="number" value={values[f.key] ?? ''} oninput={(e) => num(e, f.key)} placeholder={f.placeholder || ''} />
       {:else if f.type === 'cidrlist' || f.type === 'textlist'}
@@ -63,21 +76,29 @@
       {:else if f.type === 'targets'}
         <TargetsInput bind:value={values[f.key]} />
       {:else if f.type === 'peers'}
+        {@const picked = values.access_peers || []}
+        {#if peers.length > 8}
+          <div class="row wrap" style="gap:8px;margin-bottom:6px">
+            <SearchInput bind:value={pq} placeholder="Gerät oder Nutzer suchen …" width="240px" />
+            <label class="switch small"><input type="checkbox" bind:checked={onlyPicked} /><span class="track"></span> nur ausgewählte</label>
+            <span class="muted small">{picked.length} von {peers.length} ausgewählt</span>
+          </div>
+        {/if}
         <div class="peers">
-          {#each peers as p}
+          {#each peerHits(peers, picked) as p (p.id)}
             <label class="peer">
-              <input type="checkbox" checked={(values.access_peers || []).includes(p.id)} onchange={() => togglePeer(p.id)} />
+              <input type="checkbox" checked={picked.includes(p.id)} onchange={() => togglePeer(p.id)} />
               <span>{p.name}</span><span class="muted small">{p.user_name}</span>
+              {#if p.settings?.address4}<span class="muted tiny mono">{p.settings.address4}</span>{/if}
             </label>
           {:else}
-            <span class="muted small">Keine anderen Geräte auf diesem Server.</span>
+            <span class="muted small">{peers.length ? 'Keine Treffer.' : 'Keine anderen Geräte auf diesem Server.'}</span>
           {/each}
         </div>
       {:else}
         <input id="f-{f.key}" class="input" class:mono={f.type === 'cidr'} bind:value={values[f.key]} placeholder={f.placeholder || ''} readonly={f.readonly} />
       {/if}
     {/if}
-    {#if f.help}<div class="help">{f.help}</div>{/if}
   </div>
 {/snippet}
 
@@ -122,7 +143,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    max-height: 200px;
+    max-height: 260px;
     overflow: auto;
     padding: 8px 10px;
     border: 1px solid var(--border);

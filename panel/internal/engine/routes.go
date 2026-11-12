@@ -148,6 +148,8 @@ type routing struct {
 	ByKey          map[string]*proto.Policy
 	Groups         map[int64]proto.GroupRoute
 	Skipped        map[int64]string // Regel-ID → warum sie nicht wirkt
+	Net            *proto.NetAccess // Zugriff auf andere Netze (Netzwerk → Zugriff)
+	Private        *proto.PrivateGuard
 }
 
 type routeState struct {
@@ -300,6 +302,8 @@ func (e *Engine) compileRoutes(snap *Snapshot) *routing {
 			}
 		}
 	}
+	rt.Net = e.compileNetAccess(snap)
+	rt.Private = e.privateGuard()
 	e.rt.mu.Lock()
 	e.rt.cur = rt
 	e.rt.mu.Unlock()

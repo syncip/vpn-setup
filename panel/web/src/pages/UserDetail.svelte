@@ -2,6 +2,7 @@
   import Icon from '../components/Icon.svelte';
   import ProtoLogo from '../components/ProtoLogo.svelte';
   import Modal from '../components/Modal.svelte';
+  import Info from '../components/Info.svelte';
   import TrafficPanel from '../components/TrafficPanel.svelte';
   import LivePanel from '../components/LivePanel.svelte';
   import Usage from '../components/Usage.svelte';
@@ -321,8 +322,13 @@
       <QR text={d.sub_url} size={220} />
       <div class="stack grow">
         <div>
-          <h2>Abo-Link</h2>
-          <p class="muted small">Enthält alle aktiven Zugänge dieses Nutzers{subSummary ? ` (${subSummary})` : ''}: VLESS, Hysteria2 und WireGuard-Geräte „Handy / Laptop“. In Hiddify, v2rayNG, v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an. Hinweis: Hiddify (sing-box) kann VLESS mit aktuellem Xray nicht nutzen – dort Hysteria2 oder WireGuard wählen. OpenVPN steht nicht im Abo – jedes OpenVPN-Profil wird einzeln unter „Zugänge“ → „Konfiguration“ eingerichtet.</p>
+          <h2>Abo-Link <Info title="Abo-Link" wide>
+            <p>Enthält alle aktiven Zugänge dieses Nutzers: VLESS, Hysteria2 und WireGuard-Geräte „Handy / Laptop“.</p>
+            <p>In Hiddify, v2rayNG, v2RayTun (Android), Streisand oder V2Box (iOS) als Abonnement importieren – die App aktualisiert sich automatisch und zeigt Verbrauch, Limit und Ablaufdatum an.</p>
+            <p>Hiddify (sing-box) kann VLESS mit aktuellem Xray nicht nutzen – dort Hysteria2 oder WireGuard wählen. OpenVPN steht nicht im Abo – jedes OpenVPN-Profil wird einzeln unter „Zugänge“ → „Konfiguration“ eingerichtet.</p>
+            <p><b>Link bekannt geworden?</b> „Neuen Link erzeugen“: Der alte Link (auch die OpenVPN-Profil-Links) funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen.</p>
+          </Info></h2>
+          {#if subSummary}<div class="muted small">Enthält {subSummary}</div>{/if}
         </div>
         <div class="input-group">
           <input class="input mono" readonly value={d.sub_url} />
@@ -333,15 +339,12 @@
           <div class="sb-box">
             {#if sbSummary}<QR text={d.singbox_url} size={150} />{/if}
             <div class="stack-sm grow">
-              <span class="strong">Offizielle sing-box-App</span>
-              <span class="muted small">Die sing-box-App liest keine Abo-Links, sondern ein fertiges Profil. Diesen QR-Code in der App scannen (Profile → „+“ → QR-Code) – das Profil aktualisiert sich dann selbst.
-                {#if sbSummary}Enthält {sbSummary}, automatische Wahl des schnellsten Servers.{:else}<strong>Keine passenden Zugänge</strong> – nötig sind Hysteria2 oder WireGuard „Handy / Laptop“ mit vollem Tunnel.{/if}
-                VLESS fehlt bewusst: Xray ab 26.9.9 lehnt sing-box (auch Hiddify) ab.</span>
+              <span class="strong">Offizielle sing-box-App <Info title="sing-box" text="Die sing-box-App liest keine Abo-Links, sondern ein fertiges Profil. Den QR-Code in der App scannen (Profile → „+“ → QR-Code) – das Profil aktualisiert sich dann selbst. Nötig sind Hysteria2 oder WireGuard „Handy / Laptop“ mit vollem Tunnel. VLESS fehlt bewusst: Xray ab 26.9.9 lehnt sing-box (auch Hiddify) ab." /></span>
+              <span class="muted small">{#if sbSummary}Enthält {sbSummary}, automatische Wahl des schnellsten Servers.{:else}<strong>Keine passenden Zugänge</strong>{/if}</span>
               {#if sbSummary}<div><button class="btn sm" onclick={() => copy(d.singbox_url).then(() => toast('Kopiert'))}><Icon name="copy" size={15} /> Import-Link kopieren</button></div>{/if}
             </div>
           </div>
         {/if}
-        <div class="help">Wurde der Link weitergegeben oder ist er bekannt geworden: „Neuen Link erzeugen“. Der alte Link (auch die OpenVPN-Profil-Links) funktioniert dann sofort nicht mehr – die Zugänge selbst bleiben gültig. Sollen auch die Geräte nicht mehr verbinden können, unter „Zugänge“ neue Schlüssel erzeugen. Apps, die WireGuard nicht aus dem Abo übernehmen, richtest du über „Zugänge“ → „Konfiguration“ ein.</div>
       </div>
     </div>
   {:else if tab === 'settings'}
@@ -350,9 +353,8 @@
         <div class="field"><label for="ue-name">Name</label><input id="ue-name" class="input" bind:value={edit.name} /></div>
         <div class="field"><label for="ue-note">Notiz</label><textarea id="ue-note" class="input" bind:value={edit.note}></textarea></div>
         <div class="field">
-          <label for="ue-exp">Gültig bis</label>
+          <label for="ue-exp">Gültig bis <Info title="Gültig bis" text="Leer = unbegrenzt. Nach Ablauf werden alle Zugänge gesperrt." /></label>
           <div class="row"><input id="ue-exp" class="input" type="date" bind:value={edit.expires} style="max-width:220px" />{#if edit.expires}<button class="btn sm" onclick={() => (edit.expires = '')}>Unbegrenzt</button>{/if}</div>
-          <div class="help">Nach Ablauf werden alle Zugänge gesperrt.</div>
         </div>
         <label class="switch"><input type="checkbox" bind:checked={edit.enabled} /><span class="track"></span> Nutzer aktiv</label>
         <div><button class="btn primary" onclick={saveSettings}>Speichern</button></div>

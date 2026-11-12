@@ -44,6 +44,7 @@ type Engine struct {
 	acl   aclState   // wirksame Sperr-/Freigabelisten (acl.go)
 	rt    routeState // Ziel-Regeln (routes.go)
 	dns   dnsGate    // Panel-DNS bzw. DNS-Umleiter für Domain-Regeln (dns.go)
+	dnsx  dnsExt     // DNS für Geräte ohne VPN (dnsext.go)
 
 	dnsLists dnsListState // Blocklisten des Panel-DNS (dnsfilter.go)
 
@@ -74,7 +75,20 @@ var settingDefaults = map[string]string{
 	"exit_speedtest":      "360", // Minuten zwischen Geschwindigkeitstests der Ausgänge, 0 = aus
 	"dns_enabled":         "1",   // Panel-DNS für WireGuard-/OpenVPN-Geräte
 	"dns_upstream":        "1.1.1.1, 9.9.9.9",
-	"dns_log_days":        "7", // Aufbewahrung des DNS-Protokolls in Tagen, 0 = nicht protokollieren
+	"dns_log_days":        "7",        // Aufbewahrung des DNS-Protokolls in Tagen, 0 = nicht protokollieren
+	"private_block":       "1",        // VPN-Nutzer erreichen keine privaten Netze / den Server selbst
+	"private_allow":       "",         // Ausnahmen (Netze, eins pro Zeile)
+	"dns_cache_size":      "50000",    // Antworten im Zwischenspeicher, 0 = aus
+	"dns_ttl_min":         "0",        // Antworten mindestens so lange merken (Sekunden)
+	"dns_ttl_max":         "86400",    // höchstens so lange merken (Sekunden)
+	"dns_nocache":         "",         // Domains, die nie zwischengespeichert werden
+	"dns_strategy":        "order",    // order | fastest | roundrobin | parallel
+	"dns_public":          "0",        // Port 53 von außen (nur freigegebene Absender)
+	"dns_resolver":        "upstream", // upstream (öffentliche DNS-Server) | unbound (selbst auflösen)
+	"dns_candidates":      "",         // Server für Speedtest/automatische Wahl, leer = eingebaute Liste
+	"dns_auto":            "0",        // schnellste DNS-Server regelmäßig selbst wählen
+	"dns_auto_hours":      "24",
+	"dns_auto_count":      "2",
 }
 
 func (e *Engine) Setting(k string) string { return e.St.GetSetting(k, settingDefaults[k]) }
@@ -110,7 +124,7 @@ func (e *Engine) Global() proto.Global {
 	rt := e.routing()
 	return proto.Global{ServerHost: e.Setting("server_host"), OutIf: e.Setting("out_interface"), XrayAPI: e.Setting("xray_api"),
 		DataDir: e.Cfg.DataDir, HookURL: hook, PublicPort: atoi(e.Setting("public_port"), 443), Groups: e.groupRoutes(), ACLs: e.acls(),
-		Policies: rt.Policies, ServerPolicies: rt.ServerPolicies, TargetLists: rt.TargetLists, PanelDNS: e.Setting("dns_enabled") == "1"}
+		Policies: rt.Policies, ServerPolicies: rt.ServerPolicies, TargetLists: rt.TargetLists, PanelDNS: e.Setting("dns_enabled") == "1", Net: rt.Net, Private: rt.Private}
 }
 
 func (e *Engine) Env() *proto.Env {
@@ -238,6 +252,7 @@ func (e *Engine) applyLocked() error {
 			e.setErr(id, "")
 		}
 	}
+	e.applyUnbound()
 	if err := e.applyNft(env, snap, rt, e.aclPlan()); err != nil {
 		errs = append(errs, "Firewall (IP-Listen, Ziel-Regeln): "+err.Error())
 		e.setErr("acl", err.Error())

@@ -506,12 +506,18 @@ func nodes(sb *proto.ServerBundle, activeOnly bool) []*node {
 	return out
 }
 
-// reachable: welche anderen Geräte darf n erreichen?
-func reachable(sc serverCfg, n *node, all []*node) []*node {
+// accessMode: wirksamer Zugriff des Geräts (all | own | none | custom)
+func accessMode(sc serverCfg, n *node) string {
 	mode := n.cfg.Access
 	if mode == "" || mode == "default" {
 		mode = sc.DefaultAccess
 	}
+	return mode
+}
+
+// reachable: welche anderen Geräte darf n erreichen?
+func reachable(sc serverCfg, n *node, all []*node) []*node {
+	mode := accessMode(sc, n)
 	allowed := map[int64]bool{}
 	for _, id := range n.cfg.AccessPeers {
 		allowed[id] = true
@@ -748,13 +754,36 @@ func applyFirewall(env *proto.Env, servers []*proto.ServerBundle) error {
 			sc := load(sb.Server)
 			iface, out := sc.Interface, outIf(env, sc)
 			all := nodes(sb, true)
+			// Keine privaten Ziele (internes Netz, Proxmox-Host) und nicht der Server selbst über den Internet-Ausgang
+			for _, a := range pick(env.Global.Private.Allowed()) {
+				fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o %s -d %s -j ACCEPT\n", iface, out, a)
+			}
+			for _, b := range pick(env.Global.Private.Blocked()) {
+				fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o %s -d %s -j DROP\n", iface, out, b)
+			}
 			for _, n := range all {
 				srcs := pick(n.all())
-				for _, t := range reachable(sc, n, all) {
-					dsts := pick(t.all())
+				if accessMode(sc, n) == "all" {
+					// darf alle Geräte dieses Servers erreichen: eine Regel je Quelle statt je Paar
+					// (sonst wächst die Kette quadratisch – 150 Geräte ≈ 22 000 Regeln)
 					for _, s := range srcs {
-						for _, dd := range dsts {
-							fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o %s -s %s -d %s -j ACCEPT\n", iface, iface, s, dd)
+						fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o %s -s %s -j ACCEPT\n", iface, iface, s)
+					}
+				} else {
+					for _, t := range reachable(sc, n, all) {
+						dsts := pick(t.all())
+						for _, s := range srcs {
+							for _, dd := range dsts {
+								fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o %s -s %s -d %s -j ACCEPT\n", iface, iface, s, dd)
+							}
+						}
+					}
+				}
+				// Freigaben (Netzwerk → Zugriff): andere bzw. eigene WireGuard-Netze
+				for _, t := range env.Global.Net.For(n.pb.Peer.ID) {
+					for _, s := range srcs {
+						for _, dd := range pick(t.Nets) {
+							fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -o %s -s %s -d %s -j ACCEPT\n", iface, t.Iface, s, dd)
 						}
 					}
 				}
@@ -768,6 +797,10 @@ func applyFirewall(env *proto.Env, servers []*proto.ServerBundle) error {
 				}
 			}
 			fmt.Fprintf(&filter, "-A VPNWG-FWD -i %s -j DROP\n", iface)
+			// Zugriff aus anderen Netzen: Absender bekommt die Serveradresse dieses Netzes (Rückweg)
+			for _, s := range pick(env.Global.Net.MasqFor(iface)) {
+				fmt.Fprintf(&nat, "-A VPNWG-NAT -s %s -o %s -j MASQUERADE\n", s, iface)
+			}
 			if sc.Internet {
 				net := sc.Net4
 				if v6 {
@@ -960,6 +993,19 @@ func params(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (*clie
 				allowed = append(allowed, r.String())
 			}
 		}
+		// freigegebene Netze (Netzwerk → Zugriff)
+		have := map[string]bool{}
+		for _, a := range allowed {
+			have[a] = true
+		}
+		for _, t := range netTargets(env, pb.Peer.ID) {
+			for _, r := range t.Nets {
+				if !have[r.String()] {
+					have[r.String()] = true
+					allowed = append(allowed, r.String())
+				}
+			}
+		}
 	}
 	allowed = append(allowed, c.ExtraAllowed...)
 	dns := c.DNS
@@ -1054,6 +1100,13 @@ func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.Pee
 	}
 	if len(rn) > 0 {
 		cc.Info = append(cc.Info, [2]string{"Erreicht", strings.Join(rn, ", ")})
+	}
+	var tn []string
+	for _, t := range netTargets(env, pb.Peer.ID) {
+		tn = append(tn, t.Name)
+	}
+	if len(tn) > 0 {
+		cc.Info = append(cc.Info, [2]string{"Zugriff auf Netze", strings.Join(tn, ", ")})
 	}
 	switch pb.Peer.Kind {
 	case "client":
@@ -1325,6 +1378,30 @@ func (Driver) Live(env *proto.Env, servers []*proto.ServerBundle) (map[int64]pro
 		}
 	}
 	return res, nil
+}
+
+// netTargets: freigegebene Netze eines Zugangs (env darf nil sein).
+func netTargets(env *proto.Env, peer int64) []proto.NetTarget {
+	if env == nil {
+		return nil
+	}
+	return env.Global.Net.For(peer)
+}
+
+// Network: Schnittstelle und Netze dieses Servers (Tunnelnetz und Netze hinter aktiven Geräten) –
+// Ziel für Freigaben unter Netzwerk → Zugriff.
+func (Driver) Network(sb *proto.ServerBundle) (string, []netip.Prefix) {
+	sc := load(sb.Server)
+	var nets []netip.Prefix
+	for _, v := range []string{sc.Net4, sc.Net6} {
+		if p, err := parsePrefix(v); err == nil {
+			nets = append(nets, p.Masked())
+		}
+	}
+	for _, n := range nodes(sb, true) {
+		nets = append(nets, n.routes...)
+	}
+	return sc.Interface, nets
 }
 
 // Sources: Adressen und Netze, von denen der Verkehr eines Geräts kommt (für Ziel-Regeln).

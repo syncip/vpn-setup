@@ -76,12 +76,24 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 			lists = append(lists, row)
 		}
 	}
+	ext := []map[string]any{}
+	if objs, err := a.St.Objects("dnsclient"); err == nil {
+		for _, o := range objs {
+			ext = append(ext, map[string]any{"id": o.ID, "name": o.Name, "enabled": o.Enabled})
+		}
+	}
 	info := a.E.DNSInfo()
 	info.Rules = nil
 	errs := a.E.Errors()
 	writeJSON(w, map[string]any{
-		"settings": map[string]string{"enabled": a.E.Setting("dns_enabled"), "upstream": a.E.Setting("dns_upstream"), "log_days": a.E.Setting("dns_log_days")},
-		"info":     info, "profiles": profiles, "lists": lists, "presets": dnsPresets, "dry_run": a.E.Sys.DryRun(),
+		"settings": map[string]string{"enabled": a.E.Setting("dns_enabled"), "upstream": a.E.Setting("dns_upstream"), "log_days": a.E.Setting("dns_log_days"),
+			"cache_size": a.E.Setting("dns_cache_size"), "ttl_min": a.E.Setting("dns_ttl_min"), "ttl_max": a.E.Setting("dns_ttl_max"),
+			"nocache": a.E.Setting("dns_nocache"), "strategy": a.E.Setting("dns_strategy"), "public": a.E.Setting("dns_public"),
+			"resolver": a.E.Setting("dns_resolver"), "candidates": engine.CandidatesText(a.E.DNSCandidateList()), "candidates_custom": a.E.Setting("dns_candidates"),
+			"auto": a.E.Setting("dns_auto"), "auto_hours": a.E.Setting("dns_auto_hours"), "auto_count": a.E.Setting("dns_auto_count")},
+		"unbound_installed": a.E.UnboundInstalled(), "auto_last": a.E.DNSAutoLast(),
+		"upstreams": a.E.DNSServerStats(), "ext": ext,
+		"info": info, "profiles": profiles, "lists": lists, "presets": dnsPresets, "dry_run": a.E.Sys.DryRun(),
 		"error": strings.TrimSpace(errs["dns"] + " " + errs["dnslog"]), "choices": a.scopeChoices(),
 	})
 }
@@ -125,6 +137,17 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 		Enabled  *bool   `json:"enabled"`
 		Upstream *string `json:"upstream"`
 		LogDays  *int    `json:"log_days"`
+		Cache    *int    `json:"cache_size"`
+		TTLMin   *int    `json:"ttl_min"`
+		TTLMax   *int    `json:"ttl_max"`
+		NoCache  *string `json:"nocache"`
+		Strategy *string `json:"strategy"`
+		Public   *bool   `json:"public"`
+		Resolver *string `json:"resolver"`
+		Cands    *string `json:"candidates"`
+		Auto     *bool   `json:"auto"`
+		AutoH    *int    `json:"auto_hours"`
+		AutoN    *int    `json:"auto_count"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -134,11 +157,44 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 	if in.Enabled != nil {
 		set["dns_enabled"] = map[bool]string{true: "1", false: "0"}[*in.Enabled]
 	}
+	if in.Resolver != nil {
+		set["dns_resolver"] = *in.Resolver
+	}
+	if in.Cands != nil {
+		set["dns_candidates"] = *in.Cands
+	}
+	if in.Auto != nil {
+		set["dns_auto"] = map[bool]string{true: "1", false: "0"}[*in.Auto]
+	}
+	if in.AutoH != nil {
+		set["dns_auto_hours"] = strconv.Itoa(*in.AutoH)
+	}
+	if in.AutoN != nil {
+		set["dns_auto_count"] = strconv.Itoa(*in.AutoN)
+	}
+	if in.Public != nil {
+		set["dns_public"] = map[bool]string{true: "1", false: "0"}[*in.Public]
+	}
 	if in.Upstream != nil {
 		set["dns_upstream"] = *in.Upstream
 	}
 	if in.LogDays != nil {
 		set["dns_log_days"] = strconv.Itoa(*in.LogDays)
+	}
+	for k, v := range map[string]*int{"dns_cache_size": in.Cache, "dns_ttl_min": in.TTLMin, "dns_ttl_max": in.TTLMax} {
+		if v != nil {
+			set[k] = strconv.Itoa(*v)
+		}
+	}
+	if in.NoCache != nil {
+		set["dns_nocache"] = *in.NoCache
+	}
+	if in.Strategy != nil {
+		set["dns_strategy"] = *in.Strategy
+	}
+	if in.TTLMin != nil && in.TTLMax != nil && *in.TTLMax > 0 && *in.TTLMin > *in.TTLMax {
+		errJSON(w, http.StatusBadRequest, "Mindestdauer ist größer als die Höchstdauer")
+		return
 	}
 	for k, v := range set {
 		v, err := engine.ValidateSetting(k, v)
@@ -497,4 +553,29 @@ func (a *API) dnsCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, a.E.CheckDNS(in.Peer, list[0]))
+}
+
+// dnsSpeedTest misst die eingestellten und bekannte öffentliche DNS-Server (dauert einige Sekunden).
+func (a *API) dnsSpeedTest(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Extra string `json:"extra"` // weitere Server, z. B. 127.0.0.1:5335 (Unbound)
+	}
+	_ = readJSON(r, &in)
+	var extra []string
+	if strings.TrimSpace(in.Extra) != "" {
+		list, err := engine.ParseUpstream(in.Extra)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		extra = list
+	}
+	writeJSON(w, map[string]any{"results": a.E.DNSSpeedTest(extra)})
+}
+
+// dnsAutoNow: automatische Wahl sofort ausführen (misst alle Server, übernimmt ggf. die schnellsten).
+func (a *API) dnsAutoNow(w http.ResponseWriter, r *http.Request) {
+	res := a.E.RunDNSAuto(true)
+	a.E.Log("info", "DNS-Server-Wahl von Hand gestartet von "+adminOf(r).Username)
+	writeJSON(w, res)
 }

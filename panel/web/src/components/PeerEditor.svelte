@@ -3,6 +3,9 @@
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
   import FieldForm from './FieldForm.svelte';
+  import Picker from './Picker.svelte';
+  import Info from './Info.svelte';
+  import { userItems } from '../lib/pick.js';
   import { get, post, put, run } from '../lib/api.js';
   import { protocol } from '../lib/state.svelte.js';
   import { clone } from '../lib/format.js';
@@ -29,7 +32,7 @@
         values = clone($state.snapshot(peer.settings) || {});
       } else {
         const sid = serverId || servers.find((s) => s.enabled)?.id || servers[0]?.id || 0;
-        form = { user_id: userId || users[0]?.id || 0, server_id: sid, name: '', kind: '', enabled: true };
+        form = { user_id: userId || (users.length === 1 ? users[0].id : 0), server_id: sid, name: '', kind: '', enabled: true };
         values = {};
       }
     });
@@ -80,11 +83,8 @@
     {#if isNew}
       {#if !userId}
         <div class="field">
-          <label for="pe-user">Nutzer</label>
-          <select id="pe-user" class="input" bind:value={form.user_id}>
-            {#each users as u}<option value={u.id}>{u.name}</option>{/each}
-          </select>
-          <div class="help">Wem gehört das Gerät? Limits und Statistik laufen über den Nutzer.</div>
+          <label for="pe-user">Nutzer <Info title="Nutzer" text="Wem gehört das Gerät? Limits und Statistik laufen über den Nutzer." /></label>
+          <Picker id="pe-user" items={userItems(users)} bind:value={form.user_id} placeholder="Nutzer suchen …" />
         </div>
       {/if}
       {#if !serverId}
@@ -138,10 +138,7 @@
     {/if}
 
     {#if form.kind === 'site'}
-      <div class="notice">
-        <Icon name="info" />
-        <span>Das Gerät im Heimnetz (Router, Raspberry Pi, Proxmox-Host, …) baut die Verbindung auf und macht die eingetragenen Netze für andere VPN-Geräte erreichbar. Die fertige Konfiguration schaltet dort Weiterleitung und NAT ein.</span>
-      </div>
+      <div class="row small muted" style="gap:6px">Netzwerk hinter dem Gerät <Info title="Netzwerk-Gerät" text="Das Gerät im Heimnetz (Router, Raspberry Pi, Proxmox-Host, …) baut die Verbindung auf und macht die eingetragenen Netze für andere VPN-Geräte erreichbar. Die fertige Konfiguration schaltet dort Weiterleitung und NAT ein." /></div>
     {/if}
   </div>
   {#snippet footer()}

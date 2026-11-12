@@ -117,3 +117,97 @@ type Forwarder interface {
 	// Sources: Zugang (Peer-ID) → Adressen und Netze, von denen sein Verkehr kommt.
 	Sources(env *Env, sb *ServerBundle) map[int64][]netip.Prefix
 }
+
+// Networker: Treiber, deren Server ein Netz bilden, auf das Geräte anderer Server Zugriff bekommen
+// können (WireGuard): Schnittstelle und Netze (Tunnelnetz und Netze hinter Geräten).
+type Networker interface {
+	Network(sb *ServerBundle) (iface string, nets []netip.Prefix)
+}
+
+// NetTarget: ein Netz, das ein Gerät erreichen darf (Freigabe unter Netzwerk → Zugriff).
+type NetTarget struct {
+	Server int64
+	Name   string
+	Iface  string
+	Nets   []netip.Prefix
+}
+
+// NetAccess: Freigaben zwischen Netzen. Targets: Zugang (Peer-ID) → erreichbare Netze; Masq:
+// Ziel-Schnittstelle → fremde Quelladressen, die dort per NAT die Adresse des Servers bekommen
+// (die Geräte im Ziel-Netz kennen nur ihr eigenes Tunnelnetz als Rückweg).
+type NetAccess struct {
+	Targets map[int64][]NetTarget
+	Masq    map[string][]netip.Prefix
+}
+
+// For: Netze, die ein Zugang zusätzlich erreichen darf (nil-sicher).
+func (n *NetAccess) For(peer int64) []NetTarget {
+	if n == nil {
+		return nil
+	}
+	return n.Targets[peer]
+}
+
+// MasqFor: fremde Quellen, die auf dieser Schnittstelle per NAT umgeschrieben werden (nil-sicher).
+func (n *NetAccess) MasqFor(iface string) []netip.Prefix {
+	if n == nil {
+		return nil
+	}
+	return n.Masq[iface]
+}
+
+// PrivateGuard: Ziele, die VPN-Nutzer nicht erreichen dürfen – private Netze (auch das interne
+// Netz des Containers mit dem Proxmox-Host), Loopback, Link-local, CGNAT/Tailscale und die
+// öffentlichen Adressen des Servers selbst. Allow: Ausnahmen für alle (Einstellung). Freigaben
+// unter Netzwerk → Zugriff gelten zusätzlich je Gerät (Global.Net).
+type PrivateGuard struct {
+	Nets  []netip.Prefix
+	Allow []netip.Prefix
+}
+
+// PrivateBase: die immer gesperrten Bereiche.
+var PrivateBase = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range []string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+		"192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/3", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8", "64:ff9b::/96", "2002::/16"} {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
+// Blocked: alle gesperrten Netze (nil-sicher: ohne Wächter nichts).
+func (g *PrivateGuard) Blocked() []netip.Prefix {
+	if g == nil {
+		return nil
+	}
+	return g.Nets
+}
+
+// Allowed: Ausnahmen (nil-sicher).
+func (g *PrivateGuard) Allowed() []netip.Prefix {
+	if g == nil {
+		return nil
+	}
+	return g.Allow
+}
+
+// Split46 teilt Netze in IPv4 und IPv6.
+func Split46(ps []netip.Prefix) (v4, v6 []netip.Prefix) {
+	for _, p := range ps {
+		if p.Addr().Is4() {
+			v4 = append(v4, p)
+		} else {
+			v6 = append(v6, p)
+		}
+	}
+	return
+}
+
+// PrefixStrings: Netze als Text.
+func PrefixStrings(ps []netip.Prefix) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.String()
+	}
+	return out
+}

@@ -145,6 +145,90 @@ func seedDemo(e *engine.Engine) error {
 	return nil
 }
 
+// seedDemoMany: n weitere Nutzer mit 1–4 Geräten (Testmodus -demo-users), um die Oberfläche mit vielen
+// Nutzern zu prüfen. Ohne Verlauf, nur Summen.
+func seedDemoMany(e *engine.Engine, n int) error {
+	if n <= 0 {
+		return nil
+	}
+	users, _ := e.St.Users()
+	if len(users) > 10 {
+		return nil
+	}
+	servers, _ := e.St.Servers()
+	byProto := map[string]*store.Server{}
+	for _, s := range servers {
+		if byProto[s.Protocol] == nil && s.Name != "Homelab-Netz" {
+			byProto[s.Protocol] = s
+		}
+	}
+	first := []string{"anna", "ben", "clara", "david", "emma", "felix", "greta", "hannah", "jonas", "lena", "max", "mia", "noah", "paul", "sophie", "tim", "lukas", "marie", "elias", "laura"}
+	last := []string{"k", "m", "s", "w", "b", "h", "r", "f"}
+	phones := []string{"Xiaomi15", "iPhone", "Pixel", "Galaxy", "Laptop", "Tablet", "Fernseher", "PC"}
+	r := rand.New(rand.NewSource(99))
+	now := time.Now()
+	for i := 0; i < n; i++ {
+		name := first[i%len(first)] + "." + last[(i/len(first))%len(last)]
+		if i >= len(first)*len(last) {
+			name += strconv.Itoa(i)
+		}
+		u := &store.User{Name: name, Enabled: r.Intn(15) != 0, SubToken: proto.RandHex(16), Created: now.AddDate(0, -1, 0).Unix()}
+		gb := r.Float64() * 120
+		u.PeriodStart = engine.PeriodStart(engine.EffectiveLimits(u, nil), now)
+		u.PeriodDown = int64(gb * engine.GB * 0.85)
+		u.PeriodUp = int64(gb * engine.GB * 0.15)
+		u.TotalDown, u.TotalUp = u.PeriodDown*2, u.PeriodUp*2
+		if err := e.St.SaveUser(u); err != nil {
+			return err
+		}
+		type dv struct{ proto, name, kind string }
+		var devs []dv
+		for k := 0; k < 1+r.Intn(4); k++ {
+			switch r.Intn(4) {
+			case 0, 1:
+				devs = append(devs, dv{"wireguard", phones[r.Intn(len(phones))], "client"})
+			case 2:
+				devs = append(devs, dv{"vless", name, "access"})
+			default:
+				devs = append(devs, []dv{{"hysteria2", name, "access"}, {"openvpn", phones[r.Intn(len(phones))], "access"}}[r.Intn(2)])
+			}
+		}
+		for _, d := range devs {
+			srv := byProto[d.proto]
+			if srv == nil {
+				continue
+			}
+			p := &store.Peer{UserID: u.ID, ServerID: srv.ID, Name: d.name, Kind: d.kind, Enabled: true, Settings: store.M{}}
+			if info, ok := proto.Get(srv.Protocol); ok {
+				for _, k := range info.Info().Kinds {
+					if k.ID == d.kind {
+						for key, v := range k.Defaults {
+							p.Settings[key] = v
+						}
+					}
+				}
+			}
+			if err := e.InitPeer(srv, p); err != nil {
+				continue
+			}
+			p.TotalDown, p.TotalUp = u.TotalDown/int64(len(devs)), u.TotalUp/int64(len(devs))
+			if r.Intn(3) == 0 {
+				p.LastSeen = now.Add(-time.Duration(20+r.Intn(60)) * time.Second).Unix()
+				p.Handshake = p.LastSeen
+			} else {
+				p.LastSeen = now.Add(-time.Duration(1+r.Intn(200)) * time.Hour).Unix()
+			}
+			_ = e.St.SavePeer(p)
+			if p.LastSeen > u.LastSeen {
+				u.LastSeen = p.LastSeen
+			}
+		}
+		_ = e.St.SaveUser(u)
+	}
+	e.Log("info", "Demo: "+strconv.Itoa(n)+" weitere Nutzer angelegt")
+	return nil
+}
+
 // seedDemoExits: Beispiel-Ausgänge, eine Gruppe, ein Proxy und eine IP-Liste (nur Testmodus).
 func seedDemoExits(e *engine.Engine) error {
 	if o, _ := e.St.Objects("exit"); len(o) > 0 {

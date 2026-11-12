@@ -37,13 +37,62 @@ func ValidateSetting(k, v string) (string, error) {
 		if n, err := strconv.Atoi(v); err != nil || n < 0 {
 			return "", fmt.Errorf("%s: bitte eine Zahl ab 0", k)
 		}
-	case "trust_cloudflare", "update_check", "dns_enabled":
+	case "trust_cloudflare", "update_check", "dns_enabled", "private_block", "dns_public", "dns_auto":
 		if v != "0" && v != "1" {
 			v = "0"
 		}
 	case "dns_log_days":
 		if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 365 {
 			return "", fmt.Errorf("DNS-Protokoll: Tage von 0 bis 365")
+		}
+	case "private_allow":
+		list, err := ParsePrivateAllow(v)
+		if err != nil {
+			return "", err
+		}
+		v = strings.Join(list, "\n")
+	case "dns_cache_size":
+		if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 1000000 {
+			return "", fmt.Errorf("DNS-Zwischenspeicher: 0 (aus) bis 1 000 000 Antworten")
+		}
+	case "dns_ttl_min", "dns_ttl_max":
+		if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 7*86400 {
+			return "", fmt.Errorf("DNS-Speicherdauer: 0 bis 604800 Sekunden (7 Tage)")
+		}
+	case "dns_nocache":
+		list, err := ParseRouteDomains(v)
+		if err != nil {
+			return "", err
+		}
+		if len(list) > 500 {
+			return "", fmt.Errorf("höchstens 500 Domains ohne Zwischenspeicher")
+		}
+		v = strings.Join(list, "\n")
+	case "dns_strategy":
+		switch v {
+		case "order", "fastest", "roundrobin", "parallel":
+		default:
+			return "", fmt.Errorf("DNS-Verteilung: order, fastest, roundrobin oder parallel")
+		}
+	case "dns_resolver":
+		if v != "upstream" && v != "unbound" {
+			return "", fmt.Errorf("Auflösung: upstream oder unbound")
+		}
+	case "dns_auto_hours":
+		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 168 {
+			return "", fmt.Errorf("Automatischer Test: alle 1 bis 168 Stunden")
+		}
+	case "dns_auto_count":
+		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 4 {
+			return "", fmt.Errorf("Automatischer Test: 1 bis 4 Server übernehmen")
+		}
+	case "dns_candidates":
+		if v != "" {
+			list, err := ParseCandidates(v)
+			if err != nil {
+				return "", err
+			}
+			v = CandidatesText(list)
 		}
 	case "dns_upstream":
 		list, err := ParseUpstream(v)

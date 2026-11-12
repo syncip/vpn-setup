@@ -527,9 +527,24 @@ func (f *dnsFilter) verdict(name string) (action, detail string, addrs []netip.A
 // compileDNSFilters ordnet jedem Gerät sein Filterprofil zu (nil = kein Profil).
 func (e *Engine) compileDNSFilters(snap *Snapshot) map[int64]*dnsFilter {
 	out := map[int64]*dnsFilter{}
+	byScope, _ := e.dnsProfileFilters()
+	for id, pb := range snap.Peers {
+		for _, k := range []string{fmt.Sprintf("peer:%d", id), fmt.Sprintf("user:%d", pb.User.ID), fmt.Sprintf("server:%d", pb.Peer.ServerID), "global"} {
+			if f := byScope[k]; f != nil {
+				out[id] = f
+				break
+			}
+		}
+	}
+	return out
+}
+
+// dnsProfileFilters: aktive Profile nach Zuordnung (global, server:…, user:…, peer:…) und nach ID.
+func (e *Engine) dnsProfileFilters() (byScope map[string]*dnsFilter, byID map[int64]*dnsFilter) {
+	byScope, byID = map[string]*dnsFilter{}, map[int64]*dnsFilter{}
 	objs, _ := e.St.Objects("dnsprofile")
 	if len(objs) == 0 {
-		return out
+		return
 	}
 	lists := map[int64]*DNSList{}
 	if lo, err := e.St.Objects("dnslist"); err == nil {
@@ -539,7 +554,6 @@ func (e *Engine) compileDNSFilters(snap *Snapshot) map[int64]*dnsFilter {
 			}
 		}
 	}
-	byScope := map[string]*dnsFilter{}
 	for _, o := range objs { // nach ID sortiert – bei mehreren Profilen auf derselben Ebene gilt das älteste
 		p := DNSProfileFrom(o)
 		if !p.Enabled {
@@ -561,21 +575,14 @@ func (e *Engine) compileDNSFilters(snap *Snapshot) map[int64]*dnsFilter {
 				f.Lists = append(f.Lists, e.dnsListSets(l))
 			}
 		}
+		byID[p.ID] = f
 		for _, a := range p.Assign {
 			if _, ok := byScope[a]; !ok {
 				byScope[a] = f
 			}
 		}
 	}
-	for id, pb := range snap.Peers {
-		for _, k := range []string{fmt.Sprintf("peer:%d", id), fmt.Sprintf("user:%d", pb.User.ID), fmt.Sprintf("server:%d", pb.Peer.ServerID), "global"} {
-			if f := byScope[k]; f != nil {
-				out[id] = f
-				break
-			}
-		}
-	}
-	return out
+	return
 }
 
 // ProfilesUsing: Profile, die eine Blockliste verwenden (Löschschutz).

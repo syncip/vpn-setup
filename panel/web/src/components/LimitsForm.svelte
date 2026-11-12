@@ -1,5 +1,6 @@
 <script>
   import Icon from './Icon.svelte';
+  import Info from './Info.svelte';
   import { limitsSummary, WEEKDAYS } from '../lib/format.js';
 
   // Limits: Datenvolumen, Zeitraum, Verhalten bei Limit, Grundtempo, Drosselstufen, Geräte
@@ -108,10 +109,9 @@
 
     <section>
       <div class="spread">
-        <h3><Icon name="activity" size={16} /> Drosselstufen</h3>
+        <h3><Icon name="activity" size={16} /> Drosselstufen <Info title="Drosselstufen" text="Ab einem Verbrauch im Zeitraum wird langsamer – z. B. „ab 50 GB nur noch 20 Mbit/s“. Es gilt die höchste erreichte Stufe." /></h3>
         <button type="button" class="btn sm" onclick={addTier}><Icon name="plus" size={15} /> Stufe</button>
       </div>
-      <p class="help" style="margin:4px 0 10px">Ab einem Verbrauch im Zeitraum wird langsamer – z. B. „ab 50 GB nur noch 20 Mbit/s“. Es gilt die höchste erreichte Stufe.</p>
       {#each value.tiers as t, i}
         <div class="tier">
           <span class="small muted">ab</span>
