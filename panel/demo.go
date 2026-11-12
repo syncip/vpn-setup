@@ -2,6 +2,7 @@ package main
 
 import (
 	"math/rand"
+	"sort"
 	"strconv"
 	"time"
 
@@ -181,4 +182,71 @@ func seedDemoExits(e *engine.Engine) error {
 	}
 	return e.St.SaveObject(&store.Object{Kind: "iplist", Name: "Gesperrt", Enabled: true,
 		Data: store.M{"mode": "block", "all": true, "entries": []string{"192.0.2.0/24", "198.51.100.66/32"}}})
+}
+
+// seedDemoDNS: Blockliste, Filterprofil und ein Tag DNS-Protokoll (nur Testmodus).
+func seedDemoDNS(e *engine.Engine) error {
+	if o, _ := e.St.Objects("dnslist"); len(o) > 0 {
+		return nil
+	}
+	bl := &store.Object{Kind: "dnslist", Name: "HaGeZi Multi PRO", Enabled: true,
+		Data: store.M{"mode": "block", "url": "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt", "refresh": 24}}
+	if err := e.St.SaveObject(bl); err != nil {
+		return err
+	}
+	own := &store.Object{Kind: "dnslist", Name: "Eigene Sperren", Enabled: true,
+		Data: store.M{"mode": "block", "entries": []string{"tracking.example", "werbung.example"}}}
+	if err := e.St.SaveObject(own); err != nil {
+		return err
+	}
+	go func() { _, _ = e.FetchDNSList(bl.ID); e.RequestApply() }()
+	if err := e.St.SaveObject(&store.Object{Kind: "dnsprofile", Name: "Standard", Enabled: true,
+		Data: store.M{"lists": []int64{bl.ID, own.ID}, "assign": []string{"global"}, "block_doh": true,
+			"rules": "nas.home = 192.168.1.10\nallow ok.example"}}); err != nil {
+		return err
+	}
+	peers, _ := e.St.Peers()
+	servers, _ := e.St.Servers()
+	proto := map[int64]string{}
+	for _, s := range servers {
+		proto[s.ID] = s.Protocol
+	}
+	var devs []*store.Peer
+	for _, p := range peers {
+		if proto[p.ServerID] == "wireguard" && p.Kind == "client" {
+			devs = append(devs, p)
+		}
+	}
+	if len(devs) == 0 {
+		return nil
+	}
+	ok := []string{"www.google.com", "api.github.com", "web.whatsapp.com", "i.ytimg.com", "www.spiegel.de", "connectivitycheck.gstatic.com",
+		"graph.facebook.com", "time.android.com", "www.netflix.com", "cdn.jsdelivr.net", "mtalk.google.com", "play.googleapis.com"}
+	bad := []string{"doubleclick.net", "googleads.g.doubleclick.net", "app-measurement.com", "graph.instagram.com.tracking.example",
+		"pagead2.googlesyndication.com", "ads.tiktok.com", "werbung.example"}
+	r := rand.New(rand.NewSource(7))
+	now := time.Now().Unix()
+	var es []store.DNSEntry
+	for i := 0; i < 3000; i++ {
+		p := devs[r.Intn(len(devs))]
+		en := store.DNSEntry{TS: now - int64(r.Intn(24*3600)), PeerID: p.ID, UserID: p.UserID, Client: proto2addr(p), QType: []int{1, 1, 1, 28, 65}[r.Intn(5)]}
+		switch x := r.Intn(10); {
+		case x < 2:
+			en.Name, en.Action, en.Detail = bad[r.Intn(len(bad))], "blocked", "Liste „HaGeZi Multi PRO“"
+		case x < 5:
+			en.Name, en.Action = ok[r.Intn(len(ok))], "cached"
+		default:
+			en.Name, en.Action, en.MS = ok[r.Intn(len(ok))], "ok", 8+r.Intn(60)
+		}
+		es = append(es, en)
+	}
+	sort.Slice(es, func(i, j int) bool { return es[i].TS < es[j].TS })
+	return e.St.AddDNSLog(es)
+}
+
+func proto2addr(p *store.Peer) string {
+	if a, ok := p.Settings["address4"].(string); ok {
+		return a
+	}
+	return ""
 }

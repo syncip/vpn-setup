@@ -175,11 +175,10 @@ So wird es je Protokoll umgesetzt:
 | Hysteria2 | Ausgang wird an die Schnittstelle des aktiven Ausgangs gebunden, Ziele per Hysteria-ACL | nur Regeln für Server und „alle“ (Hysteria kann Nutzer nicht einzeln leiten); wechselt die Gruppe den Ausgang, startet der Dienst kurz neu |
 | Proxy | im Panel-Prozess je Zugang | die Server-Einstellung „Ausgang“ wirkt wie eine „alles“-Regel am Server |
 
-- **Domains bei WireGuard/OpenVPN:** Der Kernel sieht nur Adressen. Für Geräte mit Domain-Regeln leitet
-  der Server deshalb deren DNS-Anfragen (Port 53) an einen eingebauten Umleiter, der die Adressen der
-  passenden Namen lernt (24 Stunden) – unabhängig davon, welcher DNS-Server im Gerät eingetragen ist,
-  auch bei DNS über IPv6. Für Namen aus Regeln gibt der Umleiter keine IPv6-Adressen heraus, damit das
-  Gerät IPv4 nimmt (nur das kann über Ausgänge laufen).
+- **Domains bei WireGuard/OpenVPN:** Der Kernel sieht nur Adressen. Die DNS-Anfragen der Geräte laufen
+  deshalb über den Panel-DNS (siehe „DNS“), der die Adressen der passenden Namen lernt (24 Stunden) –
+  unabhängig davon, welcher DNS-Server im Gerät eingetragen ist, auch bei DNS über IPv6. Für Namen aus
+  Regeln gibt er keine IPv6-Adressen heraus, damit das Gerät IPv4 nimmt (nur das kann über Ausgänge laufen).
   DNS über TLS (Port 853) wird für diese Geräte abgewiesen, und die Namen bekannter DoH-Server
   (Cloudflare, Google, Quad9 …) gibt es für sie nicht – Browser, die DoH von selbst einschalten
   (Chrome, Firefox in der Standardeinstellung), fallen so auf normales DNS zurück. Wer DoH oder ein
@@ -217,6 +216,35 @@ dann die Server, die Ausgänge („Direkt“ und die Ausgangsgruppen mit ihren A
   Geräte“ umgestellt (bisher erreichbare Geräte bleiben erreichbar). Vor jeder Änderung fragt die Seite nach.
 
 Die Reiter daneben zeigen wie bisher je WireGuard-Server die Geräte, die Sternkarte und die Zugriffsmatrix.
+
+## DNS (Panel-DNS, Werbefilter)
+
+Menü **DNS**: Das Panel ist DNS-Server für alle WireGuard- und OpenVPN-Geräte. Die Firewall leitet ihre
+DNS-Anfragen (Port 53, IPv4 und IPv6) an das Panel, egal welcher DNS-Server im Gerät steht. Neue Configs
+nennen gleich die Tunneladresse des Servers (DNS-Einstellung „auto“, Vorgabe; die frühere Vorgabe
+„1.1.1.1, 2606:4700:4700::1111“ gilt ebenso als „auto“). Wichtig: Steht im Gerät ein öffentlicher
+DNS-Server wie 1.1.1.1 oder 8.8.8.8, schalten Chrome, Brave & Co. gern selbst auf verschlüsseltes DNS
+um – deshalb nach dem Update die Config neu laden.
+
+- **Filterprofile** fassen Blocklisten und eigene Regeln zusammen und gelten für alle Geräte, einen
+  Server, einen Nutzer oder ein Gerät (Rangfolge wie bei Ziel-Regeln). Eigene Regeln, eine pro Zeile:
+  `werbung.de` sperrt (samt Unterdomains), `allow cdn.beispiel.de` gibt frei (geht vor Listen),
+  `nas.home = 192.168.1.10` liefert eine eigene Antwort. Gesperrte Namen bekommen 0.0.0.0 bzw. ::
+  (oder wahlweise „gibt es nicht“).
+- **Blocklisten:** eigene Domains und/oder Online-Listen mit Aktualisierung (Hosts-Dateien,
+  Adblock-Format `||domain^` mit Ausnahmen `@@`, eine Domain pro Zeile; bis 1 Mio. Einträge). Bekannte
+  Listen (HaGeZi, OISD, AdGuard, StevenBlack) lassen sich mit einem Klick hinzufügen.
+- **Verschlüsseltes DNS sperren** (je Profil, für Geräte mit Domain-Regeln immer): DNS über TLS
+  (Port 853), DoH per Adresse (1.1.1.1, 8.8.8.8, 9.9.9.9 …) und die Namen bekannter DoH-Server werden
+  abgewiesen. Browser in der Einstellung „automatisch“ fallen auf normales DNS zurück; ist dagegen ein
+  fester Anbieter erzwungen (z. B. Brave „Sicheres DNS: Cloudflare“, Android „Privates DNS“ mit
+  Hostname), lädt keine Seite mehr – dort auf „automatisch“ bzw. „aus“ stellen.
+- **Protokoll** (Aufbewahrung einstellbar, Vorgabe 7 Tage, 0 = aus): jede Anfrage mit Gerät, Domain,
+  Ergebnis und Weg; Suche und Filter, Sperren/Freigeben mit einem Klick. Die **Übersicht** zeigt
+  Anfragen je Stunde, Anteil gesperrt, häufigste und gesperrte Domains, Geräte und „Domain prüfen“.
+- Antworten werden zwischengespeichert (TTL der Antwort). Aufgelöst wird über die eingestellten
+  DNS-Server, für Ziel-Regeln über die DNS-Server der Ausgangsgruppe.
+- VLESS, Hysteria2 und Proxy nutzen den Panel-DNS (noch) nicht.
 
 ## IP-Listen
 

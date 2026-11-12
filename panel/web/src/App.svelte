@@ -11,6 +11,7 @@
   import Settings from './pages/Settings.svelte';
   import Proxy from './pages/Proxy.svelte';
   import IPLists from './pages/IPLists.svelte';
+  import DNS from './pages/DNS.svelte';
   import { session, meta, toasts, route, go } from './lib/state.svelte.js';
   import { get, post } from './lib/api.js';
 
@@ -38,6 +39,7 @@
     { path: '/network', label: 'Netzwerk', icon: 'network' },
     { path: '/servers', label: 'Server', icon: 'server' },
     { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route' },
+    { path: '/dns', label: 'DNS', icon: 'globe' },
     { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
     { path: '/plans', label: 'Tarife & Limits', icon: 'tag' },
     { path: '/settings', label: 'Einstellungen', icon: 'settings' },
@@ -121,6 +123,8 @@
         <Servers />
       {:else if section === '/proxy'}
         <Proxy />
+      {:else if section === '/dns'}
+        <DNS tab={parts[1] || 'overview'} />
       {:else if section === '/iplists'}
         <IPLists />
       {:else if section === '/plans'}

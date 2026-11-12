@@ -43,7 +43,9 @@ type Engine struct {
 	lists listState  // Online-Listen (lists.go)
 	acl   aclState   // wirksame Sperr-/Freigabelisten (acl.go)
 	rt    routeState // Ziel-Regeln (routes.go)
-	dns   dnsGate    // DNS-Umleiter für Domain-Regeln (dns.go)
+	dns   dnsGate    // Panel-DNS bzw. DNS-Umleiter für Domain-Regeln (dns.go)
+
+	dnsLists dnsListState // Blocklisten des Panel-DNS (dnsfilter.go)
 
 	exitRates exitRateState // Durchsatz der Ausgänge (exits.go)
 }
@@ -70,6 +72,9 @@ var settingDefaults = map[string]string{
 	"session_hours":       "168",
 	"update_check":        "1",   // 0 = nicht bei GitHub nach neuen Versionen fragen
 	"exit_speedtest":      "360", // Minuten zwischen Geschwindigkeitstests der Ausgänge, 0 = aus
+	"dns_enabled":         "1",   // Panel-DNS für WireGuard-/OpenVPN-Geräte
+	"dns_upstream":        "1.1.1.1, 9.9.9.9",
+	"dns_log_days":        "7", // Aufbewahrung des DNS-Protokolls in Tagen, 0 = nicht protokollieren
 }
 
 func (e *Engine) Setting(k string) string { return e.St.GetSetting(k, settingDefaults[k]) }
@@ -105,7 +110,7 @@ func (e *Engine) Global() proto.Global {
 	rt := e.routing()
 	return proto.Global{ServerHost: e.Setting("server_host"), OutIf: e.Setting("out_interface"), XrayAPI: e.Setting("xray_api"),
 		DataDir: e.Cfg.DataDir, HookURL: hook, PublicPort: atoi(e.Setting("public_port"), 443), Groups: e.groupRoutes(), ACLs: e.acls(),
-		Policies: rt.Policies, ServerPolicies: rt.ServerPolicies, TargetLists: rt.TargetLists}
+		Policies: rt.Policies, ServerPolicies: rt.ServerPolicies, TargetLists: rt.TargetLists, PanelDNS: e.Setting("dns_enabled") == "1"}
 }
 
 func (e *Engine) Env() *proto.Env {

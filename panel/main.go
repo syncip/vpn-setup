@@ -36,7 +36,7 @@ import (
 )
 
 // version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
-var version = "0.9.2"
+var version = "0.10.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -126,6 +126,9 @@ func serve(args []string) {
 		}
 		if err := seedDemoExits(e); err != nil {
 			log.Printf("Demo-Ausgänge: %v", err)
+		}
+		if err := seedDemoDNS(e); err != nil {
+			log.Printf("Demo-DNS: %v", err)
 		}
 	}
 	ensureAdmin(e, o)

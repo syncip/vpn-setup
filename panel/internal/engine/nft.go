@@ -15,7 +15,7 @@ import (
 //     kosten so pro Paket nur eine Suche),
 //   - die Ziel-Regeln für Geräte, deren Verkehr weitergeleitet wird (WireGuard, OpenVPN): Kette vp_pre
 //     markiert Pakete je nach Quelle und Ziel mit der Markierung der Ausgangsgruppe,
-//   - die DNS-Umleitung für Geräte mit Domain-Regeln (Kette vp_dns) und
+//   - die DNS-Umleitung zum Panel-DNS (Kette vp_dns), die Sperre für verschlüsseltes DNS und
 //   - die IPv6-Sperre für Geräte, deren ganzer Verkehr über einen (IPv4-)Ausgang läuft (Kette vp_fwd).
 //
 // Die iptables-Ketten der Protokolltreiber (VPNWG-*, VPNOV-*, VPNEX-*) bleiben daneben bestehen.
@@ -25,15 +25,27 @@ const (
 	dnsPort  = 5399 // lokaler Port des DNS-Umleiters
 )
 
+// srcPolicy: Adressen eines Geräts, dessen Verkehr weitergeleitet wird, mit dem, was für es gilt.
 type srcPolicy struct {
-	pfx netip.Prefix
-	pol *proto.Policy
+	pfx  netip.Prefix
+	pol  *proto.Policy // Ziel-Regeln (nil = keine)
+	peer int64
+	user int64
+	filt *dnsFilter // Filterprofil (nil = keins)
+	dns  bool       // DNS-Anfragen an den Panel-DNS umleiten
+	doh  bool       // verschlüsseltes DNS (DoH/DoT) sperren
 }
 
-// forwardSources: Quelladressen aller Geräte mit Ziel-Regeln, deren Verkehr weitergeleitet wird.
+// forwardSources: Quelladressen aller Geräte, deren Verkehr weitergeleitet wird und für die
+// Ziel-Regeln oder der Panel-DNS gelten.
 func (e *Engine) forwardSources(env *proto.Env, snap *Snapshot, rt *routing) []srcPolicy {
 	var out []srcPolicy
 	seen := map[netip.Prefix]bool{}
+	panelDNS := e.Setting("dns_enabled") == "1"
+	filters := map[int64]*dnsFilter{}
+	if panelDNS {
+		filters = e.compileDNSFilters(snap)
+	}
 	for _, d := range proto.All() {
 		f, ok := d.(proto.Forwarder)
 		if !ok {
@@ -45,14 +57,20 @@ func (e *Engine) forwardSources(env *proto.Env, snap *Snapshot, rt *routing) []s
 			}
 			for id, pfxs := range f.Sources(env, sb) {
 				pol := rt.Policies[id]
-				if pol == nil {
+				if pol == nil && !panelDNS {
 					continue
 				}
+				sp := srcPolicy{pol: pol, peer: id, filt: filters[id], dns: panelDNS || pol.HasDomains()}
+				if pb := snap.Peers[id]; pb != nil {
+					sp.user = pb.User.ID
+				}
+				sp.doh = pol.HasDomains() || (sp.filt != nil && sp.filt.BlockDoH)
 				for _, p := range pfxs {
 					p = p.Masked()
 					if !seen[p] && p.Bits() > 0 {
 						seen[p] = true
-						out = append(out, srcPolicy{p, pol})
+						sp.pfx = p
+						out = append(out, sp)
 					}
 				}
 			}
@@ -177,7 +195,7 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 	// ---------- Ziel-Regeln für weitergeleiteten Verkehr ----------
 	if len(srcs) > 0 {
 		done := map[string]bool{}
-		var src4, dns4, dns6, all6 []string
+		var src4, dns4, dns6, doh4, doh6, all6 []string
 		for _, s := range srcs {
 			pol := s.pol
 			allGroup, hasAll := pol.AllGroup()
@@ -185,15 +203,24 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 				if hasAll && allGroup != 0 {
 					all6 = append(all6, s.pfx.String())
 				}
-				if pol.HasDomains() {
+				if s.dns {
 					dns6 = append(dns6, s.pfx.String())
+				}
+				if s.doh {
+					doh6 = append(doh6, s.pfx.String())
 				}
 				continue
 			}
-			src4 = append(src4, fmt.Sprintf("%s : jump pol_%s", s.pfx, pol.Key))
-			if pol.HasDomains() {
+			if s.dns {
 				dns4 = append(dns4, s.pfx.String())
 			}
+			if s.doh {
+				doh4 = append(doh4, s.pfx.String())
+			}
+			if pol == nil {
+				continue
+			}
+			src4 = append(src4, fmt.Sprintf("%s : jump pol_%s", s.pfx, pol.Key))
 			if done[pol.Key] {
 				continue
 			}
@@ -228,26 +255,38 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 			}
 			chains.WriteString("\t}\n")
 		}
-		fmt.Fprintf(&sets, "\tset private4 {\n\t\ttype ipv4_addr\n\t\tflags interval\n\t\telements = { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/3 }\n\t}\n")
-		fmt.Fprintf(&sets, "\tmap src4 {\n\t\ttype ipv4_addr : verdict\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(src4, ",\n\t\t\t"))
-		chains.WriteString("\tchain vp_pre {\n\t\ttype filter hook prerouting priority mangle; policy accept;\n" +
-			"\t\tfib daddr type local return\n\t\tip daddr @private4 return\n\t\tip saddr vmap @src4\n\t}\n")
-		var fwd, nat strings.Builder
-		if len(dns4) > 0 {
-			fmt.Fprintf(&sets, "\tset dnssrc {\n\t\ttype ipv4_addr\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(dns4, ", "))
-			fmt.Fprintf(&nat, "\t\tip saddr @dnssrc udp dport 53 redirect to :%d\n\t\tip saddr @dnssrc tcp dport 53 redirect to :%d\n", dnsPort, dnsPort)
-			// DNS über TLS abweisen – Geräte (z. B. Android „Privates DNS: automatisch“) fallen dann auf normales DNS zurück
-			fwd.WriteString("\t\tip saddr @dnssrc tcp dport 853 reject with tcp reset\n")
-			// DoH direkt per Adresse (https://1.1.1.1/dns-query u. ä.) – ohne Namensauflösung, also am Umleiter vorbei
-			fwd.WriteString("\t\tip saddr @dnssrc ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8, 9.9.9.9, 149.112.112.112 } tcp dport 443 reject with tcp reset\n")
-			fwd.WriteString("\t\tip saddr @dnssrc ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8, 9.9.9.9, 149.112.112.112 } udp dport 443 reject\n")
+		if len(src4) > 0 {
+			fmt.Fprintf(&sets, "\tset private4 {\n\t\ttype ipv4_addr\n\t\tflags interval\n\t\telements = { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/3 }\n\t}\n")
+			fmt.Fprintf(&sets, "\tmap src4 {\n\t\ttype ipv4_addr : verdict\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(src4, ",\n\t\t\t"))
+			chains.WriteString("\tchain vp_pre {\n\t\ttype filter hook prerouting priority mangle; policy accept;\n" +
+				"\t\tfib daddr type local return\n\t\tip daddr @private4 return\n\t\tip saddr vmap @src4\n\t}\n")
 		}
-		if len(dns6) > 0 { // DNS-Anfragen über IPv6 gehören genauso zum Umleiter
-			fmt.Fprintf(&sets, "\tset dnssrc6 {\n\t\ttype ipv6_addr\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", strings.Join(dns6, ", "))
+		var fwd, nat strings.Builder
+		set := func(name, typ string, el []string) {
+			fmt.Fprintf(&sets, "\tset %s {\n\t\ttype %s\n\t\tflags interval\n\t\telements = { %s }\n\t}\n", name, typ, strings.Join(el, ", "))
+		}
+		// DNS-Anfragen (auch über IPv6) gehen an den Panel-DNS, egal welchen Server das Gerät eingetragen hat
+		if len(dns4) > 0 {
+			set("dnssrc", "ipv4_addr", dns4)
+			fmt.Fprintf(&nat, "\t\tip saddr @dnssrc udp dport 53 redirect to :%d\n\t\tip saddr @dnssrc tcp dport 53 redirect to :%d\n", dnsPort, dnsPort)
+		}
+		if len(dns6) > 0 {
+			set("dnssrc6", "ipv6_addr", dns6)
 			fmt.Fprintf(&nat, "\t\tip6 saddr @dnssrc6 udp dport 53 redirect to :%d\n\t\tip6 saddr @dnssrc6 tcp dport 53 redirect to :%d\n", dnsPort, dnsPort)
-			fwd.WriteString("\t\tip6 saddr @dnssrc6 tcp dport 853 reject with tcp reset\n")
-			fwd.WriteString("\t\tip6 saddr @dnssrc6 ip6 daddr { 2001:4860:4860::8844, 2001:4860:4860::8888, 2606:4700:4700::1001, 2606:4700:4700::1111, 2620:fe::9, 2620:fe::fe } tcp dport 443 reject with tcp reset\n")
-			fwd.WriteString("\t\tip6 saddr @dnssrc6 ip6 daddr { 2001:4860:4860::8844, 2001:4860:4860::8888, 2606:4700:4700::1001, 2606:4700:4700::1111, 2620:fe::9, 2620:fe::fe } udp dport 443 reject\n")
+		}
+		// Verschlüsseltes DNS abweisen: DNS über TLS (Android „Privates DNS: automatisch“ fällt dann auf
+		// normales DNS zurück) und DoH direkt per Adresse (https://1.1.1.1/dns-query u. ä.)
+		if len(doh4) > 0 {
+			set("dohsrc", "ipv4_addr", doh4)
+			fwd.WriteString("\t\tip saddr @dohsrc tcp dport 853 reject with tcp reset\n")
+			fwd.WriteString("\t\tip saddr @dohsrc ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8, 9.9.9.9, 149.112.112.112 } tcp dport 443 reject with tcp reset\n")
+			fwd.WriteString("\t\tip saddr @dohsrc ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8, 9.9.9.9, 149.112.112.112 } udp dport 443 reject\n")
+		}
+		if len(doh6) > 0 {
+			set("dohsrc6", "ipv6_addr", doh6)
+			fwd.WriteString("\t\tip6 saddr @dohsrc6 tcp dport 853 reject with tcp reset\n")
+			fwd.WriteString("\t\tip6 saddr @dohsrc6 ip6 daddr { 2001:4860:4860::8844, 2001:4860:4860::8888, 2606:4700:4700::1001, 2606:4700:4700::1111, 2620:fe::9, 2620:fe::fe } tcp dport 443 reject with tcp reset\n")
+			fwd.WriteString("\t\tip6 saddr @dohsrc6 ip6 daddr { 2001:4860:4860::8844, 2001:4860:4860::8888, 2606:4700:4700::1001, 2606:4700:4700::1111, 2620:fe::9, 2620:fe::fe } udp dport 443 reject\n")
 		}
 		if nat.Len() > 0 {
 			fmt.Fprintf(&chains, "\tchain vp_dns {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n%s\t}\n", nat.String())

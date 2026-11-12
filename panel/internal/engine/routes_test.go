@@ -152,10 +152,10 @@ func TestRoutes(t *testing.T) {
 		"chain pol_" + benPol + " {\n\t\tip daddr { 203.0.113.0/24 } meta mark set 0x02000000 return\n\t\tip daddr @d" + id64(rGlobal.ID) + " meta mark set 0x02000000 return\n\t}",
 		"set l" + id64(tl.ID) + "_4 {", "elements = { 198.18.5.0/24 }",
 		"set d" + id64(rGlobal.ID) + " {", "flags timeout",
-		// DNS-Umleitung nur für Geräte mit Domain-Regeln, IPv6-Sperre nur bei „alles“
-		"ip saddr @dnssrc udp dport 53 redirect to :5399", "ip saddr @dnssrc tcp dport 853 reject with tcp reset",
+		// DNS-Umleitung zum Panel-DNS für alle Geräte; verschlüsseltes DNS nur bei Domain-Regeln gesperrt
+		"ip saddr @dnssrc udp dport 53 redirect to :5399", "ip saddr @dohsrc tcp dport 853 reject with tcp reset",
 		// auch DNS über IPv6 wird umgeleitet (Geräte mit IPv6-DNS-Server)
-		"set dnssrc6 {", "ip6 saddr @dnssrc6 udp dport 53 redirect to :5399", "ip6 saddr @dnssrc6 tcp dport 853 reject with tcp reset",
+		"set dnssrc6 {", "ip6 saddr @dnssrc6 udp dport 53 redirect to :5399", "ip6 saddr @dohsrc6 tcp dport 853 reject with tcp reset",
 		"ip6 saddr @all6 ip6 daddr != fc00::/7 reject with icmpv6 admin-prohibited",
 	} {
 		if !strings.Contains(nft, want) {
@@ -165,10 +165,15 @@ func TestRoutes(t *testing.T) {
 	if t.Failed() {
 		t.Logf("nft:\n%s", nft)
 	}
-	dnsSet := nft[strings.Index(nft, "set dnssrc {"):]
-	dnsSet = dnsSet[:strings.Index(dnsSet, "}")]
-	if !strings.Contains(dnsSet, a4(annaTV)) || !strings.Contains(dnsSet, a4(benPhone)) || strings.Contains(dnsSet, a4(annaPhone)+"/") {
-		t.Errorf("DNS-Umleitung für die falschen Geräte: %s", dnsSet)
+	setOf := func(name string) string {
+		x := nft[strings.Index(nft, "set "+name+" {"):]
+		return x[:strings.Index(x, "}")]
+	}
+	if d := setOf("dnssrc"); !strings.Contains(d, a4(annaTV)) || !strings.Contains(d, a4(benPhone)) || !strings.Contains(d, a4(annaPhone)) {
+		t.Errorf("Panel-DNS nicht für alle Geräte: %s", d)
+	}
+	if d := setOf("dohsrc"); !strings.Contains(d, a4(annaTV)) || !strings.Contains(d, a4(benPhone)) || strings.Contains(d, a4(annaPhone)) {
+		t.Errorf("DoH-Sperre für die falschen Geräte: %s", d)
 	}
 	fw := strings.Join(dry.Stdin, "\n")
 	if !strings.Contains(fw, "-A VPNWG-FWD -i wg0 -o ex+ -s "+a4(benPhone)+"/32 -j ACCEPT") {
@@ -202,6 +207,20 @@ func TestRoutes(t *testing.T) {
 	for _, o := range objs {
 		_ = e.St.DeleteObject("route", o.ID)
 	}
+	if err := e.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	// Panel-DNS bleibt (Umleitung), Markierungen und DoH-Sperre sind weg
+	last := ""
+	for _, s := range dry.Stdin {
+		if strings.Contains(s, "table inet vpnpanel {") {
+			last = s
+		}
+	}
+	if !strings.Contains(last, "set dnssrc {") || strings.Contains(last, "vp_pre") || strings.Contains(last, "dohsrc") {
+		t.Errorf("ohne Regeln:\n%s", last)
+	}
+	_ = e.St.SetSetting("dns_enabled", "0")
 	n := len(dry.Log())
 	if err := e.Apply(); err != nil {
 		t.Fatal(err)
@@ -335,7 +354,8 @@ func TestDNSGate(t *testing.T) {
 	defer func() { dnsUpstream = oldUp }()
 
 	pol := &proto.Policy{Key: "x", Rules: []proto.RouteRule{{ID: 7, Domains: []string{"netflix.com"}, Group: 0}, {ID: 8, All: true, Group: 0}}}
-	e.dns.configure(e, []srcPolicy{{netip.MustParsePrefix("10.8.0.2/32"), pol}, {netip.MustParsePrefix("fd42::2/128"), pol}}, &routing{})
+	e.dns.configure(e, []srcPolicy{{pfx: netip.MustParsePrefix("10.8.0.2/32"), pol: pol, peer: 1, dns: true, doh: true},
+		{pfx: netip.MustParsePrefix("fd42::2/128"), pol: pol, peer: 1, dns: true, doh: true}}, &routing{})
 	query := func(name string, typ dnsmessage.Type) []byte {
 		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 4711, RecursionDesired: true})
 		_ = b.StartQuestions()

@@ -72,7 +72,8 @@ func (Driver) Info() proto.Info {
 				{Value: "own", Label: "Nur Geräte desselben Nutzers"},
 				{Value: "none", Label: "Kein Zugriff (nur Internet)"},
 			}, Help: "Gilt für alle Geräte, die keine eigene Regel haben."},
-			{Key: "dns", Label: "DNS für Geräte", Type: "text", Default: "1.1.1.1, 2606:4700:4700::1111"},
+			{Key: "dns", Label: "DNS für Geräte", Type: "text", Default: "auto",
+				Help: "„auto“ = Panel-DNS (Filter, Protokoll, Domain-Regeln) über die Tunneladresse des Servers. Sonst eigene DNS-Server, mit Komma getrennt."},
 			{Key: "net6", Label: "Tunnelnetz IPv6", Type: "cidr", Default: "fd42:42:42::/64", Advanced: true, Help: "Leer lassen für reines IPv4."},
 			{Key: "endpoint", Label: "Öffentliche Adresse", Type: "text", Advanced: true, Placeholder: "Server-Domain aus den Einstellungen", Help: "Hostname oder IP, unter der Geräte den Server erreichen."},
 			{Key: "interface", Label: "Schnittstelle", Type: "text", Advanced: true, Placeholder: "automatisch (wg0, wg1, …)"},
@@ -100,7 +101,7 @@ func (Driver) Info() proto.Info {
 			{Key: "lan_interface", Label: "LAN-Schnittstelle des Geräts", Type: "text", Kinds: []string{"site"}, Advanced: true, Placeholder: "eth0"},
 			{Key: "address4", Label: "IPv4-Adresse im Tunnel", Type: "text", Advanced: true, Placeholder: "automatisch"},
 			{Key: "address6", Label: "IPv6-Adresse im Tunnel", Type: "text", Advanced: true, Placeholder: "automatisch"},
-			{Key: "dns", Label: "DNS", Type: "text", Advanced: true, Placeholder: "Vorgabe des Servers", Help: "„none“ = keinen DNS setzen."},
+			{Key: "dns", Label: "DNS", Type: "text", Advanced: true, Placeholder: "Vorgabe des Servers", Help: "„auto“ = Panel-DNS, „none“ = keinen DNS setzen."},
 			{Key: "extra_allowed", Label: "Zusätzliche Ziele (AllowedIPs)", Type: "cidrlist", Advanced: true, Help: "Weitere Netze, die das Gerät über den Tunnel schickt."},
 			{Key: "endpoint", Label: "Feste Adresse des Geräts", Type: "text", Advanced: true, Placeholder: "host:port",
 				Help: "Nur wenn das Gerät selbst öffentlich erreichbar ist – dann kann der Server die Verbindung aufbauen."},
@@ -121,7 +122,7 @@ func (Driver) Info() proto.Info {
 // ---------- Vorgaben & Prüfungen ----------
 
 func load(srv *store.Server) serverCfg {
-	c := serverCfg{Port: 51820, Internet: true, DefaultAccess: "all", Keepalive: 25, DNS: "1.1.1.1, 2606:4700:4700::1111"}
+	c := serverCfg{Port: 51820, Internet: true, DefaultAccess: "all", Keepalive: 25, DNS: "auto"}
 	_ = proto.Decode(srv.Settings, &c)
 	return c
 }
@@ -174,7 +175,7 @@ func oneLine(s string) string {
 }
 
 func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server) error {
-	c := serverCfg{Port: 0, Internet: true, DefaultAccess: "all", Keepalive: 25, DNS: "1.1.1.1, 2606:4700:4700::1111", Net6: "\x00"}
+	c := serverCfg{Port: 0, Internet: true, DefaultAccess: "all", Keepalive: 25, DNS: "auto", Net6: "\x00"}
 	_ = proto.Decode(srv.Settings, &c)
 	var others []serverCfg
 	for _, o := range all {
@@ -893,7 +894,35 @@ type clientParams struct {
 	mtu, ka        int
 }
 
-func params(sb *proto.ServerBundle, pb *proto.PeerBundle) (*clientParams, error) {
+// oldDefaultDNS: Vorgabe bis v0.9 – gilt wie „auto“, damit bestehende Server den Panel-DNS bekommen.
+const oldDefaultDNS = "1.1.1.1, 2606:4700:4700::1111"
+
+// deviceDNS: DNS-Server für Geräte. „auto“: Tunneladressen des Servers (dort antwortet der Panel-DNS),
+// ohne Panel-DNS die frühere Vorgabe.
+func deviceDNS(env *proto.Env, sc serverCfg, dns string) string {
+	if dns != "auto" && dns != oldDefaultDNS {
+		return dns
+	}
+	if env == nil || !env.Global.PanelDNS {
+		return oldDefaultDNS
+	}
+	n4, err := parsePrefix(sc.Net4)
+	if err != nil {
+		return oldDefaultDNS
+	}
+	a4, _ := addrAt(n4, 1)
+	out := a4.String()
+	if sc.Net6 != "" {
+		if n6, err := parsePrefix(sc.Net6); err == nil {
+			if a6, err := addrAt(n6, 1); err == nil {
+				out += ", " + a6.String()
+			}
+		}
+	}
+	return out
+}
+
+func params(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (*clientParams, error) {
 	sc := load(sb.Server)
 	all := nodes(sb, false)
 	var me *node
@@ -939,6 +968,8 @@ func params(sb *proto.ServerBundle, pb *proto.PeerBundle) (*clientParams, error)
 	}
 	if dns == "none" {
 		dns = ""
+	} else {
+		dns = deviceDNS(env, sc, dns)
 	}
 	mtu := c.MTU
 	if mtu == 0 {
@@ -952,7 +983,7 @@ func params(sb *proto.ServerBundle, pb *proto.PeerBundle) (*clientParams, error)
 }
 
 func (Driver) ClientConfig(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) (*proto.ClientConfig, error) {
-	cp, err := params(sb, pb)
+	cp, err := params(env, sb, pb)
 	if err != nil {
 		return nil, err
 	}
@@ -1124,7 +1155,7 @@ func shareLink(env *proto.Env, sc serverCfg, sb *proto.ServerBundle, pb *proto.P
 // v2RayTun, die Xray-JSON im Abo verstehen, aber keine wireguard://-Links. Beim geteilten
 // Tunnel gehen nur die Netze des WireGuard-Servers durch den Tunnel, der Rest direkt.
 func xrayJSON(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBundle) string {
-	cp, err := params(sb, pb)
+	cp, err := params(env, sb, pb)
 	if err != nil {
 		return ""
 	}
@@ -1185,7 +1216,7 @@ func (Driver) SingBox(env *proto.Env, sb *proto.ServerBundle, pb *proto.PeerBund
 	if pb.Peer.Kind != "client" || !pb.Active {
 		return nil, nil
 	}
-	cp, err := params(sb, pb)
+	cp, err := params(env, sb, pb)
 	if err != nil || cp.c.Tunnel != "full" {
 		return nil, nil
 	}

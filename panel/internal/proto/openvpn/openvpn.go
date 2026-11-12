@@ -57,7 +57,11 @@ PrivateTmp=yes
 WantedBy=multi-user.target
 `
 
-const defaultDNS = "1.1.1.1, 2606:4700:4700::1111"
+const (
+	defaultDNS = "auto"
+	// oldDefaultDNS: Vorgabe bis v0.9 – gilt wie „auto“
+	oldDefaultDNS = "1.1.1.1, 2606:4700:4700::1111"
+)
 
 type serverCfg struct {
 	Port      int    `json:"port"`
@@ -109,7 +113,7 @@ func (Driver) Info() proto.Info {
 			}},
 			{Key: "internet", Label: "Internetzugang über diesen Server", Type: "bool", Default: true,
 				Help: "An: gesamter Verkehr der Geräte geht über den Server. Aus: nur das Tunnelnetz."},
-			{Key: "dns", Label: "DNS für Geräte", Type: "text", Default: defaultDNS, Help: "IP-Adressen, mit Komma getrennt. Nur mit Internetzugang."},
+			{Key: "dns", Label: "DNS für Geräte", Type: "text", Default: defaultDNS, Help: "„auto“ = Panel-DNS (Filter, Protokoll, Domain-Regeln) über die Tunneladresse des Servers. Sonst IP-Adressen, mit Komma getrennt. Nur mit Internetzugang."},
 			{Key: "net4", Label: "Tunnelnetz IPv4", Type: "cidr", Default: "10.66.0.0/24", Advanced: true,
 				Help: "Jeder Zugang bekommt eine feste Adresse daraus, der Server die erste (/16 bis /29)."},
 			{Key: "net6", Label: "Tunnelnetz IPv6", Type: "cidr", Default: "fd66:66:66::/64", Advanced: true, Help: "Leer lassen für reines IPv4 (/64 bis /112)."},
@@ -131,6 +135,9 @@ var hostRe = regexp.MustCompile(`^([A-Za-z0-9.-]{1,253}|\[?[0-9A-Fa-f:.]{2,45}\]
 
 // checkDNS: nur IP-Adressen (OpenVPN schiebt sie als „dhcp-option DNS/DNS6“).
 func checkDNS(v string) (string, error) {
+	if strings.TrimSpace(v) == "auto" {
+		return "auto", nil
+	}
 	var out []string
 	for _, it := range strings.Split(v, ",") {
 		it = strings.TrimSpace(it)
@@ -458,7 +465,19 @@ func serverConf(env *proto.Env, sb *proto.ServerBundle, c serverCfg) string {
 		} else {
 			b.WriteString("push \"redirect-gateway def1 bypass-dhcp\"\n")
 		}
-		for _, d := range strings.Split(c.DNS, ",") {
+		dns := c.DNS
+		if dns == "auto" || dns == oldDefaultDNS {
+			dns = oldDefaultDNS
+			if env != nil && env.Global.PanelDNS { // Tunneladressen des Servers – dort antwortet der Panel-DNS
+				dns = n4.Masked().Addr().Next().String()
+				if c.Net6 != "" {
+					if n6, err := netip.ParsePrefix(c.Net6); err == nil {
+						dns += ", " + n6.Masked().Addr().Next().String()
+					}
+				}
+			}
+		}
+		for _, d := range strings.Split(dns, ",") {
 			d = strings.TrimSpace(d)
 			if a, err := netip.ParseAddr(d); err == nil {
 				if a.Is4() {

@@ -37,10 +37,20 @@ func ValidateSetting(k, v string) (string, error) {
 		if n, err := strconv.Atoi(v); err != nil || n < 0 {
 			return "", fmt.Errorf("%s: bitte eine Zahl ab 0", k)
 		}
-	case "trust_cloudflare", "update_check":
+	case "trust_cloudflare", "update_check", "dns_enabled":
 		if v != "0" && v != "1" {
 			v = "0"
 		}
+	case "dns_log_days":
+		if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 365 {
+			return "", fmt.Errorf("DNS-Protokoll: Tage von 0 bis 365")
+		}
+	case "dns_upstream":
+		list, err := ParseUpstream(v)
+		if err != nil {
+			return "", err
+		}
+		v = strings.Join(list, ", ")
 	}
 	return v, nil
 }

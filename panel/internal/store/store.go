@@ -64,6 +64,12 @@ var migrations = []string{
 	`CREATE TABLE objects (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
 	   data TEXT NOT NULL DEFAULT '{}', secrets TEXT NOT NULL DEFAULT '{}', created INTEGER NOT NULL);
 	 CREATE INDEX objects_kind ON objects(kind);`,
+	// DNS-Protokoll des Panel-DNS
+	`CREATE TABLE dns_log (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, peer_id INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL DEFAULT 0,
+	   client TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, qtype INTEGER NOT NULL, action TEXT NOT NULL, rcode INTEGER NOT NULL DEFAULT 0,
+	   ms INTEGER NOT NULL DEFAULT 0, via INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '');
+	 CREATE INDEX dns_log_ts ON dns_log(ts);
+	 CREATE INDEX dns_log_peer ON dns_log(peer_id, ts);`,
 }
 
 func (s *Store) migrate() error {

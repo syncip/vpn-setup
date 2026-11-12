@@ -98,7 +98,7 @@ func TestOpenVPN(t *testing.T) {
 	c := string(conf)
 	for _, want := range []string{"proto udp6\n", "dev " + n + "\n", "server 10.66.0.0 255.255.255.0\n", "server-ipv6 fd66:66:66::/64\n",
 		"ccd-exclusive\n", "remote-cert-tls client\n", "management /run/vpn-openvpn/" + n + "/mgmt.sock unix\n",
-		"push \"redirect-gateway def1 ipv6 bypass-dhcp\"\n", "push \"dhcp-option DNS 1.1.1.1\"\n", "<tls-crypt>\n", "user nobody\n"} {
+		"push \"redirect-gateway def1 ipv6 bypass-dhcp\"\n", "push \"dhcp-option DNS 10.66.0.1\"\n", "push \"dhcp-option DNS6 fd66:66:66::1\"\n", "<tls-crypt>\n", "user nobody\n"} {
 		if !strings.Contains(c, want) {
 			t.Errorf("Konfiguration ohne %q", want)
 		}

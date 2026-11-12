@@ -125,8 +125,26 @@ func labQuery(name, server string) {
 		return buf[:n]
 	}
 	var as []string
-	for _, a := range answerAddrs(ask(dnsmessage.TypeA)) {
-		as = append(as, a.String())
+	if r := ask(dnsmessage.TypeA); r != nil { // alle A-Einträge, auch 0.0.0.0 und private
+		var p dnsmessage.Parser
+		if _, err := p.Start(r); err == nil {
+			_ = p.SkipAllQuestions()
+			for {
+				h, err := p.AnswerHeader()
+				if err != nil {
+					break
+				}
+				if h.Type != dnsmessage.TypeA {
+					_ = p.SkipAnswer()
+					continue
+				}
+				a, err := p.AResource()
+				if err != nil {
+					break
+				}
+				as = append(as, netip.AddrFrom4(a.A).String())
+			}
+		}
 	}
 	n6 := -1
 	if r := ask(dnsmessage.TypeAAAA); r != nil {
@@ -269,12 +287,13 @@ func TestNftLab(t *testing.T) {
 	defer func() { dnsUpstream = oldUp }()
 	groups := map[int64]proto.GroupRoute{5: {ID: 5, Name: "Lab", Enabled: true, Mark: labMark, DNS: []string{labT1}}}
 	dev := []netip.Prefix{netip.MustParsePrefix(labDev + "/32"), netip.MustParsePrefix(labDev6 + "/128")}
+	var filt *dnsFilter // Filterprofil des Geräts (Panel-DNS)
 	apply := func(step string, pol *proto.Policy, lists map[int64][]netip.Prefix) {
 		t.Helper()
 		var srcs []srcPolicy
-		if pol != nil {
+		if pol != nil || filt != nil {
 			for _, p := range dev {
-				srcs = append(srcs, srcPolicy{p, pol})
+				srcs = append(srcs, srcPolicy{pfx: p, pol: pol, peer: 1, filt: filt, dns: true, doh: pol.HasDomains()})
 			}
 		}
 		if err := e.applyNftWith(snapshot(), &routing{Groups: groups, TargetLists: lists}, e.aclPlan(), srcs); err != nil {
@@ -366,6 +385,29 @@ func TestNftLab(t *testing.T) {
 	}
 	apply("ohne Regeln", nil, nil)
 	expect("ohne Regeln", labT1, labDev)
+
+	// 3b) Panel-DNS ohne Ziel-Regeln: Filter wirkt, Verkehr bleibt direkt, DoH bleibt erlaubt
+	filt = &dnsFilter{ID: 1, Name: "Lab", Rules: &DNSRules{Rewrite: map[string][]netip.Addr{"nas.test": {netip.MustParseAddr("192.168.1.10")}}},
+		block: domainSet{"werbung.test": {}}, allow: domainSet{}}
+	apply("Panel-DNS", nil, nil)
+	if got := dns("ads.werbung.test."); got != "A=0.0.0.0 AAAA=1" {
+		t.Errorf("gesperrter Name: %q", got)
+	}
+	if got := dns("nas.test."); got != "A=192.168.1.10 AAAA=0" {
+		t.Errorf("eigene Antwort: %q", got)
+	}
+	if got := dns("other.test."); got != "A="+labT1+" AAAA=1" {
+		t.Errorf("Panel-DNS löst nicht auf: %q", got)
+	}
+	if got := dns("dns.google."); got == "A= AAAA=0" {
+		t.Errorf("DoH-Name ohne Sperre ausgeblendet: %q", got)
+	}
+	expect("Panel-DNS", labT1, labDev)
+	if out := run(t, "nft", "list", "table", "inet", nftTable); strings.Contains(out, "vp_pre") || strings.Contains(out, "dohsrc") || !strings.Contains(out, "dnssrc") {
+		t.Errorf("Tabelle mit Panel-DNS ohne Regeln:\n%s", out)
+	}
+	filt = nil
+	apply("ohne Regeln", nil, nil)
 
 	// 4) Sperr- und Freigabelisten (IPv4 und IPv6), bestehende Verbindungen
 	expectACL := func(step string, v4, v6 bool) {

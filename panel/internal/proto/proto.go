@@ -79,6 +79,9 @@ type Global struct {
 	ServerPolicies map[int64]*Policy
 	// TargetLists: Inhalt der Ziellisten (nur IPv4), auf die Regeln verweisen.
 	TargetLists map[int64][]netip.Prefix
+	// PanelDNS: Geräte, deren Verkehr weitergeleitet wird (WireGuard, OpenVPN), bekommen als DNS-Server
+	// die Tunneladresse des Servers – dort antwortet das Panel (Filter, Protokoll, Domain-Regeln).
+	PanelDNS bool
 }
 
 // ACL: Wer darf sich mit einem Server verbinden?

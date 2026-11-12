@@ -300,7 +300,7 @@ func (e *Engine) RunLists(stop <-chan struct{}) {
 			return
 		case <-t.C:
 		}
-		if e.refreshLists(time.Now()) {
+		if ch1, ch2 := e.refreshLists(time.Now()), e.refreshDNSLists(time.Now()); ch1 || ch2 {
 			e.RequestApply()
 		}
 		t.Reset(time.Minute)
@@ -326,11 +326,13 @@ func (e *Engine) refreshLists(now time.Time) (changed bool) {
 
 // listDue: Ist ein Abruf fällig? Nie geladene Listen sofort; nach einem Fehler spätestens nach
 // einer Stunde erneut; „nur von Hand“ (Refresh 0) nach dem ersten Erfolg nicht mehr.
-func listDue(l *IPList, st ListStatus, now time.Time) bool {
+func listDue(l *IPList, st ListStatus, now time.Time) bool { return listDueRefresh(l.Refresh, st, now) }
+
+func listDueRefresh(refresh int, st ListStatus, now time.Time) bool {
 	if st.At == 0 && st.Tried == 0 {
 		return true
 	}
-	wait := time.Duration(l.Refresh) * time.Hour
+	wait := time.Duration(refresh) * time.Hour
 	if st.Error != "" && (wait == 0 || wait > time.Hour) {
 		wait = time.Hour
 	}
