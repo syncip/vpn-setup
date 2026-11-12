@@ -74,8 +74,15 @@ func TestPrivateGuard(t *testing.T) {
 		}
 	}
 	// Freigabe (direct) steht vor der Sperre
-	if i, j := strings.Index(xray, `"10.9.0.0/24"`), strings.Index(xray, `"127.0.0.0/8"`); i > j {
+	if i, j := strings.Index(xray, `"10.9.0.0/24"`), strings.Index(xray, `"10.0.0.0/8"`); i > j {
 		t.Errorf("Freigabe steht hinter der Sperre")
+	}
+	// Loopback ist die allererste Regel – vor jeder Freigabe
+	if i, j := strings.Index(xray, `"127.0.0.0/8"`), strings.Index(xray, `"10.9.0.0/24"`); i < 0 || i > j {
+		t.Errorf("Loopback-Sperre steht nicht vor den Freigaben")
+	}
+	if i, j := strings.Index(hyCfg, "reject(127.0.0.0/8)"), strings.Index(hyCfg, "direct(192.168.77.0/24)"); i < 0 || i > j {
+		t.Errorf("Hysteria: Loopback-Sperre steht nicht vor den Ausnahmen: %s", hyCfg)
 	}
 	for _, want := range []string{"direct(192.168.77.0/24)", "reject(10.0.0.0/8)", "reject(127.0.0.0/8)", "direct(all)"} {
 		if !strings.Contains(hyCfg, want) {
@@ -85,7 +92,19 @@ func TestPrivateGuard(t *testing.T) {
 
 	_ = e.St.SetSetting("private_block", "0")
 	fw, xray, hyCfg = apply()
-	if strings.Contains(fw, "-d 10.0.0.0/8 -j DROP") || strings.Contains(xray, `"127.0.0.0/8"`) || strings.Contains(hyCfg, "reject(10.0.0.0/8)") {
+	if strings.Contains(fw, "-d 10.0.0.0/8 -j DROP") || strings.Contains(xray, `"10.0.0.0/8"`) || strings.Contains(hyCfg, "reject(10.0.0.0/8)") {
 		t.Errorf("Sperre trotz Abschalten aktiv")
+	}
+	// Loopback (Panel, Xray-API, Anmelde-Endpunkt) bleibt auch ohne die Sperre unerreichbar
+	if !strings.Contains(xray, `"127.0.0.0/8"`) || !strings.Contains(xray, `"domainStrategy"`) || !strings.Contains(hyCfg, "reject(127.0.0.0/8)") {
+		t.Errorf("Loopback ohne die Sperre erreichbar: %s", hyCfg)
+	}
+	for _, bad := range []string{"127.0.0.1", "127.0.0.0/8", "0.0.0.0/1", "::1", "::ffff:127.0.0.1"} {
+		if _, err := ParsePrivateAllow(bad); err == nil {
+			t.Errorf("Ausnahme %s angenommen", bad)
+		}
+	}
+	if _, err := ParsePrivateAllow("192.168.77.0/24, 10.1.2.3"); err != nil {
+		t.Errorf("gültige Ausnahme abgelehnt: %v", err)
 	}
 }

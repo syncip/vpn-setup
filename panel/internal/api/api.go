@@ -152,7 +152,7 @@ func (a *API) Handler() http.Handler {
 
 	static := a.staticHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secHeaders(w)
+		a.secHeaders(w)
 		host := hostOnly(r.Host)
 		// Abo: https://sub.domain/<token> oder https://panel.domain/sub/<token>
 		// Auf der Abo-Domain gibt es nur die Abo-Links – keine Oberfläche, keine API.
@@ -181,8 +181,14 @@ func (a *API) Handler() http.Handler {
 	})
 }
 
-func secHeaders(w http.ResponseWriter) {
+func (a *API) secHeaders(w http.ResponseWriter) {
 	h := w.Header()
+	if a.Secure {
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+	}
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")

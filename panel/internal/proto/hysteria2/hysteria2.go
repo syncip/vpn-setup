@@ -567,6 +567,20 @@ func applyServer(env *proto.Env, sb *proto.ServerBundle) error {
 		}
 		cfg["acl"] = map[string]any{"inline": append(pre, rest...)}
 	}
+	// Loopback ist immer gesperrt – auch ohne die Sperre privater Ziele und vor allen Ausnahmen
+	{
+		var never, rest []string
+		for _, p := range proto.NeverNets {
+			never = append(never, fmt.Sprintf("reject(%s)", p))
+		}
+		if a, ok := cfg["acl"].(map[string]any); ok {
+			rest, _ = a["inline"].([]string)
+		}
+		if rest == nil {
+			rest = []string{"direct(all)"}
+		}
+		cfg["acl"] = map[string]any{"inline": append(never, rest...)}
+	}
 	// JSON ist gültiges YAML – Hysteria liest die Datei mit einem YAML-Parser.
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	data = append([]byte("# Vom VPN-Panel erzeugt – Änderungen werden überschrieben.\n"), append(data, '\n')...)

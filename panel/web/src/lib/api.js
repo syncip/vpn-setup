@@ -1,12 +1,20 @@
 import { session, toast } from './state.svelte.js';
 
 async function request(method, path, body) {
-  const res = await fetch('/api' + path, {
-    method,
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'vpnpanel' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch('/api' + path, {
+      method,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'vpnpanel' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    // Server nicht erreichbar (Neustart, Netz weg) – verständliche Meldung statt „Failed to fetch“
+    const e = new Error('Keine Verbindung zum Server');
+    e.offline = true;
+    throw e;
+  }
   let data = {};
   try {
     data = await res.json();

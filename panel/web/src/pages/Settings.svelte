@@ -136,7 +136,7 @@
   let showAdv = $state(false);
 </script>
 
-<PageHead title="Einstellungen" />
+<PageHead title="Einstellungen" subtitle="Server-Adresse, Anmeldung, Administratoren und System" />
 
 <div class="tabs">
   {#each tabs as [id, label, icon]}

@@ -175,6 +175,26 @@ var PrivateBase = func() []netip.Prefix {
 	return out
 }()
 
+// NeverNets: Loopback und „dieses Netz“ – darüber wären die internen Dienste des Servers erreichbar
+// (Panel, Xray-API, Anmelde-Endpunkt für Hysteria2, DoH, SmartDNS-Proxy). Für Nutzer von VLESS und
+// Hysteria2 immer gesperrt, auch wenn die Sperre privater Ziele ausgeschaltet ist; Ausnahmen dafür
+// gibt es nicht.
+var NeverNets = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("::/127")}
+
+// OverlapsNever: Netz enthält oder berührt einen Bereich aus NeverNets.
+func OverlapsNever(p netip.Prefix) bool {
+	if p.Addr().Is4In6() {
+		p = netip.PrefixFrom(p.Addr().Unmap(), max(p.Bits()-96, 0))
+	}
+	for _, n := range NeverNets {
+		if n.Overlaps(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // Blocked: alle gesperrten Netze (nil-sicher: ohne Wächter nichts).
 func (g *PrivateGuard) Blocked() []netip.Prefix {
 	if g == nil {

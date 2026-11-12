@@ -36,6 +36,9 @@ func ParsePrivateAllow(v string) ([]string, error) {
 		if p.Bits() == 0 {
 			return nil, fmt.Errorf("Ausnahme „%s“ ist zu groß", f)
 		}
+		if proto.OverlapsNever(p) {
+			return nil, fmt.Errorf("Ausnahme „%s“: Loopback (127.0.0.0/8, ::1) lässt sich nicht freigeben – dort laufen die internen Dienste des Servers", f)
+		}
 		if !seen[p.String()] {
 			seen[p.String()] = true
 			out = append(out, p.String())

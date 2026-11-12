@@ -162,6 +162,7 @@ type dnsExt struct {
 	srcs   []extSrc
 	hosts  map[string]hostRes
 	seen   map[netip.Addr]*extSeen
+	evict  int64 // letzte Verdrängung eines fremden Absenders (Unix)
 	rdns   map[netip.Addr]hostRes
 	loaded bool
 	dirty  bool
@@ -366,6 +367,12 @@ func (e *Engine) noteExt(a netip.Addr, client int64, name string, refused, block
 	now := time.Now().Unix()
 	if s == nil {
 		if len(x.seen) >= 1000 { // ältesten fremden Absender vergessen
+			// Bei einer Flut gefälschter Absender nicht für jedes Paket die ganze Liste durchsuchen:
+			// fremde Absender verdrängen höchstens einmal pro Sekunde einen alten Eintrag.
+			if client == 0 && now == x.evict {
+				return
+			}
+			x.evict = now
 			var old netip.Addr
 			var t int64 = 1 << 62
 			for k, v := range x.seen {

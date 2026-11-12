@@ -244,7 +244,15 @@ die Xray-Regeln. Hysteria2 und Proxy können Nutzer nicht einzeln leiten – fü
 100.64/10, Loopback, fc00::/7 …) und die eigene Server-Adresse nicht – weder über WireGuard/OpenVPN
 (Firewall) noch über VLESS (Xray), Hysteria2 (ACL) oder den Proxy. So bleibt z. B. das interne Netz des
 Proxmox-Hosts geschützt. Ausnahmen (Netze, eine pro Zeile) lassen sich eintragen; Freigaben unter
-„Zugriff“ gehen vor. Abschalten geht, ist aber nicht empfohlen.
+„Zugriff“ gehen vor. Abschalten geht, ist aber nicht empfohlen. **Loopback** (127.0.0.0/8, ::1) bleibt
+für VLESS und Hysteria2 auch dann gesperrt und lässt sich nicht als Ausnahme eintragen – dort laufen die
+internen Dienste des Servers (Panel, Xray-API, Anmelde-Endpunkt).
+
+Weitere Schutzmaßnahmen: DNS über TCP und DoT begrenzen gleichzeitige Verbindungen (insgesamt und je
+Adresse); ein Fehler in einer einzelnen DNS-, DoT-, SmartDNS- oder Proxy-Verbindung wird abgefangen und
+im Ereignisprotokoll gemeldet, statt das Panel zu beenden. Der Test `inject_test.go` belegt jedes
+Eingabefeld aller Protokolle mit präparierten Werten und prüft, dass nichts als eigene Zeile oder
+Befehlsargument in erzeugte Konfigurationen gelangt.
 
 ## DNS (Panel-DNS, Werbefilter)
 

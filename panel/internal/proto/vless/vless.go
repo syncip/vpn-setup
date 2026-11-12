@@ -393,8 +393,10 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 		}
 		pre = append(pre, map[string]any{"type": "field", "ip": proto.PrefixStrings(pg.Nets), "outboundTag": "block"})
 		rules = append(pre, rules...)
-		ipRules = true // auch Namen, die auf private Adressen zeigen, müssen auffallen
 	}
+	// Loopback ist immer gesperrt – auch ohne die Sperre privater Ziele und vor allen Ausnahmen
+	rules = append([]map[string]any{{"type": "field", "ip": proto.PrefixStrings(proto.NeverNets), "outboundTag": "block"}}, rules...)
+	ipRules = true // auch Namen, die auf private Adressen zeigen, müssen auffallen
 	rules = aclRules(env, ins, rules)
 	routing := map[string]any{"rules": orEmpty(rules)}
 	if ipRules {

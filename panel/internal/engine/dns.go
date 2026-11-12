@@ -457,6 +457,7 @@ func (g *dnsGate) serveUDP(e *Engine, pc net.PacketConn) {
 		}
 		go func() {
 			defer func() { <-g.sem }()
+			defer e.guard("DNS (UDP)")
 			src, _ := netip.AddrFromSlice(ua.IP)
 			if resp := g.handle(e, src.Unmap(), q, false); resp != nil {
 				_, _ = pc.WriteTo(resp, from)
@@ -471,20 +472,28 @@ func (g *dnsGate) serveTCP(e *Engine, ln net.Listener) {
 		if err != nil {
 			return
 		}
+		ta, ok := c.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			_ = c.Close()
+			continue
+		}
+		src, _ := netip.AddrFromSlice(ta.IP)
+		src = src.Unmap()
+		if !dnsTCPLimit.acquire(src) { // zu viele offene Verbindungen (insgesamt oder von dieser Adresse)
+			_ = c.Close()
+			continue
+		}
 		go func() {
+			defer dnsTCPLimit.release(src)
 			defer c.Close()
-			ta, ok := c.RemoteAddr().(*net.TCPAddr)
-			if !ok {
-				return
-			}
-			src, _ := netip.AddrFromSlice(ta.IP)
+			defer e.guard("DNS (TCP)")
 			for {
 				_ = c.SetDeadline(time.Now().Add(10 * time.Second))
 				q, err := readFrame(c)
 				if err != nil {
 					return
 				}
-				resp := g.handle(e, src.Unmap(), q, true)
+				resp := g.handle(e, src, q, true)
 				if resp == nil || writeFrame(c, resp) != nil {
 					return
 				}

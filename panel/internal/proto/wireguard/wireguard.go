@@ -133,7 +133,7 @@ func loadPeer(p *store.Peer) peerCfg {
 	return c
 }
 
-var ifaceRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,15}$`)
+var ifaceRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,14}$`) // kein führendes „-“: der Name ist Befehlsargument
 
 // exitIfRe: Schnittstellen der Ausgänge (externe VPNs, Paket exits)
 var exitIfRe = regexp.MustCompile(`^ex[0-9]+$`)
@@ -203,7 +203,7 @@ func (Driver) InitServer(env *proto.Env, srv *store.Server, all []*store.Server)
 	if !ifaceRe.MatchString(c.Interface) {
 		return fmt.Errorf("Schnittstellenname %q ungültig (max. 15 Zeichen, a-z 0-9 _ -)", c.Interface)
 	}
-	if strings.HasPrefix(c.Interface, "ovpn") || exitIfRe.MatchString(c.Interface) || c.Interface == shaping.IfbDev || c.Interface == outIf(env, c) {
+	if strings.HasPrefix(c.Interface, "ovpn") || exitIfRe.MatchString(c.Interface) || c.Interface == shaping.IfbDev || c.Interface == outIf(env, c) || c.Interface == "lo" {
 		return fmt.Errorf("Schnittstellenname %q ist reserviert", c.Interface)
 	}
 	if used(func(o serverCfg) bool { return o.Interface == c.Interface }) {

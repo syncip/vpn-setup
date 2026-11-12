@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"unicode"
 
 	"vpnpanel/internal/engine"
 	"vpnpanel/internal/store"
@@ -114,8 +115,8 @@ func (a *API) saveRoute(w http.ResponseWriter, r *http.Request, o *store.Object)
 	}
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
-		if len([]rune(n)) > 60 {
-			errJSON(w, http.StatusBadRequest, "Name ist zu lang")
+		if len([]rune(n)) > 60 || strings.ContainsFunc(n, unicode.IsControl) {
+			errJSON(w, http.StatusBadRequest, "Name ist zu lang oder enthält Steuerzeichen")
 			return
 		}
 		o.Name = n

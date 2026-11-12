@@ -336,8 +336,20 @@ func (e *Engine) serveDoT(ln net.Listener) {
 		if err != nil {
 			return
 		}
+		ta, _ := c.RemoteAddr().(*net.TCPAddr)
+		var src netip.Addr
+		if ta != nil {
+			src, _ = netip.AddrFromSlice(ta.IP)
+			src = src.Unmap()
+		}
+		if !dotLimit.acquire(src) { // zu viele offene Verbindungen – noch vor dem (teuren) TLS-Handshake
+			_ = c.Close()
+			continue
+		}
 		go func() {
+			defer dotLimit.release(src)
 			defer c.Close()
+			defer e.guard("DoT")
 			tc, ok := c.(*tls.Conn)
 			if !ok {
 				return
@@ -345,12 +357,6 @@ func (e *Engine) serveDoT(ln net.Listener) {
 			_ = c.SetDeadline(time.Now().Add(10 * time.Second))
 			if err := tc.Handshake(); err != nil {
 				return
-			}
-			ta, _ := c.RemoteAddr().(*net.TCPAddr)
-			var src netip.Addr
-			if ta != nil {
-				src, _ = netip.AddrFromSlice(ta.IP)
-				src = src.Unmap()
 			}
 			token := e.tokenOf(tc.ConnectionState().ServerName)
 			via := "dot"

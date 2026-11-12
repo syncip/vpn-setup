@@ -549,6 +549,10 @@ func acceptLoop(in *instance, ln net.Listener, isHTTP bool) {
 				}
 				mgr.Unlock()
 				_ = c.Close()
+				// Ein unerwarteter Fehler in einer Verbindung darf nicht das ganze Panel beenden
+				if r := recover(); r != nil {
+					note("error", "panic", fmt.Sprintf("Proxy „%s“: interner Fehler abgefangen: %v", name, r))
+				}
 			}()
 			if tc, ok := c.(*net.TCPConn); ok {
 				_ = tc.SetKeepAlive(true)

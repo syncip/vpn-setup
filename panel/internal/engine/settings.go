@@ -2,14 +2,16 @@ package engine
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var (
 	hostSettingRe = regexp.MustCompile(`^[a-zA-Z0-9.-]*$`)
-	ifaceRe       = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,15}$`)
+	ifaceRe       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14}$`)
 )
 
 // ValidateSetting prüft einen Wert für die Einstellungen (Webinterface und „vpn config“)
@@ -28,6 +30,22 @@ func ValidateSetting(k, v string) (string, error) {
 	case "collect_interval", "sub_update_interval", "traffic_retention", "public_port", "session_hours":
 		if n, err := strconv.Atoi(v); err != nil || n <= 0 {
 			return "", fmt.Errorf("%s: bitte eine positive Zahl", k)
+		}
+	case "xray_api":
+		// nur lokal: darüber liest das Panel die Statistik, Xray lauscht dort ohne Anmeldung
+		ap, err := netip.ParseAddrPort(v)
+		if err != nil || !ap.Addr().IsLoopback() || ap.Port() == 0 {
+			return "", fmt.Errorf("Xray-API: lokale Adresse mit Port, z. B. 127.0.0.1:10085")
+		}
+		v = ap.String()
+	case "profile_title":
+		if len([]rune(v)) > 64 {
+			return "", fmt.Errorf("Profilname: höchstens 64 Zeichen")
+		}
+		for _, r := range v {
+			if unicode.IsControl(r) {
+				return "", fmt.Errorf("Profilname: keine Steuerzeichen")
+			}
 		}
 	case "out_interface":
 		if !ifaceRe.MatchString(v) {

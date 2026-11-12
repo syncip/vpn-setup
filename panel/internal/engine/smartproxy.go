@@ -139,6 +139,7 @@ func (p *smartProxy) note(dom string, gid int64, n int64, errText string) {
 
 func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	defer c.Close()
+	defer e.guard("SmartDNS-Proxy")
 	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
 	ta, ok := c.RemoteAddr().(*net.TCPAddr)
 	if !ok {
