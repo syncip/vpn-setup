@@ -1184,10 +1184,11 @@ func (in *instance) serveHTTP(c net.Conn, ip netip.Addr) {
 		who, u, p := in.authHTTP(req, ip)
 		if who == nil {
 			// ohne Zugangsdaten ist 407 der normale erste Schritt (Browser fragen dann nach) → nicht melden
-			writeStatus(c, http.StatusProxyAuthRequired, "Proxy-Authenticate: Basic realm=\"Proxy\"\r\n")
+			// erst melden, dann antworten: sonst kann ein nächster Versuch die Meldung überholen
 			if req.Header.Get("Proxy-Authorization") != "" {
 				in.loginFailed(ip, u, p, "HTTP")
 			}
+			writeStatus(c, http.StatusProxyAuthRequired, "Proxy-Authenticate: Basic realm=\"Proxy\"\r\n")
 			return
 		}
 		if rt != nil && who != rt {

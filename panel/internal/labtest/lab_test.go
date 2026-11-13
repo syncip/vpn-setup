@@ -388,11 +388,14 @@ func TestLab(t *testing.T) {
 	}
 	// Anbieter wieder da → Ausgang verbindet neu, Gruppe nimmt ihn wieder
 	ovpnSrv = startServer()
-	waitFor(t, "Neuverbindung", 60*time.Second, func() bool {
+	// OpenVPN wartet zwischen Verbindungsversuchen zunehmend länger – auf GitHub-Runnern über 60 s
+	back := time.Now()
+	waitFor(t, "Neuverbindung", 150*time.Second, func() bool {
 		m.Check(env, xs, gs, 0)
 		_, gst = m.Status()
 		return gst[groupID].Active == exitID
 	})
+	t.Logf("Neuverbindung nach %s", time.Since(back).Round(time.Second))
 	if body, err := get(viaGroup, "http://"+target+"/", true); err != nil || !strings.HasPrefix(body, "src=10.98.0.") {
 		t.Fatalf("nach Neuverbindung: %q %v", body, err)
 	}
