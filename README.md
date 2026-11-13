@@ -296,8 +296,11 @@ um – deshalb nach dem Update die Config neu laden.
   Nameserver **über den Ausgang der Gruppe** – Geräte mit Ausgangsgruppe (ganzer Verkehr oder Ziel-Regel/
   SmartDNS) bekommen so Antworten passend zum Land des Ausgangs, und kein DNS dieser Geräte verlässt den
   Server direkt. Eine Routing-Regel für den Instanz-Benutzer (`ip rule … uidrange … lookup <Gruppe>`)
-  legt den Weg schon beim Senden fest (Absender = Adresse am Tunnel); nftables verwirft als
-  **Kill-Switch** alles außer Loopback und den Ausgangstunneln (`ex*`), dazu jedes IPv6. Die Instanzen
+  legt den Weg schon beim Senden fest (Absender = Adresse am Tunnel). Dahinter steht als **Kill-Switch**
+  eine Sperr-Regel (`uidrange … blackhole`, IPv4 und IPv6): Fehlt die Regel der Gruppe oder ist ihre
+  Tabelle leer, endet die Anfrage dort statt direkt im Internet; IPv6 ist immer gesperrt, Loopback bleibt
+  frei. Bewusst keine Firewall-Regel nach Benutzer – WireGuard behält beim Verpacken den Benutzer der
+  Instanz, eine solche Regel verwürfe auch die Tunnelpakete des Ausgangs (Fehler bis v0.14.2). Die Instanzen
   startet nur das Panel, nachdem diese Regeln geladen sind (der Dienst verweigert ohne sie den Start, kein
   Autostart beim Booten); lassen sich die Regeln nicht laden, hält das Panel sie an. Fällt eine Instanz aus,
   springen die DNS-Server der Gruppe ein (ebenfalls über den Ausgang). Geprüft im Labortest

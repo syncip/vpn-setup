@@ -36,7 +36,7 @@ import (
 )
 
 // version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
-var version = "0.14.2"
+var version = "0.14.3"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {

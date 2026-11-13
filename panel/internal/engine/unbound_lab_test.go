@@ -1,8 +1,10 @@
 //go:build lab
 
-// Labortest auf echtem Linux (als root, z. B. in WSL) für Unbound je Ausgangsgruppe: Routing-Regel
-// (Weg über den Ausgang) und Kill-Switch aus ubNftChains – in eigenen Netzwerk-Namespaces, ohne das
-// Netz des Rechners anzufassen. Statt eines Unbound-Benutzers sendet „nobody“.
+// Labortest auf echtem Linux (als root, z. B. in WSL) für Unbound je Ausgangsgruppe: Weg über den
+// Ausgang und Kill-Switch per Routing-Regeln (syncUBRules) – in eigenen Netzwerk-Namespaces, ohne das
+// Netz des Rechners anzufassen. Der Ausgang ist ein echter WireGuard-Tunnel: Seine verschlüsselten
+// Pakete dürfen nicht vom Kill-Switch getroffen werden (der Fehler auf sys1 mit der Firewall-Regel
+// nach Benutzer). Statt eines Unbound-Benutzers sendet „nobody“. Braucht wireguard-tools und python3.
 //
 //	GOOS=linux go test -c -tags lab -o enginelab ./internal/engine && sudo ./enginelab -test.run UnboundKillSwitch -test.v
 package engine
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +23,6 @@ const (
 	ubLab   = "ublab"  // „Server“ (Container)
 	ubProv  = "ubprov" // „Internet“ mit Ausgangs-Anbieter
 	ubTable = "3061"
-	ubPrio  = "6361"
 	ubNoUID = 65534 // nobody
 )
 
@@ -42,6 +44,9 @@ func TestUnboundKillSwitch(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("nur als root")
 	}
+	if _, err := exec.LookPath("wg"); err != nil {
+		t.Skip("wireguard-tools fehlen")
+	}
 	cleanup := func() {
 		ubQuiet("ip", "netns", "del", ubLab)
 		ubQuiet("ip", "netns", "del", ubProv)
@@ -49,50 +54,69 @@ func TestUnboundKillSwitch(t *testing.T) {
 	cleanup()
 	t.Cleanup(cleanup)
 	in := func(ns string, args ...string) []string { return append([]string{"ip", "netns", "exec", ns}, args...) }
+	dir := t.TempDir()
+	_ = os.Chmod(dir, 0o777)
+
+	// Schlüssel für beide Tunnelenden
+	key := func(name string) (priv, pub string) {
+		priv = filepath.Join(dir, name+".key")
+		k := strings.TrimSpace(ubSh(t, "wg", "genkey"))
+		if err := os.WriteFile(priv, []byte(k+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := exec.Command("wg", "pubkey")
+		c.Stdin = strings.NewReader(k + "\n")
+		out, err := c.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return priv, strings.TrimSpace(string(out))
+	}
+	privA, pubA := key("a")
+	privB, pubB := key("b")
 
 	ubSh(t, "ip", "netns", "add", ubLab)
 	ubSh(t, "ip", "netns", "add", ubProv)
-	// Direktweg (eth0) und Ausgangstunnel (ex7) als zwei Verbindungen zum „Internet“
+	// Direktweg: eth0 (Server) ↔ up0 („Internet“); darüber läuft auch der WireGuard-Tunnel
 	ubSh(t, in(ubLab, "ip", "link", "add", "eth0", "type", "veth", "peer", "name", "up0")...)
-	ubSh(t, in(ubLab, "ip", "link", "add", "ex7", "type", "veth", "peer", "name", "exp")...)
 	ubSh(t, in(ubLab, "ip", "link", "set", "up0", "netns", ubProv)...)
-	ubSh(t, in(ubLab, "ip", "link", "set", "exp", "netns", ubProv)...)
+	ubSh(t, in(ubLab, "ip", "link", "add", "ex7", "type", "wireguard")...)
+	ubSh(t, in(ubProv, "ip", "link", "add", "exp", "type", "wireguard")...)
+
+	block4 := append([]string{"ip", "-4", "rule", "add", "priority", strconv.Itoa(labInst.blockPrio())}, strings.Fields(labInst.block())...)
+	block6 := append([]string{"ip", "-6", "rule", "add", "priority", strconv.Itoa(labInst.blockPrio())}, strings.Fields(labInst.block())...)
+	way := append([]string{"ip", "-4", "rule", "add", "priority", strconv.Itoa(labInst.prio())}, strings.Fields(labInst.rule())...)
 	for _, c := range [][]string{
-		{"ip", "link", "set", "lo", "up"}, {"ip", "link", "set", "eth0", "up"}, {"ip", "link", "set", "ex7", "up"},
-		{"ip", "addr", "add", "10.98.0.1/24", "dev", "eth0"}, {"ip", "addr", "add", "10.97.0.1/24", "dev", "ex7"},
+		{"ip", "link", "set", "lo", "up"}, {"ip", "link", "set", "eth0", "up"},
+		{"ip", "addr", "add", "10.98.0.1/24", "dev", "eth0"},
 		{"ip", "-6", "addr", "add", "fd99::1/64", "dev", "eth0", "nodad"},
 		{"ip", "route", "add", "default", "via", "10.98.0.2"}, {"ip", "-6", "route", "add", "default", "via", "fd99::2"},
-		{"sysctl", "-qw", "net.ipv4.conf.ex7.rp_filter=2"},
-		// Gruppe: Tabelle mit Weg über den Ausgang, Regel für den Benutzer der Instanz (wie syncUBRules)
-		append([]string{"ip", "-4", "rule", "add", "priority", ubPrio}, strings.Fields(labInst.rule())...),
-		{"ip", "route", "add", "default", "via", "10.97.0.2", "dev", "ex7", "table", ubTable},
+		{"wg", "set", "ex7", "private-key", privA, "listen-port", "51001",
+			"peer", pubB, "allowed-ips", "0.0.0.0/0", "endpoint", "10.98.0.2:51002"},
+		{"ip", "addr", "add", "10.97.0.1/32", "dev", "ex7"}, {"ip", "link", "set", "ex7", "up"},
+		// Gruppe wie syncUBRules: Sperren zuerst, dann der Weg; Tabelle der Gruppe über den Ausgang
+		block4, block6, way,
+		{"ip", "route", "add", "default", "dev", "ex7", "table", ubTable},
 	} {
 		ubSh(t, in(ubLab, c...)...)
 	}
 	for _, c := range [][]string{
-		{"ip", "link", "set", "lo", "up"}, {"ip", "link", "set", "up0", "up"}, {"ip", "link", "set", "exp", "up"},
-		{"ip", "addr", "add", "10.98.0.2/24", "dev", "up0"}, {"ip", "addr", "add", "10.97.0.2/24", "dev", "exp"},
+		{"ip", "link", "set", "lo", "up"}, {"ip", "link", "set", "up0", "up"},
+		{"ip", "addr", "add", "10.98.0.2/24", "dev", "up0"},
 		{"ip", "-6", "addr", "add", "fd99::2/64", "dev", "up0", "nodad"},
+		{"wg", "set", "exp", "private-key", privB, "listen-port", "51002", "peer", pubA, "allowed-ips", "10.97.0.1/32"},
+		{"ip", "addr", "add", "10.97.0.2/24", "dev", "exp"}, {"ip", "link", "set", "exp", "up"},
 		{"ip", "addr", "add", "198.51.100.53/32", "dev", "lo"}, {"ip", "-6", "addr", "add", "2001:db8::53/128", "dev", "lo"},
 	} {
 		ubSh(t, in(ubProv, c...)...)
 	}
-	// Firewall wie auf dem Server: Ausgang maskieren, dazu die Ketten für die Instanz
-	// Ohne Maskierung: Der Absender muss schon beim Senden die Adresse am Tunnel sein (ein echter
-	// Anbieter verwirft fremde Absender) – genau das ging auf sys1 mit der Umleitung per Markierung schief.
-	script := "table inet " + nftTable + " {\n" + ubNftChains([]ubInstance{labInst}) + "}\n"
-	cmd := exec.Command("ip", "netns", "exec", ubLab, "nft", "-f", "-")
-	cmd.Stdin = strings.NewReader(script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("nft: %v\n%s\n%s", err, out, script)
-	}
+	// Keine Maskierung und keine Firewall: Der Absender muss schon beim Senden die Adresse am Tunnel
+	// sein (ein echter Anbieter verwirft fremde Absender).
 
 	// Empfänger im „Internet“ und auf Loopback des Servers: schreiben die Absenderadresse in eine Datei
-	dir := t.TempDir()
-	_ = os.Chmod(dir, 0o777)
 	listen := func(ns, bind, file string) {
 		py := "import socket,sys\nfam=socket.AF_INET6 if ':' in sys.argv[1] else socket.AF_INET\ns=socket.socket(fam,socket.SOCK_DGRAM)\n" +
-			"s.bind((sys.argv[1],5353))\nwhile True:\n  d,a=s.recvfrom(100)\n  open(sys.argv[2],'a').write(a[0]+' '+d.decode()+'\\n')\n"
+			"s.bind((sys.argv[1],5353))\nwhile True:\n  d,a=s.recvfrom(100)\n  open(sys.argv[2],'a').write(a[0]+' '+d.decode().strip()+'\\n')\n"
 		c := exec.Command("ip", "netns", "exec", ns, "python3", "-c", py, bind, file)
 		if err := c.Start(); err != nil {
 			t.Fatal(err)
@@ -112,7 +136,7 @@ func TestUnboundKillSwitch(t *testing.T) {
 		}
 		args = append(args, "bash", "-c", "echo "+tag+" > /dev/udp/"+host+"/5353")
 		_ = exec.Command(args[0], args[1:]...).Run()
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(400 * time.Millisecond)
 	}
 	got := func(file, tag string) string {
 		b, _ := os.ReadFile(file)
@@ -123,14 +147,25 @@ func TestUnboundKillSwitch(t *testing.T) {
 		}
 		return ""
 	}
+	diag := func() string {
+		var b strings.Builder
+		for _, c := range [][]string{{"ip", "rule", "show"}, {"ip", "-6", "rule", "show"}, {"wg", "show"},
+			{"ip", "route", "get", "198.51.100.53", "uid", "65534"}} {
+			out, _ := exec.Command("ip", append([]string{"netns", "exec", ubLab}, c...)...).CombinedOutput()
+			b.WriteString(strings.Join(c, " ") + ":\n" + string(out))
+		}
+		return b.String()
+	}
 
-	// 1. Instanz → über den Ausgang (Absender = Adresse am Tunnel), Rest des Servers direkt
+	// Handshake anstoßen (wie die erste Anfrage der Instanz)
+	send(true, "198.51.100.53", "warm")
+	time.Sleep(time.Second)
+
+	// 1. Instanz → durch den Tunnel (Absender = Adresse am Tunnel), Rest des Servers direkt
 	send(true, "198.51.100.53", "inst")
 	send(false, "198.51.100.53", "root")
 	if src := got(inet4, "inst"); src != "10.97.0.1" {
-		out, _ := exec.Command("ip", "netns", "exec", ubLab, "nft", "list", "ruleset").CombinedOutput()
-		rt, _ := exec.Command("ip", "netns", "exec", ubLab, "ip", "route", "get", "198.51.100.53", "uid", "65534").CombinedOutput()
-		t.Errorf("Instanz nicht über den Ausgang: Absender %q\n%s\n%s", src, out, rt)
+		t.Errorf("Instanz nicht über den Ausgang: Absender %q\n%s", src, diag())
 	}
 	if src := got(inet4, "root"); src != "10.98.0.1" {
 		t.Errorf("übriger Verkehr nicht direkt: Absender %q", src)
@@ -149,23 +184,29 @@ func TestUnboundKillSwitch(t *testing.T) {
 	if got(inet6, "root6") == "" {
 		t.Error("IPv6 des Servers gesperrt")
 	}
-	// 4. Kill-Switch: Regel der Gruppe fehlt (Routing kaputt) → nichts geht direkt hinaus
-	ubSh(t, in(ubLab, "ip", "rule", "del", "priority", ubPrio)...)
+	// 4. Kill-Switch: Weg-Regel fehlt → Sperre greift, nichts geht direkt hinaus
+	ubSh(t, in(ubLab, "ip", "-4", "rule", "del", "priority", strconv.Itoa(labInst.prio()))...)
 	send(true, "198.51.100.53", "norule")
 	if src := got(inet4, "norule"); src != "" {
-		t.Errorf("Kill-Switch: Instanz ging ohne Gruppenregel hinaus (Absender %s)", src)
+		t.Errorf("Kill-Switch: Instanz ging ohne Weg-Regel hinaus (Absender %s)", src)
 	}
-	// 5. Ausgang gesperrt (on_fail=block → blackhole) → nichts
-	ubSh(t, in(ubLab, append([]string{"ip", "-4", "rule", "add", "priority", ubPrio}, strings.Fields(labInst.rule())...)...)...)
+	// 5. Tabelle der Gruppe leer (Ausgang weg) → Sperre statt Haupttabelle
+	ubSh(t, in(ubLab, way...)...)
+	ubSh(t, in(ubLab, "ip", "route", "flush", "table", ubTable)...)
+	send(true, "198.51.100.53", "empty")
+	if src := got(inet4, "empty"); src != "" {
+		t.Errorf("Kill-Switch: Instanz ging bei leerer Tabelle hinaus (Absender %s)", src)
+	}
+	// 6. Ausgang gesperrt (on_fail=block → blackhole) → nichts
 	ubSh(t, in(ubLab, "ip", "route", "replace", "blackhole", "default", "table", ubTable)...)
 	send(true, "198.51.100.53", "blocked")
 	if src := got(inet4, "blocked"); src != "" {
 		t.Errorf("gesperrter Ausgang: Instanz ging trotzdem hinaus (Absender %s)", src)
 	}
-	// 6. Ausgang wieder da → wieder über den Ausgang
-	ubSh(t, in(ubLab, "ip", "route", "replace", "default", "via", "10.97.0.2", "dev", "ex7", "table", ubTable)...)
+	// 7. Ausgang wieder da → wieder durch den Tunnel
+	ubSh(t, in(ubLab, "ip", "route", "replace", "default", "dev", "ex7", "table", ubTable)...)
 	send(true, "198.51.100.53", "back")
 	if src := got(inet4, "back"); src != "10.97.0.1" {
-		t.Errorf("nach dem Ausfall nicht wieder über den Ausgang: %q", src)
+		t.Errorf("nach dem Ausfall nicht wieder über den Ausgang: %q\n%s", src, diag())
 	}
 }

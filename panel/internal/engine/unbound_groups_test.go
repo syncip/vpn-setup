@@ -76,29 +76,26 @@ func TestUnboundGroups(t *testing.T) {
 	if strings.Contains(log, "systemctl enable vpn-unbound@") {
 		t.Error("Instanz darf nicht beim Booten von selbst starten")
 	}
-	if unit, _ := dry.ReadFile(ubgUnitPath); !strings.Contains(string(unit), "ExecStartPre=/usr/sbin/nft list chain inet vpnpanel vp_ubguard") ||
+	if unit, _ := dry.ReadFile(ubgUnitPath); !strings.Contains(string(unit), `grep -q "uidrange $$u-$$u blackhole"`) ||
 		strings.Contains(string(unit), "[Install]") {
-		t.Errorf("Wächter im Dienst fehlt:\n%s", unit)
+		t.Errorf("Wächter im Dienst fehlt: %s", unit)
 	}
 	uid := ubgDryUID + int(us.ID)
-	nft := dry.Inputs["nft"]
-	for _, want := range []string{
-		fmt.Sprintf(`meta skuid %d oifname "lo" accept`, uid),
-		fmt.Sprintf(`meta skuid %d meta nfproto ipv6 counter drop`, uid),
-		fmt.Sprintf(`meta skuid %d oifname != "ex*" counter drop`, uid),
-		"type filter hook postrouting priority filter",
-	} {
-		if !strings.Contains(nft, want) {
-			t.Errorf("nftables ohne %q", want)
+	// Kill-Switch per Routing: Weg über die Gruppe, dahinter die Sperre (auch IPv6), alles vor dem Start.
+	// Keine Firewall-Regel nach Benutzer – sie träfe auch die WireGuard-Pakete des Ausgangs.
+	if strings.Contains(dry.Inputs["nft"], "skuid") {
+		t.Error("Firewall-Regel nach Benutzer noch vorhanden")
+	}
+	way := fmt.Sprintf("ip -4 rule add priority %d uidrange %d-%d lookup 3002", ubgRulePrio+2, uid, uid)
+	for _, cmd := range []string{way,
+		fmt.Sprintf("ip -4 rule add priority %d uidrange %d-%d blackhole", ubgRulePrio+130, uid, uid),
+		fmt.Sprintf("ip -6 rule add priority %d uidrange %d-%d blackhole", ubgRulePrio+130, uid, uid)} {
+		if at := strings.Index(log, cmd); at < 0 || at > start {
+			t.Errorf("Routing-Regel fehlt oder kommt nach dem Start: %s", cmd)
 		}
 	}
-	if strings.Contains(nft, "vp_ubmark") {
-		t.Error("keine nachträgliche Umleitung per Markierung mehr")
-	}
-	// Weg über den Ausgang: Routing-Regel für den Benutzer der Instanz, gesetzt vor dem Start
-	ruleCmd := fmt.Sprintf("ip -4 rule add priority %d uidrange %d-%d lookup 3002", ubgRulePrio+2, uid, uid)
-	if at := strings.Index(log, ruleCmd); at < 0 || at > start {
-		t.Errorf("Routing-Regel fehlt oder kommt nach dem Start:\n%s", log)
+	if strings.Index(log, "uidrange "+fmt.Sprint(uid)+"-"+fmt.Sprint(uid)+" blackhole") > strings.Index(log, way) {
+		t.Error("Sperre muss vor dem Weg gesetzt werden")
 	}
 	if DNSServerName(addr) != "Unbound · USA" {
 		t.Errorf("Name: %q", DNSServerName(addr))

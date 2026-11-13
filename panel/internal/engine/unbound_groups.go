@@ -33,7 +33,7 @@ const (
 
 // Die Instanzen startet nur das Panel – erst nachdem die nftables-Regeln (Weg über den Ausgang,
 // Kill-Switch) geladen sind; nach einem Neustart des Servers also nicht vor dem Panel. Zusätzlich
-// verweigert der Dienst den Start, solange die Kill-Switch-Kette fehlt.
+// verweigert der Dienst den Start, solange die Sperr-Regeln (Kill-Switch) fehlen.
 const ubgUnit = `# Vom VPN-Panel geschrieben – Unbound für eine Ausgangsgruppe (%i). Wird nur vom Panel gestartet.
 [Unit]
 Description=Unbound für Ausgangsgruppe %i (VPN-Panel)
@@ -41,7 +41,7 @@ After=network-online.target vpnpanel.service
 
 [Service]
 Type=simple
-ExecStartPre=/usr/sbin/nft list chain inet ` + nftTable + ` vp_ubguard
+ExecStartPre=/bin/sh -c 'i=%i; u=$$(id -u "vpnub$${i#g}") && ip -4 rule show | grep -q "uidrange $$u-$$u blackhole" && ip -6 rule show | grep -q "uidrange $$u-$$u blackhole"'
 ExecStart=/usr/sbin/unbound -d -p -c /etc/unbound/vpnpanel-%i.conf
 Restart=always
 RestartSec=5
@@ -73,6 +73,13 @@ func (in ubInstance) rule() string {
 	return fmt.Sprintf("uidrange %d-%d lookup %d", in.UID, in.UID, exits.GroupTable(in.Slot))
 }
 func (in ubInstance) prio() int { return ubgRulePrio + in.Slot }
+
+// block: Sperr-Regel direkt hinter rule() – der Kill-Switch. Führt die Tabelle der Gruppe nirgends
+// hin (Regel fehlt, Tabelle leer), endet die Suche hier statt in der Haupttabelle; für IPv6 gilt nur
+// die Sperre. Bewusst per Routing und nicht per Firewall nach Benutzer: WireGuard behält beim
+// Verpacken den Absender-Benutzer, eine Firewall-Regel träfe auch die Tunnelpakete des Ausgangs.
+func (in ubInstance) block() string  { return fmt.Sprintf("uidrange %d-%d blackhole", in.UID, in.UID) }
+func (in ubInstance) blockPrio() int { return ubgRulePrio + 128 + in.Slot }
 
 type ubGroupState struct {
 	apply   sync.Mutex // Anwenden (aus Apply und aus der Selbstprüfung)
@@ -221,10 +228,16 @@ func (e *Engine) startUBInstances() {
 	var insts []ubInstance
 	var errs []string
 	// Routing-Regeln vor dem Start: ohne Regel verwirft der Kill-Switch alles (kein Leck)
+	rulesOK := true
 	if err := e.syncUBRules(e.ubPending()); err != nil {
 		errs = append(errs, err.Error())
+		rulesOK = false
 	}
 	for _, in := range e.ubPending() {
+		if !rulesOK { // ohne Sperr-Regeln läuft keine Instanz
+			_, _ = e.Sys.Run("systemctl", "stop", in.unit())
+			continue
+		}
 		act := "start"
 		if in.restart {
 			act = "restart"
@@ -365,43 +378,55 @@ func (e *Engine) ensureUBUser(user string, gid int64) (int, error) {
 	return uid, nil
 }
 
-// syncUBRules: Routing-Regeln (uidrange → Tabelle der Gruppe) für die Instanzen setzen, fremde
-// Regeln im eigenen Bereich entfernen. Bestehende richtige Regeln bleiben unangetastet (kein Flattern).
+// syncUBRules: Routing-Regeln der Instanzen setzen (Weg über die Gruppe, dahinter die Sperre; IPv6
+// nur Sperre), fremde Regeln im eigenen Bereich entfernen. Richtige Regeln bleiben unangetastet.
 func (e *Engine) syncUBRules(insts []ubInstance) error {
-	have := map[int]string{}
-	if !e.Sys.DryRun() {
-		out, err := e.Sys.Run("ip", "-4", "rule", "show")
-		if err != nil {
-			return fmt.Errorf("Routing-Regeln lesen: %s", strings.TrimSpace(out))
+	var errs []string
+	for _, fam := range []string{"-4", "-6"} {
+		want := map[int]string{}
+		for _, in := range insts {
+			if fam == "-4" {
+				want[in.prio()] = in.rule()
+			}
+			want[in.blockPrio()] = in.block()
 		}
-		for _, l := range strings.Split(out, "\n") {
-			p, rest, ok := strings.Cut(strings.TrimSpace(l), ":")
-			n, err := strconv.Atoi(p)
-			if !ok || err != nil || n <= ubgRulePrio || n > ubgRulePrio+127 {
+		have := map[int]string{}
+		if !e.Sys.DryRun() {
+			out, err := e.Sys.Run("ip", fam, "rule", "show")
+			if err != nil {
+				return fmt.Errorf("Routing-Regeln lesen: %s", strings.TrimSpace(out))
+			}
+			for _, l := range strings.Split(out, "\n") {
+				p, rest, ok := strings.Cut(strings.TrimSpace(l), ":")
+				n, err := strconv.Atoi(p)
+				if !ok || err != nil || n <= ubgRulePrio || n > ubgRulePrio+255 {
+					continue
+				}
+				have[n] = strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(rest), "from all ")), " ")
+			}
+		}
+		prios := make([]int, 0, len(want))
+		for p := range want {
+			prios = append(prios, p)
+		}
+		// Sperren zuerst (höhere Nummer): nie ein Augenblick mit Weg, aber ohne Sperre dahinter
+		sort.Sort(sort.Reverse(sort.IntSlice(prios)))
+		for _, p := range prios {
+			if have[p] == want[p] {
 				continue
 			}
-			have[n] = strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(rest), "from all ")), " ")
+			if _, ok := have[p]; ok {
+				_, _ = e.Sys.Run("ip", fam, "rule", "del", "priority", strconv.Itoa(p))
+			}
+			args := append([]string{fam, "rule", "add", "priority", strconv.Itoa(p)}, strings.Fields(want[p])...)
+			if out, err := e.Sys.Run("ip", args...); err != nil {
+				errs = append(errs, "Routing-Regel "+strconv.Itoa(p)+": "+strings.TrimSpace(out)+" "+err.Error())
+			}
 		}
-	}
-	want := map[int]bool{}
-	var errs []string
-	for _, in := range insts {
-		p := in.prio()
-		want[p] = true
-		if have[p] == in.rule() {
-			continue
-		}
-		if _, ok := have[p]; ok {
-			_, _ = e.Sys.Run("ip", "-4", "rule", "del", "priority", strconv.Itoa(p))
-		}
-		args := append([]string{"-4", "rule", "add", "priority", strconv.Itoa(p)}, strings.Fields(in.rule())...)
-		if out, err := e.Sys.Run("ip", args...); err != nil {
-			errs = append(errs, "Routing-Regel für „"+in.Name+"“: "+strings.TrimSpace(out))
-		}
-	}
-	for p := range have {
-		if !want[p] {
-			_, _ = e.Sys.Run("ip", "-4", "rule", "del", "priority", strconv.Itoa(p))
+		for p := range have {
+			if _, ok := want[p]; !ok {
+				_, _ = e.Sys.Run("ip", fam, "rule", "del", "priority", strconv.Itoa(p))
+			}
 		}
 	}
 	if len(errs) > 0 {
@@ -410,23 +435,10 @@ func (e *Engine) syncUBRules(insts []ubInstance) error {
 	return nil
 }
 
-// ubNftChains: Kill-Switch für die Instanzen. Der Weg über den Ausgang kommt aus der Routing-Regel
-// (syncUBRules); fehlt sie oder zeigt die Tabelle woandershin, geht nichts hinaus.
-func ubNftChains(insts []ubInstance) string {
-	if len(insts) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	// Wächter in postrouting: dort steht die endgültige Schnittstelle fest
-	b.WriteString("\tchain vp_ubguard {\n\t\ttype filter hook postrouting priority filter; policy accept;\n")
-	for _, in := range insts {
-		// nur Loopback (Antworten an den Panel-DNS) und die Tunnel der Ausgänge; sonst nichts hinaus
-		fmt.Fprintf(&b, "\t\tmeta skuid %d oifname \"lo\" accept\n\t\tmeta skuid %d meta nfproto ipv6 counter drop\n\t\tmeta skuid %d oifname != \"ex*\" counter drop\n",
-			in.UID, in.UID, in.UID)
-	}
-	b.WriteString("\t}\n")
-	return b.String()
-}
+// ubNftChains: früher Kill-Switch per Firewall (nach Benutzer). Entfällt: Diese Regeln verwarfen auch
+// die verschlüsselten WireGuard-Pakete der Ausgänge, die den Benutzer der Instanz behalten. Der
+// Kill-Switch liegt jetzt in den Routing-Regeln (syncUBRules).
+func ubNftChains(insts []ubInstance) string { return "" }
 
 // ---------- Selbstprüfung ----------
 
