@@ -24,7 +24,8 @@ import (
 
 const (
 	pcTable    = "vpnpanel_portcheck"
-	pcUDPLen   = 977 // ungewöhnliche Länge: so zählt nft nur die eigenen Prüfpakete
+	pcUDPLen   = 977        // ungewöhnliche Länge: so zählt nft nur die eigenen Prüfpakete
+	pcMarker   = "vpnpanel" // Kennung am Anfang jedes UDP-Prüfpakets (genau 8 Byte)
 	pcTimeout  = 5 * time.Second
 	pcUDPWait  = 2 * time.Second
 	pcUDPTries = 3
@@ -215,17 +216,17 @@ func pcScript(ports []HostPort, src netip.Addr) string {
 	fmt.Fprintf(&b, "table inet %s\ndelete table inet %s\ntable inet %s {\n", pcTable, pcTable, pcTable)
 	b.WriteString("\tchain pre {\n\t\ttype filter hook prerouting priority -350; policy accept;\n")
 	for i, p := range ports {
-		match := ""
-		if src.IsValid() {
-			match = "ip saddr " + src.String() + " "
-		}
+		var match string
 		if p.Proto == "udp" {
-			match += fmt.Sprintf("udp dport %d udp length %d", p.Port.Port, pcUDPLen+8)
+			// UDP an Länge und Kennung im Inhalt erkennen, nicht am Absender: Ausgänge wie Cloudflare WARP
+			// senden UDP über eine andere öffentliche Adresse als HTTPS (über das die Adresse ermittelt wird).
+			// Echte WireGuard-Datenpakete haben nie diese Länge (Nutzlast immer ein Vielfaches von 16).
+			match = fmt.Sprintf("udp dport %d udp length %d @th,64,64 0x%x", p.Port.Port, pcUDPLen+8, pcMarker)
 		} else {
-			match += fmt.Sprintf("tcp dport %d tcp flags & (syn|ack) == syn", p.Port.Port)
-		}
-		if !src.IsValid() && p.Proto != "udp" {
-			continue // TCP ohne bekannten Absender: Zähler wäre durch echte Clients verfälscht
+			if !src.IsValid() {
+				continue // TCP ohne bekannten Absender: Zähler wäre durch echte Clients verfälscht
+			}
+			match = fmt.Sprintf("ip saddr %s tcp dport %d tcp flags & (syn|ack) == syn", src, p.Port.Port)
 		}
 		fmt.Fprintf(&b, "\t\t%s counter comment %q\n", match, pcComment(i))
 	}
@@ -305,7 +306,7 @@ func (e *Engine) pcProbe(p HostPort, pub4 netip.Addr, mark uint32, i int) PortCh
 	}
 	defer c.Close()
 	payload := make([]byte, pcUDPLen)
-	copy(payload, "vpnpanel-portcheck "+pcComment(i))
+	copy(payload, pcMarker+"-portcheck "+pcComment(i))
 	for n := 0; n < pcUDPTries; n++ {
 		_, _ = c.Write(payload)
 		time.Sleep(pcUDPWait / pcUDPTries)

@@ -18,19 +18,23 @@ func TestPortCheckScript(t *testing.T) {
 	for _, want := range []string{
 		"table inet vpnpanel_portcheck\ndelete table inet vpnpanel_portcheck\n",
 		"type filter hook prerouting priority -350; policy accept;",
-		`ip saddr 203.0.113.7 udp dport 51820 udp length 985 counter comment "p0"`,
+		`udp dport 51820 udp length 985 @th,64,64 0x76706e70616e656c counter comment "p0"`,
 		`ip saddr 203.0.113.7 tcp dport 443 tcp flags & (syn|ack) == syn counter comment "p1"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Skript ohne %q:\n%s", want, s)
 		}
 	}
+	// UDP ohne Absender-Bedingung (WARP & Co. senden UDP über eine andere Adresse als HTTPS)
+	if strings.Contains(s, "saddr 203.0.113.7 udp") {
+		t.Errorf("UDP darf nicht am Absender hängen:\n%s", s)
+	}
 	if strings.Contains(s, "drop") || strings.Contains(s, "reject") {
 		t.Errorf("Prüftabelle darf keinen Verkehr verändern:\n%s", s)
 	}
 	// ohne bekannte Adresse des Ausgangs: TCP nicht zählen (echte Clients würden mitgezählt)
 	s = pcScript(ports, netip.Addr{})
-	if !strings.Contains(s, `udp dport 51820 udp length 985 counter comment "p0"`) || strings.Contains(s, "tcp dport") || strings.Contains(s, "saddr") {
+	if !strings.Contains(s, `udp dport 51820 udp length 985 @th,64,64 0x76706e70616e656c counter comment "p0"`) || strings.Contains(s, "tcp dport") || strings.Contains(s, "saddr") {
 		t.Errorf("ohne Absender:\n%s", s)
 	}
 }

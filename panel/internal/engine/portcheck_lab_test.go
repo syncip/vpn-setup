@@ -99,9 +99,17 @@ func TestPortCheckLab(t *testing.T) {
 		t.Error("TCP 1080 ohne Dienst angenommen")
 	}
 	_ = tcp("8080")
-	// UDP-Prüfpakete in der erkennbaren Länge, dazu ein fremdes Paket (andere Länge)
-	udp := "head -c " + strconv.Itoa(pcUDPLen) + " /dev/zero > /dev/udp/198.51.100.10/51820; head -c 100 /dev/zero > /dev/udp/198.51.100.10/51820"
-	ubSh(t, in(ext, "bash", "-c", udp)...)
+	// UDP: ein Prüfpaket von einer ANDEREN Adresse als der des Ausgangs (wie bei Cloudflare WARP), dazu
+	// fremde Pakete – richtige Länge ohne Kennung, Kennung mit falscher Länge. Nur das Prüfpaket zählt.
+	ubSh(t, in(ext, "ip", "addr", "add", "198.51.100.21/24", "dev", "inet0")...)
+	py := `import socket,sys
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+s.bind(('198.51.100.21',0))
+n=int(sys.argv[1])
+for d in [b'vpnpanel-portcheck p0'.ljust(n,b'\0'), bytes(n), b'vpnpanel'.ljust(100,b'\0')]:
+  s.sendto(d,('198.51.100.10',51820))
+`
+	ubSh(t, in(ext, "python3", "-c", py, strconv.Itoa(pcUDPLen))...)
 
 	out := ubSh(t, in(srv, "nft", "-j", "list", "table", "inet", pcTable)...)
 	n := parsePCCounters(out)
