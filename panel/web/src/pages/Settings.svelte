@@ -87,7 +87,9 @@
     const r = await run(() => post('/notify/test'));
     testing = false;
     if (r) {
-      toast(`Testmail an ${r.to} verschickt`);
+      // Antwort des Mailservers (mit Queue-ID): ab hier ist die Mail beim Mailserver – kommt sie nicht an,
+      // liegt es an Spamfilter oder Zustellung (Spam-Ordner, Protokoll des Mailanbieters)
+      toast(`Testmail an ${r.to} vom Mailserver angenommen${r.reply ? ` (${r.reply})` : ''} – nicht angekommen? Spam-Ordner prüfen`);
       loadNotify();
     }
   }

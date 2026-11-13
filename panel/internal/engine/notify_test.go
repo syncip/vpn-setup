@@ -12,7 +12,7 @@ func drain(e *Engine) {
 	for {
 		select {
 		case m := <-e.notif.ch:
-			_ = e.sendMail(m.to, m.subject, m.body)
+			_, _ = e.sendMail(m.to, m.subject, m.body)
 		default:
 			return
 		}

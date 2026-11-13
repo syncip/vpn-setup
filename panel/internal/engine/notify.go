@@ -182,7 +182,7 @@ func (e *Engine) RunNotify(stop <-chan struct{}, version string) {
 		case <-stop:
 			return
 		case m := <-n.ch:
-			if err := e.sendMail(m.to, m.subject, m.body); err != nil {
+			if _, err := e.sendMail(m.to, m.subject, m.body); err != nil {
 				e.logQuiet("warn", "E-Mail „"+m.subject+"“ nicht gesendet: "+err.Error())
 			}
 		case <-t.C:
@@ -303,14 +303,15 @@ func (e *Engine) smtpConfig() smtpConfig {
 		User: e.Setting("smtp_user"), Pass: e.secret("SMTP_PASSWORD"), From: e.Setting("mail_from"), HeloName: e.Setting("server_host")}
 }
 
-// sendMail verschickt eine Mail an alle Empfänger (im Testmodus nur gemerkt).
-func (e *Engine) sendMail(to []string, subject, body string) error {
+// sendMail verschickt eine Mail an alle Empfänger (im Testmodus nur gemerkt). reply ist die Antwort
+// des Mailservers auf die Nachricht (meist mit Queue-ID – damit lässt sie sich in dessen Protokoll finden).
+func (e *Engine) sendMail(to []string, subject, body string) (reply string, err error) {
 	if e.Sys.DryRun() {
 		e.notif.init()
 		e.notif.mu.Lock()
 		e.notif.sent = append(e.notif.sent, notifyMail{to: to, subject: subject, body: body})
 		e.notif.mu.Unlock()
-		return nil
+		return "250 Testmodus – nicht verschickt", nil
 	}
 	host := e.Setting("server_host")
 	if host == "" {
@@ -331,15 +332,24 @@ func (e *Engine) SentMails() []string {
 	return out
 }
 
-// SendTestMail schickt sofort eine Testmail (Fehler kommen direkt zurück).
-func (e *Engine) SendTestMail(to string) error {
+// SendTestMail schickt sofort eine Testmail (Fehler kommen direkt zurück) und trägt das Ergebnis samt
+// Antwort des Mailservers ins Ereignisprotokoll ein.
+func (e *Engine) SendTestMail(to string) (string, error) {
 	if e.Setting("smtp_host") == "" || e.Setting("mail_from") == "" {
-		return errors.New("Mailserver und Absender eintragen und speichern")
+		return "", errors.New("Mailserver und Absender eintragen und speichern")
 	}
 	if _, err := mail.ParseAddress(to); err != nil {
-		return errors.New("Empfänger-Adresse ungültig – in „Mein Konto“ eine E-Mail-Adresse eintragen")
+		return "", errors.New("Empfänger-Adresse ungültig – in „Mein Konto“ eine E-Mail-Adresse eintragen")
 	}
-	return e.sendMail([]string{to}, "Testmail", "Diese Testmail zeigt: Der Mailversand des VPN-Panels funktioniert.")
+	c := e.smtpConfig()
+	srv := fmt.Sprintf("%s:%d (%s)", c.Host, c.Port, c.Security)
+	reply, err := e.sendMail([]string{to}, "Testmail", "Diese Testmail zeigt: Der Mailversand des VPN-Panels funktioniert.")
+	if err != nil {
+		e.logQuiet("warn", fmt.Sprintf("Testmail an %s über %s fehlgeschlagen: %v", to, srv, err))
+		return "", err
+	}
+	e.logQuiet("info", fmt.Sprintf("Testmail an %s vom Mailserver %s angenommen: %s", to, srv, clip(reply, 200)))
+	return reply, nil
 }
 
 // SetSMTPPassword: Passwort des Mailservers (nur in secrets.env, leer = entfernen).
@@ -382,13 +392,13 @@ func buildMail(from string, to []string, subject, body string) []byte {
 
 // smtpSend: Versand mit STARTTLS (587), TLS (465) oder ohne Verschlüsselung (nur ohne Anmeldung
 // bzw. an einen lokalen Mailserver – net/smtp schickt Passwörter nie unverschlüsselt ins Netz).
-func smtpSend(c smtpConfig, to []string, subject, body string) error {
+func smtpSend(c smtpConfig, to []string, subject, body string) (string, error) {
 	from, err := mail.ParseAddress(c.From)
 	if err != nil {
-		return errors.New("Absender-Adresse ungültig")
+		return "", errors.New("Absender-Adresse ungültig")
 	}
 	if len(to) == 0 {
-		return errors.New("keine Empfänger")
+		return "", errors.New("keine Empfänger")
 	}
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 	d := &net.Dialer{Timeout: 15 * time.Second}
@@ -400,13 +410,13 @@ func smtpSend(c smtpConfig, to []string, subject, body string) error {
 		conn, err = d.Dial("tcp", addr)
 	}
 	if err != nil {
-		return fmt.Errorf("Verbindung zu %s: %w", addr, err)
+		return "", fmt.Errorf("Verbindung zu %s: %w", addr, err)
 	}
 	_ = conn.SetDeadline(time.Now().Add(smtpTimeout))
 	cl, err := smtp.NewClient(conn, c.Host)
 	if err != nil {
 		conn.Close()
-		return fmt.Errorf("Mailserver: %w", err)
+		return "", fmt.Errorf("Mailserver: %w", err)
 	}
 	defer cl.Close()
 	helo := c.HeloName
@@ -414,38 +424,55 @@ func smtpSend(c smtpConfig, to []string, subject, body string) error {
 		helo = "localhost"
 	}
 	if err := cl.Hello(helo); err != nil {
-		return fmt.Errorf("HELO: %w", err)
+		return "", fmt.Errorf("HELO: %w", err)
 	}
 	if c.Security == "starttls" {
 		if ok, _ := cl.Extension("STARTTLS"); !ok {
-			return errors.New("der Mailserver bietet kein STARTTLS an – Port 465 mit „TLS“ versuchen")
+			return "", errors.New("der Mailserver bietet kein STARTTLS an – Port 465 mit „TLS“ versuchen")
 		}
 		if err := cl.StartTLS(tlsCfg); err != nil {
-			return fmt.Errorf("STARTTLS: %w", err)
+			return "", fmt.Errorf("STARTTLS: %w", err)
 		}
 	}
 	if c.User != "" {
+		if c.Pass == "" {
+			return "", errors.New("Benutzername ist eingetragen, aber kein Passwort hinterlegt")
+		}
 		if err := cl.Auth(smtp.PlainAuth("", c.User, c.Pass, c.Host)); err != nil {
-			return fmt.Errorf("Anmeldung am Mailserver: %w", err)
+			return "", fmt.Errorf("Anmeldung am Mailserver: %w", err)
 		}
 	}
 	if err := cl.Mail(from.Address); err != nil {
-		return fmt.Errorf("Absender abgelehnt: %w", err)
+		return "", fmt.Errorf("Absender abgelehnt: %w", err)
 	}
 	for _, t := range to {
 		if err := cl.Rcpt(t); err != nil {
-			return fmt.Errorf("Empfänger %s abgelehnt: %w", t, err)
+			return "", fmt.Errorf("Empfänger %s abgelehnt: %w", t, err)
 		}
 	}
-	w, err := cl.Data()
+	// DATA von Hand: net/smtp verwirft sonst die Antwort auf die Nachricht (mit Queue-ID)
+	id, err := cl.Text.Cmd("DATA")
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, err := w.Write(buildMail(c.From, to, subject, body)); err != nil {
-		return err
+	cl.Text.StartResponse(id)
+	_, _, err = cl.Text.ReadResponse(354)
+	cl.Text.EndResponse(id)
+	if err != nil {
+		return "", fmt.Errorf("DATA: %w", err)
 	}
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("Mail abgelehnt: %w", err)
+	dw := cl.Text.DotWriter()
+	if _, err := dw.Write(buildMail(c.From, to, subject, body)); err != nil {
+		return "", err
 	}
-	return cl.Quit()
+	if err := dw.Close(); err != nil {
+		return "", err
+	}
+	code, msg, err := cl.Text.ReadResponse(250)
+	if err != nil {
+		return "", fmt.Errorf("Mail abgelehnt: %w", err)
+	}
+	reply := strings.ReplaceAll(fmt.Sprintf("%d %s", code, msg), "\n", " · ")
+	_ = cl.Quit() // angenommen ist angenommen – ein Fehler beim Abmelden ändert daran nichts
+	return reply, nil
 }

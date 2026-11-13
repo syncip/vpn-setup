@@ -383,6 +383,10 @@ Panel-Version, Fehler im Ereignisprotokoll, Anmeldung nach Fehlversuchen gesperr
 Anmeldung (Vorgabe aus), Sicherung erstellt oder eingespielt. Ausfälle werden nach zwei Prüfungen in Folge
 (etwa 2 Minuten) gemeldet, gleiche Meldungen höchstens alle 30 Minuten.
 
+Die Testmail zeigt die Antwort des Mailservers mit Queue-ID und steht im Ereignisprotokoll. Ist sie
+angenommen, kommt aber nicht an, liegt es an der Zustellung: Spam-Ordner prüfen und für die Absender-Domain
+SPF, DKIM und einen DMARC-Eintrag setzen (z. B. TXT `_dmarc` = `v=DMARC1; p=none; adkim=r; aspf=r`).
+
 ## Sicherung
 
 **Einstellungen → Sicherung** lädt eine verschlüsselte Sicherung herunter (`.vpnbak`: AES-256-GCM, Schlüssel

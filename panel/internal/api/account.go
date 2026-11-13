@@ -185,11 +185,13 @@ func (a *API) notifyTest(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "In „Mein Konto“ zuerst eine E-Mail-Adresse eintragen")
 		return
 	}
-	if err := a.E.SendTestMail(adm.Email); err != nil {
-		errJSON(w, http.StatusBadGateway, err.Error())
+	reply, err := a.E.SendTestMail(adm.Email)
+	if err != nil {
+		// 422 statt 502: Cloudflare ersetzt 5xx-Antworten sonst womöglich durch eine eigene Fehlerseite
+		errJSON(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "to": adm.Email})
+	writeJSON(w, map[string]any{"ok": true, "to": adm.Email, "reply": reply})
 }
 
 // ---------- Sicherung ----------
