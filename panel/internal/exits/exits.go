@@ -66,6 +66,9 @@ func GroupMark(slot int) uint32 { return uint32(slot) << 24 }
 func GroupTable(slot int) int   { return groupTable + slot }
 func probeMark(slot int) uint32 { return uint32(64+slot) << 24 }
 
+// ProbeMark: Markierung, mit der Verkehr direkt über einen Ausgang geht (unabhängig von Gruppen).
+func ProbeMark(slot int) uint32 { return probeMark(slot) }
+
 // IfName: Schnittstelle eines Ausgangs.
 func IfName(id int64) string { return fmt.Sprintf("ex%d", id) }
 

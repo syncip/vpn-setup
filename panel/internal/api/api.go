@@ -158,6 +158,8 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("GET /api/system", a.auth(a.system))
 	api.HandleFunc("POST /api/system/apply", a.auth(a.applyNow))
 	api.HandleFunc("POST /api/system/collect", a.auth(a.collectNow))
+	api.HandleFunc("GET /api/system/portcheck", a.auth(a.portCheckLast))
+	api.HandleFunc("POST /api/system/portcheck", a.auth(a.portCheck))
 	api.HandleFunc("GET /api/events", a.auth(a.events))
 	api.HandleFunc("GET /api/traffic", a.auth(a.traffic))
 	api.HandleFunc("GET /api/live", a.auth(a.live))

@@ -1220,6 +1220,20 @@ func (a *API) applyNow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// portCheck: Portweiterleitungen von außen prüfen (über einen Ausgang, dauert einige Sekunden).
+func (a *API) portCheck(w http.ResponseWriter, r *http.Request) {
+	res, err := a.E.CheckPorts()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, res)
+}
+
+func (a *API) portCheckLast(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"last": engine.LastPortCheck()})
+}
+
 func (a *API) collectNow(w http.ResponseWriter, r *http.Request) {
 	if err := a.E.Collect(); err != nil {
 		fail(w, err)

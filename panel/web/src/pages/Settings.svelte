@@ -174,7 +174,26 @@
   let sys = $state(null);
   async function loadSystem() {
     sys = await get('/system');
+    if (!pc) pc = (await get('/system/portcheck').catch(() => ({}))).last || null;
   }
+  // Portweiterleitungen von außen prüfen (über einen Ausgang)
+  let pc = $state(null);
+  let pcBusy = $state(false);
+  let pcError = $state('');
+  async function checkPorts() {
+    pcBusy = true;
+    pcError = '';
+    try {
+      pc = await post('/system/portcheck');
+    } catch (e) {
+      pcError = e.message;
+    }
+    pcBusy = false;
+  }
+  const pcKey = (p) => `${p.server}|${p.proto}|${p.port}`;
+  const pcFor = (p, fam) => pc?.items?.find((i) => i.family === fam && pcKey(i) === pcKey(p));
+  const pcLabel = { ok: 'erreichbar', arrived: 'kein Dienst', missing: 'kommt nicht an', skipped: 'nicht prüfbar' };
+  const pcClass = { ok: 'ok', arrived: 'warn', missing: 'bad', skipped: 'muted' };
   async function applyNow() {
     if (await run(() => post('/system/apply'), 'Konfiguration angewendet')) loadSystem();
   }
@@ -451,12 +470,37 @@ systemctl restart vpnpanel</pre>
         </div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Portweiterleitungen auf dem Host <Info title="Firewall-Regeln für den Proxmox-Host" wide><PortHelp ports={sys.ports} /></Info></h3></div>
+        <div class="card-head">
+          <h3>Portweiterleitungen auf dem Host <Info title="Firewall-Regeln für den Proxmox-Host" wide><PortHelp ports={sys.ports} /></Info></h3>
+          <span class="row" style="gap:6px">
+            <button class="btn sm" onclick={checkPorts} disabled={pcBusy || !sys.ports.length} title="Von außen prüfen, ob die Ports ankommen"><Icon name="refresh" size={14} /> {pcBusy ? 'Prüfe …' : 'Prüfen'}</button>
+          </span>
+        </div>
         <div class="card-pad stack-sm">
+          {#if pcError}<div class="notice bad small">{pcError}</div>{/if}
+          {#if !pc && !pcError}
+            <div class="small muted">„Prüfen“ spricht die öffentliche Adresse über einen verbundenen Ausgang (externes VPN) an – wie ein fremdes
+              Gerät aus dem Internet, ohne fremden Prüfdienst. UDP gilt als erreichbar, wenn das Prüfpaket im Container ankommt.
+              IPv6 lässt sich so nicht prüfen (Ausgänge nur IPv4), bei Portbereichen zählt der erste Port.</div>
+          {/if}
+          {#if pc}
+            <div class="small muted">
+              Geprüft {date(pc.at, true)} über Ausgang „{pc.via}“{pc.via_ip ? ` (${pc.via_ip})` : ''} an {pc.addr4}{#if pc.dry_run}{' · '}<span class="badge warn">Testmodus – nur simuliert</span>{/if}
+            </div>
+          {/if}
           <table class="table">
             <tbody>
               {#each sys.ports as p}
-                <tr><td><span class="badge">{p.proto.toUpperCase()} {p.port}{p.to ? `–${p.to}` : ''}</span></td><td class="small">{p.server}</td><td class="small muted">{p.note}</td></tr>
+                {@const r4 = pcFor(p, 'IPv4')}
+                {@const r6 = pcFor(p, 'IPv6')}
+                <tr>
+                  <td>
+                    <span class="badge">{p.proto.toUpperCase()} {p.port}{p.to ? `–${p.to}` : ''}</span>
+                    {#if r4}<div class="row" style="gap:4px;margin-top:4px;flex-wrap:wrap"><span class="badge {pcClass[r4.state]}" title={r4.detail}>{pc.addr6 ? 'IPv4 ' : ''}{pcLabel[r4.state]}</span>{#if r6 && pc.addr6}<span class="badge {pcClass[r6.state]}" title={r6.detail}>IPv6 {pcLabel[r6.state]}</span>{/if}</div>{/if}
+                  </td>
+                  <td class="small">{p.server}</td><td class="small muted">{p.note}</td>
+                </tr>
+                {#if r4 && r4.state !== 'ok'}<tr><td colspan="3" class="small" style="padding-top:0;color:var(--{r4.state === 'missing' ? 'bad' : 'warn'})">{r4.detail}</td></tr>{/if}
               {/each}
             </tbody>
           </table>

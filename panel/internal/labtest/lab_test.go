@@ -390,11 +390,17 @@ func TestLab(t *testing.T) {
 	ovpnSrv = startServer()
 	// OpenVPN wartet zwischen Verbindungsversuchen zunehmend länger – auf GitHub-Runnern über 60 s
 	back := time.Now()
-	waitFor(t, "Neuverbindung", 150*time.Second, func() bool {
-		m.Check(env, xs, gs, 0)
-		_, gst = m.Status()
-		return gst[groupID].Active == exitID
-	})
+	for !func() bool { m.Check(env, xs, gs, 0); _, gst = m.Status(); return gst[groupID].Active == exitID }() {
+		if time.Since(back) > 150*time.Second {
+			srvLog, _ := os.ReadFile(filepath.Join(dir, "server.log"))
+			if len(srvLog) > 4000 {
+				srvLog = srvLog[len(srvLog)-4000:]
+			}
+			_, xst := m.Status()
+			t.Fatalf("Zeitüberschreitung: Neuverbindung\nAusgang: %+v\nServer-Log:\n%s", xst[exitID], srvLog)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	t.Logf("Neuverbindung nach %s", time.Since(back).Round(time.Second))
 	if body, err := get(viaGroup, "http://"+target+"/", true); err != nil || !strings.HasPrefix(body, "src=10.98.0.") {
 		t.Fatalf("nach Neuverbindung: %q %v", body, err)

@@ -404,6 +404,22 @@ vpn backup restore /root/panel.vpnbak && systemctl restart vpnpanel
 Ohne `VPNPANEL_BACKUP_PASSWORD` fragt `vpn backup` das Passwort ab. Eine Sicherung einer neueren
 Panel-Version lässt sich erst nach einem Update einspielen.
 
+## Portweiterleitungen prüfen
+
+**Einstellungen → System → Portweiterleitungen auf dem Host → Prüfen** testet jeden Port der aktiven Server
+von außen, ohne fremden Prüfdienst: Das Panel spricht die eigene öffentliche Adresse (aus der Server-Adresse)
+über einen verbundenen **Ausgang** an. Die Pakete kommen so wie von einem fremden Gerät aus dem Internet und
+laufen über die Weiterleitung auf dem Host. Eine vorübergehende nft-Tabelle `vpnpanel_portcheck` zählt nur
+mit (verändert keinen Verkehr) und wird danach entfernt.
+
+- **erreichbar** – TCP: Verbindung angenommen; UDP: das Prüfpaket kam im Container an (WireGuard und
+  Hysteria2 antworten auf fremde Pakete absichtlich nicht).
+- **kein Dienst** – die Pakete kommen an, aber kein Dienst nimmt an.
+- **kommt nicht an** – Weiterleitung auf dem Host fehlt oder eine Firewall blockiert.
+
+Voraussetzung ist mindestens ein verbundener Ausgang. IPv6 lässt sich so nicht prüfen (Ausgänge nur IPv4),
+bei Portbereichen (Port-Hopping) wird der erste Port geprüft.
+
 ## Version und Updates
 
 Die Seitenleiste und die Übersicht zeigen die Version. Das Panel fragt alle 12 Stunden bei GitHub nach
