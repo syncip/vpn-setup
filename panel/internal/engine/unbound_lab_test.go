@@ -58,22 +58,27 @@ func TestUnboundKillSwitch(t *testing.T) {
 	_ = os.Chmod(dir, 0o777)
 
 	// Schlüssel für beide Tunnelenden
-	key := func(name string) (priv, pub string) {
-		priv = filepath.Join(dir, name+".key")
-		k := strings.TrimSpace(ubSh(t, "wg", "genkey"))
-		if err := os.WriteFile(priv, []byte(k+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	// Privater Schlüssel per stdin (/dev/stdin): auf GitHub-Runnern konnte wg die Datei unter /tmp nicht öffnen
+	key := func() (priv, pub string) {
+		priv = strings.TrimSpace(ubSh(t, "wg", "genkey"))
 		c := exec.Command("wg", "pubkey")
-		c.Stdin = strings.NewReader(k + "\n")
+		c.Stdin = strings.NewReader(priv + "\n")
 		out, err := c.Output()
 		if err != nil {
 			t.Fatal(err)
 		}
 		return priv, strings.TrimSpace(string(out))
 	}
-	privA, pubA := key("a")
-	privB, pubB := key("b")
+	wgSet := func(ns, priv string, args ...string) {
+		t.Helper()
+		c := exec.Command("ip", append([]string{"netns", "exec", ns, "wg", "set"}, args...)...)
+		c.Stdin = strings.NewReader(priv + "\n")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("wg set %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	privA, pubA := key()
+	privB, pubB := key()
 
 	ubSh(t, "ip", "netns", "add", ubLab)
 	ubSh(t, "ip", "netns", "add", ubProv)
@@ -83,6 +88,9 @@ func TestUnboundKillSwitch(t *testing.T) {
 	ubSh(t, in(ubLab, "ip", "link", "add", "ex7", "type", "wireguard")...)
 	ubSh(t, in(ubProv, "ip", "link", "add", "exp", "type", "wireguard")...)
 
+	wgSet(ubLab, privA, "ex7", "private-key", "/dev/stdin", "listen-port", "51001",
+		"peer", pubB, "allowed-ips", "0.0.0.0/0", "endpoint", "10.98.0.2:51002")
+	wgSet(ubProv, privB, "exp", "private-key", "/dev/stdin", "listen-port", "51002", "peer", pubA, "allowed-ips", "10.97.0.1/32")
 	block4 := append([]string{"ip", "-4", "rule", "add", "priority", strconv.Itoa(labInst.blockPrio())}, strings.Fields(labInst.block())...)
 	block6 := append([]string{"ip", "-6", "rule", "add", "priority", strconv.Itoa(labInst.blockPrio())}, strings.Fields(labInst.block())...)
 	way := append([]string{"ip", "-4", "rule", "add", "priority", strconv.Itoa(labInst.prio())}, strings.Fields(labInst.rule())...)
@@ -91,8 +99,6 @@ func TestUnboundKillSwitch(t *testing.T) {
 		{"ip", "addr", "add", "10.98.0.1/24", "dev", "eth0"},
 		{"ip", "-6", "addr", "add", "fd99::1/64", "dev", "eth0", "nodad"},
 		{"ip", "route", "add", "default", "via", "10.98.0.2"}, {"ip", "-6", "route", "add", "default", "via", "fd99::2"},
-		{"wg", "set", "ex7", "private-key", privA, "listen-port", "51001",
-			"peer", pubB, "allowed-ips", "0.0.0.0/0", "endpoint", "10.98.0.2:51002"},
 		{"ip", "addr", "add", "10.97.0.1/32", "dev", "ex7"}, {"ip", "link", "set", "ex7", "up"},
 		// Gruppe wie syncUBRules: Sperren zuerst, dann der Weg; Tabelle der Gruppe über den Ausgang
 		block4, block6, way,
@@ -104,7 +110,6 @@ func TestUnboundKillSwitch(t *testing.T) {
 		{"ip", "link", "set", "lo", "up"}, {"ip", "link", "set", "up0", "up"},
 		{"ip", "addr", "add", "10.98.0.2/24", "dev", "up0"},
 		{"ip", "-6", "addr", "add", "fd99::2/64", "dev", "up0", "nodad"},
-		{"wg", "set", "exp", "private-key", privB, "listen-port", "51002", "peer", pubA, "allowed-ips", "10.97.0.1/32"},
 		{"ip", "addr", "add", "10.97.0.2/24", "dev", "exp"}, {"ip", "link", "set", "exp", "up"},
 		{"ip", "addr", "add", "198.51.100.53/32", "dev", "lo"}, {"ip", "-6", "addr", "add", "2001:db8::53/128", "dev", "lo"},
 	} {

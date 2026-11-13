@@ -961,6 +961,11 @@ func dnsExchange(query []byte, servers []string, mark uint32, tcp bool) []byte {
 
 // exchangeOne: eine Anfrage an einen Server (nil = keine passende Antwort).
 func exchangeOne(query []byte, srv string, mark uint32, tcp bool, timeout time.Duration) []byte {
+	// Lokale Ziele (Unbound der Gruppe auf 127.0.0.1) brauchen keine Markierung: die Tabelle „local“
+	// greift ohnehin zuerst, und ohne CAP_NET_ADMIN schlüge SO_MARK fehl.
+	if ap, err := netip.ParseAddrPort(srv); err == nil && ap.Addr().IsLoopback() {
+		mark = 0
+	}
 	d := exits.Dialer(mark)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	network := "udp"

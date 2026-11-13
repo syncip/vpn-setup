@@ -64,6 +64,7 @@ jobs:
       - name: Tests mit Race-Detektor
         run: go test -race -count=1 ./...
       - name: govulncheck
+        if: ${{ !cancelled() }} # auch dann, wenn ein Test fehlschlägt
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: Release-Build (statisch)
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /tmp/vpnpanel .
@@ -87,6 +88,9 @@ jobs:
           cache-dependency-path: panel/go.sum
       - name: Werkzeuge
         run: sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools nftables iptables iproute2 conntrack openvpn python3
+      - name: Weiterleitung erlauben
+        # Docker auf dem Runner setzt FORWARD auf DROP – die Labornetze leiten über den Runner weiter
+        run: sudo iptables -P FORWARD ACCEPT && sudo ip6tables -P FORWARD ACCEPT
       - name: Testprogramme bauen
         run: |
           go test -c -tags lab -o /tmp/enginelab ./internal/engine
@@ -94,4 +98,5 @@ jobs:
       - name: Labortests Engine (Unbound-Kill-Switch, nftables)
         run: sudo /tmp/enginelab -test.v -test.run 'Lab|KillSwitch'
       - name: Labortests Ausgänge
+        if: ${{ !cancelled() }}
         run: sudo /tmp/labtest -test.v
