@@ -33,6 +33,12 @@ const usage = `vpn – Verwaltung (gleiche Daten wie das Webinterface)
   vpn admin passwd <name>  Passwort eines Administrators neu setzen
   vpn admin 2fa-off <name> 2FA eines Administrators abschalten
   vpn admin add <name>     Administrator anlegen
+  vpn backup create <datei> [--ohne-protokolle]
+                           Verschlüsselte Sicherung schreiben (Passwort wird abgefragt
+                           oder aus VPNPANEL_BACKUP_PASSWORD gelesen)
+  vpn backup restore <datei>
+                           Sicherung prüfen und beim nächsten Start einspielen
+                           (danach: systemctl restart vpnpanel)
   vpn serve                Dienst starten (macht systemd)
 `
 
@@ -122,6 +128,8 @@ func cli(args []string) {
 		}
 	case "admin":
 		cmdAdmin(e, arg(1), arg(2))
+	case "backup":
+		cmdBackup(e, o, rest[1:])
 	case "import":
 		ok, err := e.ImportLegacy(o.legacy)
 		if err != nil {

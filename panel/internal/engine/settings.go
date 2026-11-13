@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"net/mail"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -128,6 +129,55 @@ func ValidateSetting(k, v string) (string, error) {
 			}
 			v = CandidatesText(list)
 		}
+	case "mail_enabled":
+		if v != "1" {
+			v = "0"
+		}
+	case "smtp_host":
+		v = strings.ToLower(strings.TrimSuffix(v, "."))
+		if v != "" && (!hostSettingRe.MatchString(v) || strings.HasPrefix(v, "-") || len(v) > 253) {
+			if _, err := netip.ParseAddr(v); err != nil {
+				return "", fmt.Errorf("Mailserver: Hostname oder IP-Adresse")
+			}
+		}
+	case "smtp_port":
+		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("Mailserver-Port: 1 bis 65535")
+		}
+	case "smtp_security":
+		if v != "starttls" && v != "tls" && v != "none" {
+			return "", fmt.Errorf("Verschlüsselung: starttls, tls oder none")
+		}
+	case "smtp_user":
+		if len(v) > 200 || strings.IndexFunc(v, unicode.IsControl) >= 0 {
+			return "", fmt.Errorf("Benutzername des Mailservers ungültig")
+		}
+	case "mail_from":
+		if v != "" {
+			// so speichern, wie eingegeben; kodiert wird erst beim Versand (buildMail)
+			if _, err := mail.ParseAddress(v); err != nil || len(v) > 254 || strings.IndexFunc(v, unicode.IsControl) >= 0 {
+				return "", fmt.Errorf("Absender: gültige E-Mail-Adresse, z. B. panel@example.org oder „VPN-Panel <panel@example.org>“")
+			}
+		}
+	case "notify_events":
+		known := map[string]bool{}
+		for _, ev := range NotifyEvents {
+			known[ev.Key] = true
+		}
+		var keep []string
+		seen := map[string]bool{}
+		for _, k := range strings.Split(v, ",") {
+			k = strings.TrimSpace(k)
+			if k == "" || seen[k] {
+				continue
+			}
+			if !known[k] {
+				return "", fmt.Errorf("unbekannter Anlass %q", k)
+			}
+			seen[k] = true
+			keep = append(keep, k)
+		}
+		v = strings.Join(keep, ",")
 	case "dns_upstream":
 		list, err := ParseUpstream(v)
 		if err != nil {

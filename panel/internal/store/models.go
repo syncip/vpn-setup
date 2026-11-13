@@ -95,7 +95,21 @@ type Admin struct {
 	PassHash    string `json:"-"`
 	TOTPSecret  string `json:"-"`
 	TOTPEnabled bool   `json:"totp_enabled"`
+	Email       string `json:"email"`
+	Notify      bool   `json:"notify"` // Benachrichtigungen per E-Mail an diese Adresse
 	Created     int64  `json:"created"`
+}
+
+// LoginEntry: ein Anmeldeversuch am Panel.
+type LoginEntry struct {
+	ID       int64  `json:"id"`
+	TS       int64  `json:"ts"`
+	Username string `json:"username"`
+	AdminID  int64  `json:"admin_id"`
+	IP       string `json:"ip"`
+	Agent    string `json:"agent"`
+	OK       bool   `json:"ok"`
+	Reason   string `json:"reason"`
 }
 
 type Session struct {

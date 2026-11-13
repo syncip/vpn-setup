@@ -9,6 +9,7 @@
   import Servers from './pages/Servers.svelte';
   import Plans from './pages/Plans.svelte';
   import Settings from './pages/Settings.svelte';
+  import Account from './pages/Account.svelte';
   import Proxy from './pages/Proxy.svelte';
   import IPLists from './pages/IPLists.svelte';
   import DNS from './pages/DNS.svelte';
@@ -100,8 +101,10 @@
       <div class="side-foot">
         {#if meta.dry_run}<div class="badge warn" style="margin:0 8px 10px;height:auto;padding:4px 8px;white-space:normal">Testmodus – keine Systemänderungen</div>{/if}
         <div class="me">
-          <span class="avatar">{session.user.username.slice(0, 1).toUpperCase()}</span>
-          <span class="grow ellipsis">{session.user.username}</span>
+          <a class="me-link grow" href="#/account" class:active={section === '/account'} title="Mein Konto">
+            <span class="avatar">{session.user.username.slice(0, 1).toUpperCase()}</span>
+            <span class="ellipsis">{session.user.username}</span>
+          </a>
           <button class="icon-btn" onclick={toggleTheme} title="Hell/Dunkel"><Icon name="moon" size={16} /></button>
           <button class="icon-btn" onclick={logout} title="Abmelden"><Icon name="logout" size={16} /></button>
         </div>
@@ -131,6 +134,8 @@
         <Plans />
       {:else if section === '/settings'}
         <Settings tab={parts[1] || 'general'} />
+      {:else if section === '/account'}
+        <Account />
       {:else}
         <div class="empty"><h3>Seite nicht gefunden</h3><button class="btn" onclick={() => go('/')}>Zur Übersicht</button></div>
       {/if}
@@ -235,6 +240,20 @@
     gap: 9px;
     padding: 6px 8px;
     color: #fff;
+  }
+  .me-link {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    color: #fff;
+    border-radius: 8px;
+    padding: 2px 4px;
+    margin: -2px -4px;
+  }
+  .me-link:hover,
+  .me-link.active {
+    background: var(--sidebar-hover);
   }
   .avatar {
     width: 28px;

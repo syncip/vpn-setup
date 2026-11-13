@@ -23,6 +23,7 @@ import (
 	proxyproto "github.com/pires/go-proxyproto"
 
 	"vpnpanel/internal/api"
+	"vpnpanel/internal/backup"
 	"vpnpanel/internal/engine"
 	_ "vpnpanel/internal/proto/hysteria2"
 	_ "vpnpanel/internal/proto/openvpn"
@@ -36,7 +37,7 @@ import (
 )
 
 // version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
-var version = "0.14.3"
+var version = "0.15.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -109,11 +110,21 @@ func main() {
 
 func serve(args []string) {
 	o, _ := parseOpts(args)
+	// Abgelegte Wiederherstellung einspielen, bevor die Datenbank geöffnet wird
+	if bak, err := backup.ApplyPending(o.dataDir); err != nil {
+		log.Fatalf("Sicherung einspielen: %v (abgelegte Dateien in %s)", err, filepath.Join(o.dataDir, backup.PendingDir))
+	} else if bak != "" {
+		log.Printf("Sicherung eingespielt, bisherige Dateien liegen in %s", bak)
+		restoredFrom = bak
+	}
 	e, err := open(o)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer e.St.Close()
+	if restoredFrom != "" {
+		e.Log("warn", "Sicherung eingespielt – bisherige Dateien liegen in "+restoredFrom)
+	}
 
 	if !o.dev {
 		if ok, err := e.ImportLegacy(o.legacy); err != nil {
@@ -155,12 +166,20 @@ func serve(args []string) {
 	go e.RunExits(stop)
 	go e.RunLists(stop)
 	go e.RunUnbound(stop)
+	go e.RunNotify(stop, version)
 	if o.demo && o.dev {
 		go e.RunDemoDNSLive(stop)
 	}
 
 	secure := o.cert != "" || !o.dev
 	a := api.New(e, webui.FS(), secure, version)
+	restart := make(chan struct{}, 1)
+	a.Restart = func() {
+		select {
+		case restart <- struct{}{}:
+		default:
+		}
+	}
 	srv := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 
@@ -232,8 +251,15 @@ func serve(args []string) {
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	log.Printf("Beende …")
+	restarting := false
+	select {
+	case <-sig:
+		log.Printf("Beende …")
+	case <-restart:
+		// Exit-Code ≠ 0: systemd (Restart=on-failure) startet den Dienst neu und spielt die Sicherung ein
+		log.Printf("Neustart zum Einspielen der Sicherung …")
+		restarting = true
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
@@ -245,7 +271,14 @@ func serve(args []string) {
 	}
 	close(stop)
 	<-done
+	if restarting {
+		_ = e.St.Close()
+		os.Exit(3)
+	}
 }
+
+// restoredFrom: Ordner mit den Dateien vor dem Einspielen einer Sicherung (nur für die Meldung).
+var restoredFrom string
 
 // ensureAdmin legt beim ersten Start einen Administrator mit Zufallspasswort an.
 func ensureAdmin(e *engine.Engine, o *opts) {

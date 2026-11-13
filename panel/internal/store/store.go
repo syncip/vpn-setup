@@ -78,7 +78,16 @@ var migrations = []string{
 	`ALTER TABLE dns_log ADD COLUMN upstream TEXT NOT NULL DEFAULT '';`,
 	// DNS-Protokoll: Weg von Anfragen ohne VPN (dns = Port 53, doh, dot; „-addr“ = ohne Kennung)
 	`ALTER TABLE dns_log ADD COLUMN transport TEXT NOT NULL DEFAULT '';`,
+	// Konto: E-Mail und Benachrichtigungen je Administrator, Anmeldeprotokoll
+	`ALTER TABLE admins ADD COLUMN email TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE admins ADD COLUMN notify INTEGER NOT NULL DEFAULT 0;
+	 CREATE TABLE login_log (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, username TEXT NOT NULL DEFAULT '', admin_id INTEGER NOT NULL DEFAULT 0,
+	   ip TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '', ok INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '');
+	 CREATE INDEX login_log_ts ON login_log(ts);`,
 }
+
+// SchemaVersion: Stand der Datenbank, den dieses Programm kennt (für die Prüfung von Sicherungen).
+func SchemaVersion() int { return len(migrations) }
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`); err != nil {
@@ -647,7 +656,7 @@ func (s *Store) Events(limit int, level string) ([]*Event, error) {
 // ---------- Admins & Sitzungen ----------
 
 func (s *Store) Admins() ([]*Admin, error) {
-	rows, err := s.db.Query(`SELECT id, username, pass_hash, totp_secret, totp_enabled, created FROM admins ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, username, pass_hash, totp_secret, totp_enabled, email, notify, created FROM admins ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -655,11 +664,11 @@ func (s *Store) Admins() ([]*Admin, error) {
 	var out []*Admin
 	for rows.Next() {
 		var a Admin
-		var te int
-		if err := rows.Scan(&a.ID, &a.Username, &a.PassHash, &a.TOTPSecret, &te, &a.Created); err != nil {
+		var te, nt int
+		if err := rows.Scan(&a.ID, &a.Username, &a.PassHash, &a.TOTPSecret, &te, &a.Email, &nt, &a.Created); err != nil {
 			return nil, err
 		}
-		a.TOTPEnabled = te == 1
+		a.TOTPEnabled, a.Notify = te == 1, nt == 1
 		out = append(out, &a)
 	}
 	return out, rows.Err()
@@ -667,13 +676,13 @@ func (s *Store) Admins() ([]*Admin, error) {
 
 func (s *Store) adminWhere(where string, arg any) (*Admin, error) {
 	var a Admin
-	var te int
-	err := s.db.QueryRow(`SELECT id, username, pass_hash, totp_secret, totp_enabled, created FROM admins WHERE `+where, arg).
-		Scan(&a.ID, &a.Username, &a.PassHash, &a.TOTPSecret, &te, &a.Created)
+	var te, nt int
+	err := s.db.QueryRow(`SELECT id, username, pass_hash, totp_secret, totp_enabled, email, notify, created FROM admins WHERE `+where, arg).
+		Scan(&a.ID, &a.Username, &a.PassHash, &a.TOTPSecret, &te, &a.Email, &nt, &a.Created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	a.TOTPEnabled = te == 1
+	a.TOTPEnabled, a.Notify = te == 1, nt == 1
 	return &a, err
 }
 
@@ -683,16 +692,16 @@ func (s *Store) AdminByName(n string) (*Admin, error)      { return s.adminWhere
 func (s *Store) SaveAdmin(a *Admin) error {
 	if a.ID == 0 {
 		a.Created = now()
-		res, err := s.db.Exec(`INSERT INTO admins (username, pass_hash, totp_secret, totp_enabled, created) VALUES (?,?,?,?,?)`,
-			a.Username, a.PassHash, a.TOTPSecret, b2i(a.TOTPEnabled), a.Created)
+		res, err := s.db.Exec(`INSERT INTO admins (username, pass_hash, totp_secret, totp_enabled, email, notify, created) VALUES (?,?,?,?,?,?,?)`,
+			a.Username, a.PassHash, a.TOTPSecret, b2i(a.TOTPEnabled), a.Email, b2i(a.Notify), a.Created)
 		if err != nil {
 			return err
 		}
 		a.ID, _ = res.LastInsertId()
 		return nil
 	}
-	_, err := s.db.Exec(`UPDATE admins SET username=?, pass_hash=?, totp_secret=?, totp_enabled=? WHERE id=?`,
-		a.Username, a.PassHash, a.TOTPSecret, b2i(a.TOTPEnabled), a.ID)
+	_, err := s.db.Exec(`UPDATE admins SET username=?, pass_hash=?, totp_secret=?, totp_enabled=?, email=?, notify=? WHERE id=?`,
+		a.Username, a.PassHash, a.TOTPSecret, b2i(a.TOTPEnabled), a.Email, b2i(a.Notify), a.ID)
 	return err
 }
 
@@ -748,4 +757,95 @@ func (s *Store) SessionsOf(adminID int64) ([]*Session, error) {
 
 func (s *Store) PruneSessions() {
 	_, _ = s.db.Exec(`DELETE FROM sessions WHERE expires < ?`, now())
+}
+
+// ---------- Anmeldeprotokoll ----------
+
+// AddLogin vermerkt einen Anmeldeversuch; behalten werden höchstens 90 Tage bzw. 5000 Einträge.
+func (s *Store) AddLogin(l *LoginEntry) {
+	if l.TS == 0 {
+		l.TS = now()
+	}
+	_, _ = s.db.Exec(`INSERT INTO login_log (ts, username, admin_id, ip, agent, ok, reason) VALUES (?,?,?,?,?,?,?)`,
+		l.TS, l.Username, l.AdminID, l.IP, l.Agent, b2i(l.OK), l.Reason)
+	_, _ = s.db.Exec(`DELETE FROM login_log WHERE ts < ? OR id <= (SELECT MAX(id) FROM login_log) - 5000`, now()-90*86400)
+}
+
+// Logins: die letzten Anmeldeversuche (neueste zuerst).
+func (s *Store) Logins(limit int) ([]*LoginEntry, error) {
+	rows, err := s.db.Query(`SELECT id, ts, username, admin_id, ip, agent, ok, reason FROM login_log ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*LoginEntry
+	for rows.Next() {
+		var l LoginEntry
+		var ok int
+		if err := rows.Scan(&l.ID, &l.TS, &l.Username, &l.AdminID, &l.IP, &l.Agent, &ok, &l.Reason); err != nil {
+			return nil, err
+		}
+		l.OK = ok == 1
+		out = append(out, &l)
+	}
+	return out, rows.Err()
+}
+
+// LoginCounts: erfolgreiche und fehlgeschlagene Anmeldungen seit since.
+func (s *Store) LoginCounts(since int64) (ok, failed int64, err error) {
+	err = s.db.QueryRow(`SELECT COALESCE(SUM(ok=1),0), COALESCE(SUM(ok=0),0) FROM login_log WHERE ts >= ?`, since).Scan(&ok, &failed)
+	return
+}
+
+// ---------- Sicherung ----------
+
+// Snapshot schreibt eine konsistente Kopie der Datenbank nach path (VACUUM INTO, auch bei laufendem
+// Betrieb). Ohne Protokolle fallen DNS-Protokoll und Anmeldeprotokoll weg.
+func (s *Store) Snapshot(path string, withLogs bool) error {
+	if _, err := s.db.Exec(`VACUUM INTO ?`, path); err != nil {
+		return err
+	}
+	if withLogs {
+		return nil
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	for _, q := range []string{`DELETE FROM dns_log`, `DELETE FROM login_log`, `VACUUM`} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CheckBackupDB prüft eine Datenbank aus einer Sicherung: lesbar, nicht neuer als dieses Programm,
+// mit mindestens einem Administrator.
+func CheckBackupDB(path string) error {
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var v int
+	if err := db.QueryRow(`SELECT COALESCE(MAX(v),0) FROM schema_version`).Scan(&v); err != nil {
+		return fmt.Errorf("keine Panel-Datenbank: %w", err)
+	}
+	if v > len(migrations) {
+		return fmt.Errorf("die Sicherung stammt von einer neueren Panel-Version (Datenbank-Stand %d, dieses Programm kennt %d) – erst das Panel aktualisieren", v, len(migrations))
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM admins`).Scan(&n); err != nil {
+		return fmt.Errorf("Datenbank unvollständig: %w", err)
+	}
+	if n == 0 {
+		return errors.New("die Sicherung enthält keinen Administrator")
+	}
+	var res string
+	if err := db.QueryRow(`PRAGMA integrity_check`).Scan(&res); err != nil || res != "ok" {
+		return fmt.Errorf("Datenbank beschädigt: %s %v", res, err)
+	}
+	return nil
 }

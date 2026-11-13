@@ -53,6 +53,7 @@ type Engine struct {
 	dnsLists dnsListState // Blocklisten des Panel-DNS (dnsfilter.go)
 
 	exitRates exitRateState // Durchsatz der Ausgänge (exits.go)
+	notif     notifyState   // E-Mail-Benachrichtigungen (notify.go)
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
@@ -97,6 +98,13 @@ var settingDefaults = map[string]string{
 	"dns_tls_host":        "",    // z. B. dns.example.org (Cloudflare „Nur DNS“), Kennungen als Unterdomains
 	"dns_dot_port":        "853", // DoT
 	"dns_acme_email":      "",    // optional: Kontakt bei Let's Encrypt
+	"mail_enabled":        "0",   // Benachrichtigungen per E-Mail
+	"smtp_host":           "",    // Mailserver, Passwort nur in secrets.env (SMTP_PASSWORD)
+	"smtp_port":           "587",
+	"smtp_security":       "starttls", // starttls | tls | none
+	"smtp_user":           "",
+	"mail_from":           "",
+	"notify_events":       "exit,unbound,cert,update,error,lockout,backup",
 }
 
 func (e *Engine) Setting(k string) string { return e.St.GetSetting(k, settingDefaults[k]) }
@@ -149,6 +157,7 @@ func (e *Engine) Env() *proto.Env {
 func (e *Engine) Log(level, msg string) {
 	log.Printf("[%s] %s", level, msg)
 	e.St.AddEvent(level, msg)
+	e.notifyLogged(level, msg)
 }
 
 // ---------- Zusammenstellen ----------

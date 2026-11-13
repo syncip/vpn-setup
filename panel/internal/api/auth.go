@@ -188,13 +188,27 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusTooManyRequests, "Zu viele Fehlversuche – bitte 15 Minuten warten")
 		return
 	}
+	// failed: Fehlversuch zählen, protokollieren und bei erreichter Sperre einmal melden
+	failed := func(adminID int64, reason string) {
+		a.limiter.fail(ip)
+		a.limiter.fail(userKey)
+		if !a.limiter.allow(ip) || !a.limiter.allow(userKey) {
+			reason += " · jetzt 15 Minuten gesperrt"
+			a.E.Notify("lockout", ip, "Anmeldung gesperrt nach Fehlversuchen",
+				"Nach zu vielen fehlgeschlagenen Anmeldungen ist die Anmeldung am Panel für 15 Minuten gesperrt.\n\nAdresse: "+ip+"\nBenutzername: "+cleanName(in.Username))
+		}
+		a.logLogin(r, in.Username, adminID, false, reason)
+	}
 	adm, err := a.St.AdminByName(strings.TrimSpace(in.Username))
 	if err != nil {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(in.Password))
 	}
 	if err != nil || !checkPassword(adm.PassHash, in.Password) {
-		a.limiter.fail(ip)
-		a.limiter.fail(userKey)
+		if err != nil {
+			failed(0, "unbekannter Benutzername")
+		} else {
+			failed(adm.ID, "Passwort falsch")
+		}
 		a.E.Log("warn", "Fehlgeschlagene Anmeldung von "+ip)
 		errJSON(w, http.StatusUnauthorized, "Benutzername oder Passwort falsch")
 		return
@@ -206,8 +220,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		}
 		code := strings.ReplaceAll(in.Code, " ", "")
 		if !totp.Validate(code, adm.TOTPSecret) || !a.codes.take(strconv.FormatInt(adm.ID, 10)+":"+code) {
-			a.limiter.fail(ip)
-			a.limiter.fail(userKey)
+			failed(adm.ID, "2FA-Code falsch")
 			errJSON(w, http.StatusUnauthorized, "Code falsch")
 			return
 		}
@@ -230,6 +243,9 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: tok, Path: "/", HttpOnly: true, Secure: a.Secure, SameSite: http.SameSiteStrictMode,
 		MaxAge: int(exp - now)})
 	a.E.Log("info", "Anmeldung "+adm.Username+" von "+ip)
+	a.logLogin(r, adm.Username, adm.ID, true, map[bool]string{true: "mit 2FA", false: "ohne 2FA"}[adm.TOTPEnabled])
+	a.E.Notify("login", ip+":"+strconv.FormatInt(adm.ID, 10), "Anmeldung von "+adm.Username,
+		"Neue Anmeldung am Panel.\n\nBenutzer: "+adm.Username+"\nAdresse: "+ip+"\nGerät: "+cleanName(agent))
 	writeJSON(w, map[string]any{"ok": true, "username": adm.Username, "totp_enabled": adm.TOTPEnabled})
 }
 
@@ -242,8 +258,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
-	adm := adminOf(r)
-	writeJSON(w, map[string]any{"username": adm.Username, "totp_enabled": adm.TOTPEnabled, "id": adm.ID})
+	writeJSON(w, meJSON(adminOf(r)))
 }
 
 func (a *API) changePassword(w http.ResponseWriter, r *http.Request) {

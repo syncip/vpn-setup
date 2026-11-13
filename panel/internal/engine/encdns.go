@@ -85,17 +85,7 @@ func (e *Engine) encDNSOn() bool {
 func (e *Engine) tlsDir() string { return filepath.Join(e.Cfg.DataDir, "dns-tls") }
 
 // cfToken: Cloudflare-API-Token aus <data>/secrets.env (oder der Umgebung).
-func (e *Engine) cfToken() string {
-	if b, err := os.ReadFile(filepath.Join(e.Cfg.DataDir, "secrets.env")); err == nil {
-		for _, l := range strings.Split(string(b), "\n") {
-			l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "export "))
-			if v, ok := strings.CutPrefix(l, "CF_API_TOKEN="); ok {
-				return strings.Trim(strings.TrimSpace(v), `"'`)
-			}
-		}
-	}
-	return os.Getenv("CF_API_TOKEN")
-}
+func (e *Engine) cfToken() string { return e.secret("CF_API_TOKEN") }
 
 // applyEncDNS startet bzw. beendet DoH/DoT und stößt bei Bedarf das Zertifikat an.
 func (e *Engine) applyEncDNS() {
@@ -829,41 +819,7 @@ func (e *Engine) SetCFToken(tok string) error {
 	if tok != "" && !cfTokenRe.MatchString(tok) {
 		return errors.New("das sieht nicht wie ein Cloudflare-API-Token aus (nur Buchstaben, Ziffern, - und _)")
 	}
-	path := filepath.Join(e.Cfg.DataDir, "secrets.env")
-	old, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	var lines []string
-	done := false
-	for _, l := range strings.Split(strings.TrimRight(string(old), "\n"), "\n") {
-		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "export "))
-		if strings.HasPrefix(t, "CF_API_TOKEN=") {
-			if tok != "" && !done {
-				lines = append(lines, "CF_API_TOKEN="+tok)
-				done = true
-			}
-			continue
-		}
-		if l != "" || len(lines) > 0 {
-			lines = append(lines, l)
-		}
-	}
-	if tok != "" && !done {
-		if len(lines) == 0 {
-			lines = append(lines, "# Cloudflare-API-Token (Recht „Zone → DNS → Bearbeiten“) für das Let's-Encrypt-Zertifikat von DoH/DoT")
-		}
-		lines = append(lines, "CF_API_TOKEN="+tok)
-	}
-	if err := os.MkdirAll(e.Cfg.DataDir, 0o700); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		return err
-	}
-	_ = os.Chmod(tmp, 0o600)
-	return os.Rename(tmp, path)
+	return e.setSecret("CF_API_TOKEN", tok, "Cloudflare-API-Token (Recht „Zone → DNS → Bearbeiten“) für das Let's-Encrypt-Zertifikat von DoH/DoT")
 }
 
 // CFTokenCheck: Ergebnis der Prüfung bei Cloudflare.

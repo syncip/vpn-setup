@@ -1,18 +1,19 @@
 <script>
   import Icon from '../components/Icon.svelte';
   import PageHead from '../components/PageHead.svelte';
-  import QR from '../components/QR.svelte';
   import Info from '../components/Info.svelte';
   import PortHelp from '../components/PortHelp.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
-  import { get, post, put, del, run } from '../lib/api.js';
+  import { get, post, put, del, run, postFile, upload } from '../lib/api.js';
   import { date } from '../lib/format.js';
-  import { go, session, meta } from '../lib/state.svelte.js';
+  import { go, session, meta, toast } from '../lib/state.svelte.js';
 
   let { tab = 'general' } = $props();
   const tabs = [
     ['general', 'Allgemein', 'settings'],
     ['security', 'Sicherheit', 'lock'],
+    ['notify', 'Benachrichtigungen', 'mail'],
+    ['backup', 'Sicherung', 'archive'],
     ['admins', 'Administratoren', 'users'],
     ['system', 'System', 'terminal'],
     ['events', 'Ereignisse', 'list'],
@@ -32,14 +33,8 @@
   }
 
   // ---------- Sicherheit ----------
-  let pw = $state({ current: '', new: '', again: '' });
-  let totp = $state(null);
-  let totpCode = $state('');
-  let disablePw = $state('');
-  let sessions = $state([]);
   let priv = $state(null);
   async function loadSecurity() {
-    sessions = await get('/auth/sessions');
     const all = await get('/settings');
     priv = { block: all.private_block !== '0', allow: all.private_allow || '' };
   }
@@ -48,28 +43,114 @@
     const r = await run(() => put('/settings', { private_block: priv.block ? '1' : '0', private_allow: priv.allow }), 'Gespeichert');
     if (r) priv = { block: r.private_block !== '0', allow: r.private_allow || '' };
   }
-  async function changePw() {
-    if (pw.new !== pw.again) return run(() => Promise.reject(new Error('Die neuen Passwörter stimmen nicht überein')));
-    if (await run(() => post('/auth/password', { current: pw.current, new: pw.new }), 'Passwort geändert')) pw = { current: '', new: '', again: '' };
+
+  // ---------- Benachrichtigungen ----------
+  const mailKeys = ['mail_enabled', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'mail_from', 'notify_events'];
+  let mail = $state(null);
+  let nstate = $state(null);
+  let smtpPw = $state('');
+  let editPw = $state(false);
+  async function loadNotify() {
+    const [all, n] = await Promise.all([get('/settings'), get('/notify')]);
+    mail = Object.fromEntries(mailKeys.map((k) => [k, all[k] ?? '']));
+    nstate = n;
+    editPw = !n.password_set;
   }
-  async function startTotp() {
-    totp = await run(() => post('/auth/totp/setup'));
+  const evOn = (k) => (mail?.notify_events || '').split(',').includes(k);
+  function toggleEv(k, on) {
+    const set = new Set((mail.notify_events || '').split(',').filter(Boolean));
+    if (on) set.add(k);
+    else set.delete(k);
+    mail.notify_events = nstate.events.map((e) => e.key).filter((x) => set.has(x)).join(',');
   }
-  async function enableTotp() {
-    if (await run(() => post('/auth/totp/enable', { code: totpCode }), '2FA aktiviert')) {
-      totp = null;
-      totpCode = '';
-      session.user = await get('/auth/me');
+  function setSecurity(v) {
+    mail.smtp_security = v;
+    if (v === 'tls' && (mail.smtp_port === '587' || mail.smtp_port === '25')) mail.smtp_port = '465';
+    if (v === 'starttls' && (mail.smtp_port === '465' || mail.smtp_port === '25')) mail.smtp_port = '587';
+    if (v === 'none' && (mail.smtp_port === '465' || mail.smtp_port === '587')) mail.smtp_port = '25';
+  }
+  async function saveMail() {
+    if (editPw && smtpPw) {
+      if (!(await run(() => put('/notify/password', { password: smtpPw })))) return;
+      smtpPw = '';
+    }
+    const r = await run(() => put('/settings', $state.snapshot(mail)), 'Benachrichtigungen gespeichert');
+    if (r) loadNotify();
+  }
+  async function removeSmtpPw() {
+    if (!(await confirmDialog({ title: 'Passwort entfernen?', text: 'Das Passwort des Mailservers wird aus secrets.env gelöscht.', ok: 'Entfernen', danger: true }))) return;
+    if (await run(() => del('/notify/password'), 'Passwort entfernt')) loadNotify();
+  }
+  let testing = $state(false);
+  async function testMail() {
+    testing = true;
+    const r = await run(() => post('/notify/test'));
+    testing = false;
+    if (r) {
+      toast(`Testmail an ${r.to} verschickt`);
+      loadNotify();
     }
   }
-  async function disableTotp() {
-    if (await run(() => post('/auth/totp/disable', { password: disablePw }), '2FA deaktiviert')) {
-      disablePw = '';
-      session.user = await get('/auth/me');
+
+  // ---------- Sicherung ----------
+  let bk = $state(null);
+  let ex = $state({ password: '', again: '', current: '', code: '', logs: false });
+  let rs = $state({ file: null, password: '', current: '', code: '' });
+  let busy = $state('');
+  let restarting = $state(false);
+  async function loadBackup() {
+    bk = await get('/backup');
+  }
+  async function exportBackup() {
+    if (ex.password !== ex.again) return run(() => Promise.reject(new Error('Die Passwörter der Sicherung stimmen nicht überein')));
+    busy = 'export';
+    const r = await run(() => postFile('/backup/export', { password: ex.password, current: ex.current, code: ex.code, logs: ex.logs }, 'vpnpanel.vpnbak'));
+    busy = '';
+    if (r) {
+      toast(`Sicherung gespeichert: ${r.name}`);
+      ex = { password: '', again: '', current: '', code: '', logs: ex.logs };
     }
   }
-  async function logoutOthers() {
-    if (await run(() => del('/auth/sessions'), 'Andere Sitzungen beendet')) loadSecurity();
+  async function restoreBackup() {
+    if (!(await confirmDialog({ title: 'Sicherung einspielen?', text: 'Alle Nutzer, Server, Einstellungen und Zugangsdaten werden durch den Stand der Sicherung ersetzt. Das Panel startet dafür neu; die bisherigen Dateien bleiben auf dem Server in einem Ordner „restore-bak-…“ erhalten.', ok: 'Einspielen und neu starten', danger: true }))) return;
+    const f = new FormData();
+    f.append('password', rs.password);
+    f.append('current', rs.current);
+    f.append('code', rs.code);
+    f.append('file', rs.file);
+    busy = 'restore';
+    const r = await run(() => upload('/backup/restore', f));
+    busy = '';
+    if (!r) return;
+    rs = { file: null, password: '', current: '', code: '' };
+    if (r.restart) {
+      restarting = true;
+      waitRestart();
+    } else {
+      toast('Sicherung abgelegt – wird beim nächsten Start des Dienstes eingespielt');
+      loadBackup();
+    }
+  }
+  // nach dem Neustart neu laden (die Anmeldung stammt dann aus der Sicherung)
+  async function waitRestart() {
+    await new Promise((r) => setTimeout(r, 4000));
+    for (let i = 0; i < 60; i++) {
+      try {
+        const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
+        if (res.status === 200 || res.status === 401) {
+          location.reload();
+          return;
+        }
+      } catch {
+        /* startet noch */
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    restarting = false;
+    toast('Das Panel ist nicht zurückgekommen – auf dem Server „systemctl status vpnpanel“ prüfen', 'error');
+  }
+  async function cancelRestore() {
+    if (await run(() => del('/backup/restore'), 'Abgelegte Sicherung verworfen')) loadBackup();
   }
 
   // ---------- Administratoren ----------
@@ -112,6 +193,8 @@
     const t = tab;
     if (t === 'general') loadSettings();
     if (t === 'security') loadSecurity();
+    if (t === 'notify') loadNotify();
+    if (t === 'backup') loadBackup();
     if (t === 'admins') loadAdmins();
     if (t === 'system') loadSystem();
     if (t === 'events') loadEvents();
@@ -136,7 +219,7 @@
   let showAdv = $state(false);
 </script>
 
-<PageHead title="Einstellungen" subtitle="Server-Adresse, Anmeldung, Administratoren und System" />
+<PageHead title="Einstellungen" subtitle="Server-Adresse, Sicherheit, Benachrichtigungen, Sicherung, Administratoren und System" />
 
 <div class="tabs">
   {#each tabs as [id, label, icon]}
@@ -165,38 +248,7 @@
   </div>
 {:else if tab === 'security'}
   <div class="grid cols-2" style="max-width:1100px">
-    <div class="card">
-      <div class="card-head"><h3><Icon name="key" size={16} /> Passwort ändern</h3></div>
-      <div class="card-pad stack">
-        <div class="field"><label for="pw1">Aktuelles Passwort</label><input id="pw1" type="password" class="input" bind:value={pw.current} autocomplete="current-password" /></div>
-        <div class="field"><label for="pw2">Neues Passwort</label><input id="pw2" type="password" class="input" bind:value={pw.new} autocomplete="new-password" placeholder="mindestens 10 Zeichen" /></div>
-        <div class="field"><label for="pw3">Wiederholen</label><input id="pw3" type="password" class="input" bind:value={pw.again} autocomplete="new-password" /></div>
-        <div><button class="btn primary" onclick={changePw} disabled={!pw.current || !pw.new}>Ändern</button></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3><Icon name="shield" size={16} /> Zwei-Faktor-Anmeldung</h3>{#if session.user.totp_enabled}<span class="badge ok">aktiv</span>{:else}<span class="badge warn">aus</span>{/if}</div>
-      <div class="card-pad stack">
-        {#if session.user.totp_enabled}
-          <p class="muted small" style="margin:0">Bei jeder Anmeldung wird ein Code aus deiner Authenticator-App abgefragt.</p>
-          <div class="field"><label for="dpw">Zum Abschalten Passwort eingeben</label><input id="dpw" type="password" class="input" bind:value={disablePw} /></div>
-          <div><button class="btn danger" onclick={disableTotp} disabled={!disablePw}>2FA abschalten</button></div>
-        {:else if totp}
-          <p class="small" style="margin:0">QR-Code mit einer Authenticator-App (z. B. Aegis, 2FAS, Google Authenticator) scannen und den angezeigten Code eingeben.</p>
-          <div class="row" style="gap:18px;align-items:flex-start">
-            <QR text={totp.url} size={170} />
-            <div class="stack-sm grow">
-              <span class="label">Oder Schlüssel eintippen</span>
-              <code class="mono" style="word-break:break-all">{totp.secret}</code>
-            </div>
-          </div>
-          <div class="row"><input class="input mono" style="max-width:160px" placeholder="123456" bind:value={totpCode} inputmode="numeric" /><button class="btn primary" onclick={enableTotp} disabled={totpCode.length < 6}>Aktivieren</button></div>
-        {:else}
-          <p class="muted small" style="margin:0">Schützt das Panel zusätzlich mit einem Code vom Handy. Dringend empfohlen, da das Panel aus dem Internet erreichbar ist.</p>
-          <div><button class="btn primary" onclick={startTotp}>2FA einrichten</button></div>
-        {/if}
-      </div>
-    </div>
+    <div class="notice" style="grid-column:1/-1"><Icon name="user" /><div class="small">Passwort, Zwei-Faktor-Anmeldung, Sitzungen und das Anmeldeprotokoll findest du unter <a href="#/account">Mein Konto</a> (Klick auf deinen Namen unten links).</div></div>
     {#if priv}
       <div class="card" style="grid-column:1/-1">
         <div class="card-head">
@@ -224,17 +276,124 @@
         </div>
       </div>
     {/if}
-    <div class="card" style="grid-column:1/-1">
-      <div class="card-head"><h3><Icon name="eye" size={16} /> Angemeldete Sitzungen</h3><button class="btn sm" onclick={logoutOthers}>Alle anderen abmelden</button></div>
-      <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>Gerät</th><th>IP</th><th>Angemeldet</th><th>Zuletzt aktiv</th></tr></thead>
-          <tbody>
-            {#each sessions as se}
-              <tr><td class="small ellipsis" style="max-width:420px">{se.agent} {#if se.current}<span class="badge accent">diese</span>{/if}</td><td class="mono small">{se.ip}</td><td class="small">{date(se.created, true)}</td><td class="small">{date(se.last_used, true)}</td></tr>
+  </div>
+{:else if tab === 'notify' && mail && nstate}
+  <div class="grid cols-2" style="max-width:1100px">
+    <div class="card">
+      <div class="card-head"><h3><Icon name="mail" size={16} /> Mailserver</h3>{#if mail.mail_enabled === '1'}<span class="badge ok">an</span>{:else}<span class="badge muted">aus</span>{/if}</div>
+      <div class="card-pad stack">
+        <label class="switch"><input type="checkbox" checked={mail.mail_enabled === '1'} onchange={(e) => (mail.mail_enabled = e.currentTarget.checked ? '1' : '0')} /><span class="track"></span> Benachrichtigungen per E-Mail verschicken</label>
+        <div class="grid cols-2" style="grid-template-columns:minmax(0,3fr) minmax(0,1fr)">
+          <div class="field"><label for="m-h">Mailserver (SMTP)</label><input id="m-h" class="input" bind:value={mail.smtp_host} placeholder="smtp.example.org" autocomplete="off" /></div>
+          <div class="field"><label for="m-p">Port</label><input id="m-p" class="input" inputmode="numeric" bind:value={mail.smtp_port} /></div>
+        </div>
+        <div class="field">
+          <span class="label">Verschlüsselung <Info title="Verschlüsselung" text="STARTTLS (meist Port 587) oder TLS (Port 465) – beides verschlüsselt. „Ohne“ nur für einen Mailserver im eigenen Netz ohne Anmeldung; ein Passwort wird nie unverschlüsselt gesendet." /></span>
+          <div class="segmented" style="align-self:flex-start">
+            {#each [['starttls', 'STARTTLS'], ['tls', 'TLS'], ['none', 'Ohne']] as [k, l]}
+              <button class:active={mail.smtp_security === k} onclick={() => setSecurity(k)}>{l}</button>
             {/each}
-          </tbody>
-        </table>
+          </div>
+        </div>
+        <div class="field"><label for="m-u">Benutzername <span class="muted">(leer = ohne Anmeldung)</span></label><input id="m-u" class="input" bind:value={mail.smtp_user} autocomplete="off" /></div>
+        <div class="field">
+          <label for="m-pw">Passwort <Info title="Passwort des Mailservers" text="Liegt nur in /etc/vpn/secrets.env auf dem Server (Rechte 600), nie in der Datenbank. Das Panel zeigt es nie wieder an." /></label>
+          {#if editPw}
+            <div class="row">
+              <input id="m-pw" type="password" class="input grow" bind:value={smtpPw} autocomplete="new-password" placeholder={nstate.password_set ? 'neues Passwort' : 'Passwort des Postfachs'} />
+              {#if nstate.password_set}<button class="btn ghost sm" onclick={() => { editPw = false; smtpPw = ''; }}>Abbrechen</button>{/if}
+            </div>
+          {:else}
+            <div class="row"><span class="badge ok">hinterlegt</span><span class="grow"></span><button class="btn sm" onclick={() => (editPw = true)}>Ersetzen</button><button class="btn sm ghost danger" onclick={removeSmtpPw}>Entfernen</button></div>
+          {/if}
+        </div>
+        <div class="field"><label for="m-f">Absender</label><input id="m-f" class="input" bind:value={mail.mail_from} placeholder="VPN-Panel <panel@example.org>" autocomplete="off" /></div>
+        <div class="row">
+          <button class="btn primary" onclick={saveMail}>Speichern</button>
+          <button class="btn" onclick={testMail} disabled={testing || !session.user.email} title={session.user.email ? `an ${session.user.email}` : 'Erst in „Mein Konto“ eine E-Mail eintragen'}><Icon name="mail" size={15} /> {testing ? 'Sende …' : 'Testmail senden'}</button>
+        </div>
+        <p class="tiny muted" style="margin:0">Erst speichern, dann testen. Die Testmail geht an deine Adresse aus „Mein Konto“.</p>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="card">
+        <div class="card-head"><h3><Icon name="alert" size={16} /> Anlässe</h3></div>
+        <div class="card-pad stack-sm">
+          {#each nstate.events as ev}
+            <label class="switch"><input type="checkbox" checked={evOn(ev.key)} onchange={(e) => toggleEv(ev.key, e.currentTarget.checked)} /><span class="track"></span> {ev.label}</label>
+          {/each}
+          <p class="tiny muted" style="margin:6px 0 0">Ausfälle werden nach zwei Prüfungen in Folge gemeldet (ca. 2 Minuten), die Wiederkehr nur nach einer Ausfallmeldung. Gleiche Meldungen höchstens alle 30 Minuten. Mit „Speichern“ links übernehmen.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3><Icon name="users" size={16} /> Empfänger</h3></div>
+        <div class="card-pad stack-sm">
+          {#each nstate.recipients as r}
+            <div class="row small"><Icon name="mail" size={14} /> {r}</div>
+          {:else}
+            <div class="notice warn"><Icon name="alert" /><div class="small">Noch kein Empfänger. Jeder Administrator trägt seine Adresse in <a href="#/account">Mein Konto</a> ein und schaltet Benachrichtigungen ein.</div></div>
+          {/each}
+          {#if nstate.sent?.length}
+            <div class="tiny muted" style="margin-top:8px">Testmodus – nicht wirklich verschickt:</div>
+            <pre class="code tiny" style="margin:0;max-height:160px">{nstate.sent.slice(-12).join('\n')}</pre>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+{:else if tab === 'backup' && bk}
+  <div class="grid cols-2" style="max-width:1100px">
+    {#if bk.pending}
+      <div class="notice warn" style="grid-column:1/-1">
+        <Icon name="alert" />
+        <div class="grow small">Eine Sicherung vom {date(bk.pending.created, true)} (Version {bk.pending.version}, {bk.pending.files} Dateien) liegt bereit und wird beim nächsten Start des Dienstes eingespielt.</div>
+        <button class="btn sm" onclick={cancelRestore}>Verwerfen</button>
+      </div>
+    {/if}
+    {#if restarting}
+      <div class="notice" style="grid-column:1/-1"><Icon name="refresh" /><div class="small">Das Panel startet neu und spielt die Sicherung ein. Die Seite lädt danach von selbst neu – melde dich dann mit den Zugangsdaten aus der Sicherung an.</div></div>
+    {/if}
+    <div class="card">
+      <div class="card-head"><h3><Icon name="download" size={16} /> Sicherung herunterladen</h3></div>
+      <div class="card-pad stack">
+        <p class="small muted" style="margin:0">Enthält Datenbank (Nutzer, Server, Schlüssel, Einstellungen, Statistik), <code>secrets.env</code> und die Zertifikate – verschlüsselt mit dem Passwort unten (AES-256, scrypt). Ohne dieses Passwort lässt sich die Datei nicht öffnen.</p>
+        <div class="grid cols-2">
+          <div class="field"><label for="b-p">Passwort der Sicherung</label><input id="b-p" type="password" class="input" bind:value={ex.password} autocomplete="new-password" placeholder="mind. {bk.min_password} Zeichen" /></div>
+          <div class="field"><label for="b-a">Wiederholen</label><input id="b-a" type="password" class="input" bind:value={ex.again} autocomplete="new-password" /></div>
+        </div>
+        <label class="switch"><input type="checkbox" bind:checked={ex.logs} /><span class="track"></span> DNS- und Anmeldeprotokoll mitsichern (größer)</label>
+        <div class="divider"></div>
+        <div class="grid" class:cols-2={session.user.totp_enabled}>
+          <div class="field"><label for="b-c">Dein Panel-Passwort</label><input id="b-c" type="password" class="input" bind:value={ex.current} autocomplete="current-password" /></div>
+          {#if session.user.totp_enabled}<div class="field"><label for="b-t">2FA-Code</label><input id="b-t" class="input mono" bind:value={ex.code} inputmode="numeric" autocomplete="one-time-code" placeholder="123456" /></div>{/if}
+        </div>
+        <div><button class="btn primary" onclick={exportBackup} disabled={busy !== '' || ex.password.length < bk.min_password || !ex.current || (session.user.totp_enabled && ex.code.length < 6)}><Icon name="download" size={15} /> {busy === 'export' ? 'Erstelle …' : 'Sicherung herunterladen'}</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3><Icon name="upload" size={16} /> Sicherung einspielen</h3></div>
+      <div class="card-pad stack">
+        <p class="small muted" style="margin:0">Ersetzt den kompletten Stand des Panels. Die Datei wird zuerst geprüft (Passwort, Prüfsummen, Version); erst dann startet das Panel neu und spielt sie ein. Die bisherigen Dateien bleiben auf dem Server in <code>restore-bak-…</code>.</p>
+        <div class="field"><label for="r-f">Datei (.vpnbak)</label><input id="r-f" type="file" class="input" accept=".vpnbak" onchange={(e) => (rs.file = e.currentTarget.files[0] || null)} /></div>
+        <div class="field"><label for="r-p">Passwort der Sicherung</label><input id="r-p" type="password" class="input" bind:value={rs.password} autocomplete="off" /></div>
+        <div class="divider"></div>
+        <div class="grid" class:cols-2={session.user.totp_enabled}>
+          <div class="field"><label for="r-c">Dein Panel-Passwort</label><input id="r-c" type="password" class="input" bind:value={rs.current} autocomplete="current-password" /></div>
+          {#if session.user.totp_enabled}<div class="field"><label for="r-t">2FA-Code</label><input id="r-t" class="input mono" bind:value={rs.code} inputmode="numeric" autocomplete="one-time-code" placeholder="123456" /></div>{/if}
+        </div>
+        <div><button class="btn danger" onclick={restoreBackup} disabled={busy !== '' || restarting || !rs.file || !rs.password || !rs.current || (session.user.totp_enabled && rs.code.length < 6)}><Icon name="upload" size={15} /> {busy === 'restore' ? 'Prüfe …' : 'Prüfen und einspielen'}</button></div>
+        {#if !bk.restart}<p class="tiny muted" style="margin:0">Ohne Dienstverwaltung wird die Sicherung erst beim nächsten Start eingespielt.</p>{/if}
+      </div>
+    </div>
+    <div class="card card-pad" style="grid-column:1/-1">
+      <div class="row small" style="gap:6px">
+        <Icon name="terminal" size={15} /> Auf dem Server geht das auch per Kommandozeile, z. B. für eine nächtliche Sicherung:
+        <Info title="Sicherung per Kommandozeile" wide>
+          <pre>VPNPANEL_BACKUP_PASSWORD='…' vpn backup create /root/panel.vpnbak
+vpn backup restore /root/panel.vpnbak
+systemctl restart vpnpanel</pre>
+          <p>Ohne Umgebungsvariable fragt <code>vpn backup</code> das Passwort ab. Mit <code>--ohne-protokolle</code> bleiben DNS- und Anmeldeprotokoll draußen.</p>
+        </Info>
       </div>
     </div>
   </div>

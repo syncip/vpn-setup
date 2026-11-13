@@ -25,6 +25,8 @@ type API struct {
 	Version string
 	limiter *limiter
 	codes   usedCodes
+	// Restart: Dienst neu starten (setzt main; nil = nicht möglich), z. B. nach dem Einspielen einer Sicherung
+	Restart func()
 }
 
 func New(e *engine.Engine, static fs.FS, secure bool, version string) *API {
@@ -49,6 +51,16 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("POST /api/auth/totp/disable", a.auth(a.totpDisable))
 	api.HandleFunc("GET /api/auth/sessions", a.auth(a.sessions))
 	api.HandleFunc("DELETE /api/auth/sessions", a.auth(a.logoutOthers))
+	api.HandleFunc("PUT /api/auth/profile", a.auth(a.updateProfile))
+	api.HandleFunc("GET /api/auth/logins", a.auth(a.loginLog))
+	api.HandleFunc("GET /api/notify", a.auth(a.notifyState))
+	api.HandleFunc("PUT /api/notify/password", a.auth(a.notifyPassword))
+	api.HandleFunc("DELETE /api/notify/password", a.auth(a.notifyPassword))
+	api.HandleFunc("POST /api/notify/test", a.auth(a.notifyTest))
+	api.HandleFunc("GET /api/backup", a.auth(a.backupState))
+	api.HandleFunc("POST /api/backup/export", a.auth(a.backupExport))
+	api.HandleFunc("POST /api/backup/restore", a.auth(a.backupRestore))
+	api.HandleFunc("DELETE /api/backup/restore", a.auth(a.backupCancel))
 	api.HandleFunc("GET /api/admins", a.auth(a.listAdmins))
 	api.HandleFunc("POST /api/admins", a.auth(a.createAdmin))
 	api.HandleFunc("DELETE /api/admins/{id}", a.auth(a.deleteAdmin))
@@ -173,7 +185,11 @@ func (a *API) Handler() http.Handler {
 				errJSON(w, http.StatusForbidden, "ungültige Anfrage")
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			limit := int64(1 << 20)
+			if r.URL.Path == "/api/backup/restore" && r.Method == http.MethodPost {
+				limit = maxRestoreUpload + 1<<20 // Upload einer Sicherung (nur angemeldet, siehe auth)
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			api.ServeHTTP(w, r)
 			return
 		}

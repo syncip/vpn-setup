@@ -1,0 +1,97 @@
+# Prüfung bei jedem Push und Pull Request: Oberfläche (svelte-check, Build, npm audit),
+# Go (vet, Tests mit Race-Detektor, govulncheck) und die Labortests in Netzwerk-Namespaces.
+# Keine Geheimnisse nötig, nur Leserechte; Actions sind auf Commit-Hashes festgelegt.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Oberfläche
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: panel/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: panel/web/package-lock.json
+      - run: npm ci
+      - name: svelte-check
+        run: npx --yes svelte-check@4.7.8 --threshold error
+      - run: npm run build
+      - name: npm audit (hoch und kritisch)
+        run: npm audit --audit-level=high
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: gofmt (nur Hinweis)
+        run: |
+          files=$(gofmt -l . | grep -v -E '(^|/)(proxy|models|store|system)\.go$' || true)
+          if [ -n "$files" ]; then echo "::warning::gofmt-Abweichungen: $files"; fi
+      - run: go vet ./...
+      - run: go vet -tags lab ./...
+      - name: Tests mit Race-Detektor
+        run: go test -race -count=1 ./...
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: Release-Build (statisch)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /tmp/vpnpanel .
+
+  lab:
+    name: Labortests (root, Netzwerk-Namespaces)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # erst beobachten, ob die Runner alles erlauben (WireGuard-Modul, nftables); später verpflichtend
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Werkzeuge
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools nftables iptables iproute2 conntrack openvpn python3
+      - name: Testprogramme bauen
+        run: |
+          go test -c -tags lab -o /tmp/enginelab ./internal/engine
+          go test -c -tags lab -o /tmp/labtest ./internal/labtest
+      - name: Labortests Engine (Unbound-Kill-Switch, nftables)
+        run: sudo /tmp/enginelab -test.v -test.run 'Lab|KillSwitch'
+      - name: Labortests Ausgänge
+        run: sudo /tmp/labtest -test.v

@@ -362,6 +362,48 @@ Adressen hinein; Sperrlisten gelten zusätzlich. Dazu **Ziellisten** für Ziel-R
   deshalb in Xray. Webinterface und Abo-Links sind nie betroffen. Braucht das Paket `nftables`
   (installiert das Setup-Script; beim Update von 0.7 `vpn-setup.sh` erneut ausführen).
 
+## Mein Konto und Anmeldungen
+
+Ein Klick auf den eigenen Namen unten links öffnet **Mein Konto**: Benutzername und E-Mail ändern (beides
+nur mit dem aktuellen Passwort), Passwort ändern (meldet alle anderen Sitzungen ab), Zwei-Faktor-Anmeldung,
+angemeldete Sitzungen und das **Anmeldeprotokoll** – alle Anmeldeversuche mit Zeit, Benutzername, Adresse,
+Gerät und Grund (Passwort falsch, unbekannter Name, 2FA-Code falsch, gesperrt), dazu die Zahl der
+erfolgreichen und fehlgeschlagenen Anmeldungen der letzten 24 Stunden und 30 Tage. Aufbewahrt werden 90 Tage.
+Nach 8 Fehlversuchen in 15 Minuten sind Adresse bzw. Name für 15 Minuten gesperrt.
+
+## Benachrichtigungen per E-Mail
+
+Unter **Einstellungen → Benachrichtigungen** den Mailserver eintragen (SMTP mit STARTTLS oder TLS,
+Benutzer, Absender) und eine Testmail schicken. Das Passwort des Mailservers liegt nur in
+`/etc/vpn/secrets.env` (`SMTP_PASSWORD`, Rechte 600) und wird nie angezeigt. Empfänger ist jeder
+Administrator, der in „Mein Konto“ eine Adresse einträgt und Benachrichtigungen einschaltet.
+Anlässe (einzeln wählbar): Ausgangsgruppe ohne Ausgang bzw. wieder da, Unbound (auch je Gruppe) antwortet
+nicht bzw. wieder, DoH/DoT-Zertifikat läuft in weniger als 14 Tagen ab oder ließ sich nicht holen, neue
+Panel-Version, Fehler im Ereignisprotokoll, Anmeldung nach Fehlversuchen gesperrt, jede erfolgreiche
+Anmeldung (Vorgabe aus), Sicherung erstellt oder eingespielt. Ausfälle werden nach zwei Prüfungen in Folge
+(etwa 2 Minuten) gemeldet, gleiche Meldungen höchstens alle 30 Minuten.
+
+## Sicherung
+
+**Einstellungen → Sicherung** lädt eine verschlüsselte Sicherung herunter (`.vpnbak`: AES-256-GCM, Schlüssel
+per scrypt aus einem eigenen Passwort mit mindestens 12 Zeichen). Enthalten sind die Datenbank (als
+konsistente Kopie im laufenden Betrieb), `secrets.env`, `panel.env`, Zertifikate und die übrigen Dateien
+aus `/etc/vpn` – nicht enthalten sind neu ladbare Listen und Zwischenspeicher. DNS- und Anmeldeprotokoll
+sind optional. Herunterladen und Einspielen verlangen das Panel-Passwort (und bei 2FA einen Code).
+
+**Einspielen** geht im selben Reiter: Die Datei wird geprüft (Passwort, Prüfsummen, Datenbank-Version,
+mindestens ein Administrator) und abgelegt; danach startet das Panel neu und tauscht die Dateien aus, bevor
+es die Datenbank öffnet. Die bisherigen Dateien bleiben in `/etc/vpn/restore-bak-<zeit>/`. Anschließend mit
+den Zugangsdaten aus der Sicherung anmelden. Auf der Kommandozeile:
+
+```bash
+VPNPANEL_BACKUP_PASSWORD='…' vpn backup create /root/panel.vpnbak [--ohne-protokolle]
+vpn backup restore /root/panel.vpnbak && systemctl restart vpnpanel
+```
+
+Ohne `VPNPANEL_BACKUP_PASSWORD` fragt `vpn backup` das Passwort ab. Eine Sicherung einer neueren
+Panel-Version lässt sich erst nach einem Update einspielen.
+
 ## Version und Updates
 
 Die Seitenleiste und die Übersicht zeigen die Version. Das Panel fragt alle 12 Stunden bei GitHub nach
@@ -394,3 +436,6 @@ Nutzer sofort abgewiesen, und gedrosselte Nutzer werden über ihre Client-Adress
 - `panel/` – Go-Backend (`internal/…`) und Svelte-Oberfläche (`panel/web`)
 - Bauen: `bash panel/build.sh` → `panel/dist/vpnpanel-linux-amd64`
 - Lokal testen (Trockenlauf mit Demo-Daten): `go run . serve -dev -demo -data devdata`
+- GitHub Actions (`.github/workflows/ci.yml`) prüft jeden Push: svelte-check, Build und `npm audit` der
+  Oberfläche; `go vet`, Tests mit Race-Detektor und `govulncheck`; die Labortests (Netzwerk-Namespaces,
+  WireGuard, nftables) laufen als root in einem eigenen Schritt, vorerst ohne den Lauf scheitern zu lassen.
