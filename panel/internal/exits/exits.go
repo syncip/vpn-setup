@@ -88,6 +88,8 @@ type Exit struct {
 	// eine Gruppe ihn nutzt – sonst alle CheckMin Minuten kurz verbinden und prüfen.
 	Mode     string
 	CheckMin int
+	// Blocked: vom Panel abgeschaltet (Datenlimit erreicht) – Grund für Anzeige und Protokoll
+	Blocked string
 }
 
 // Standby: nur bei Bedarf verbunden.
@@ -104,6 +106,8 @@ type Group struct {
 	MaxRTT  float64 // ms
 	MinMbit float64 // 0 = nicht prüfen
 	DNS     []string
+	// Blocked: Datenlimit der Gruppe erreicht (Grund) – kein Ausgang, Verkehr gesperrt (auch bei „direkt“)
+	Blocked string
 }
 
 func num(m store.M, k string, def float64) float64 {
@@ -215,6 +219,7 @@ type GroupStatus struct {
 	State  string `json:"state"` // ok | failover | blocked | direct | waiting
 	Reason string `json:"reason,omitempty"`
 	Pinned int64  `json:"pinned,omitempty"` // von Hand gewählter Ausgang (bevorzugt statt des ersten)
+	Limit  bool   `json:"limit,omitempty"`  // durch das Datenlimit der Gruppe gesperrt
 }
 
 // Env: was der Manager vom Panel braucht.
@@ -235,10 +240,20 @@ type Manager struct {
 	probeMu sync.Mutex
 	conn    map[int64]bool // Ausgänge in Bereitschaft, die gerade verbunden sind
 	force   bool           // nächste Prüfung: auch Ausgänge in Bereitschaft (Knopf „Jetzt prüfen“)
+	wake    chan struct{}  // Prüfung sofort statt nach 30 s
 }
 
 func New() *Manager {
-	return &Manager{status: map[int64]*ExitStatus{}, groups: map[int64]*GroupStatus{}, healthy: map[string]time.Time{}, conn: map[int64]bool{}}
+	return &Manager{status: map[int64]*ExitStatus{}, groups: map[int64]*GroupStatus{}, healthy: map[string]time.Time{}, conn: map[int64]bool{},
+		wake: make(chan struct{}, 1)}
+}
+
+// Wake: nächste Prüfung sofort (z. B. wenn eine Gruppe ihren Ausgang verloren hat).
+func (m *Manager) Wake() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
 }
 
 // OnSwitch: wird nach jedem Umschalten einer Gruppe aufgerufen (z. B. Proxy trennt Verbindungen).
@@ -284,11 +299,15 @@ func (m *Manager) active(env *Env, g *Group, exits map[int64]*Exit) int64 {
 		}
 	}
 	st := "waiting"
+	reason := ""
+	if g.Blocked != "" {
+		first, reason = 0, g.Blocked
+	}
 	if first == 0 {
 		st = failState(g)
 	}
 	pin, _ := strconv.ParseInt(env.Get(fmt.Sprintf("exits:pin:%d", g.ID)), 10, 64)
-	m.groups[g.ID] = &GroupStatus{ID: g.ID, Active: first, Since: time.Now().Unix(), State: st, Pinned: pin}
+	m.groups[g.ID] = &GroupStatus{ID: g.ID, Active: first, Since: time.Now().Unix(), State: st, Pinned: pin, Reason: reason, Limit: g.Blocked != ""}
 	return first
 }
 
@@ -314,6 +333,27 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 		if g.Enabled && g.Slot > 0 {
 			m.active(env, g, byID) // aktuellen Ausgang festlegen – ihn braucht es verbunden
 		}
+	}
+	// Hat eine Gruppe ihren aktiven Ausgang verloren (deaktiviert, Datenlimit) oder hat sich ihr
+	// eigenes Limit geändert, sofort umschalten – nicht erst bei der nächsten Prüfung.
+	lost := false
+	for _, g := range groups {
+		if !g.Enabled || g.Slot < 1 {
+			continue
+		}
+		cur := m.active(env, g, byID)
+		m.mu.Lock()
+		limitChanged := (g.Blocked != "") != m.groups[g.ID].Limit
+		m.mu.Unlock()
+		if (cur != 0 && (byID[cur] == nil || !byID[cur].Enabled)) || limitChanged {
+			m.evaluate(env, g, byID)
+			if m.active(env, g, byID) == 0 && g.Blocked == "" {
+				lost = true
+			}
+		}
+	}
+	if lost {
+		m.Wake() // Ausgänge in Bereitschaft gleich prüfen
 	}
 	needed := m.neededSet()
 	for _, e := range exits {
@@ -523,7 +563,8 @@ func (m *Manager) routeGroup(env *Env, g *Group, active int64) {
 	// Sicherung: Verschwindet die Schnittstelle (OpenVPN verbindet neu), wäre die Tabelle leer und
 	// der Verkehr liefe bis zur nächsten Prüfung direkt mit der Adresse des Servers. Die Sperr-Route
 	// mit hoher Metrik greift nur dann. Bei „direkt“ ist der direkte Weg gewollt.
-	if g.OnFail == "direct" {
+	direct := g.OnFail == "direct" && g.Blocked == ""
+	if direct {
 		_, _ = sys.Run("ip", "-4", "route", "del", "blackhole", "default", "metric", safetyMetric, "table", t)
 	} else {
 		_, _ = sys.Run("ip", "-4", "route", "replace", "blackhole", "default", "metric", safetyMetric, "table", t)
@@ -534,7 +575,7 @@ func (m *Manager) routeGroup(env *Env, g *Group, active int64) {
 			// Schnittstelle (noch) nicht da (OpenVPN verbindet gerade) → lieber sperren
 			_, _ = sys.Run("ip", "-4", "route", "replace", "blackhole", "default", "table", t)
 		}
-	case g.OnFail == "direct":
+	case direct:
 		_, _ = sys.Run("ip", "-4", "route", "flush", "table", t)
 	default:
 		_, _ = sys.Run("ip", "-4", "route", "replace", "blackhole", "default", "table", t)

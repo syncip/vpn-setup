@@ -44,7 +44,7 @@ func SetProbeTargets(ping, trace, speed string) { pingTarget, traceURL, speedURL
 func hash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:8]) }
 
 func failState(g *Group) string {
-	if g.OnFail == "direct" {
+	if g.OnFail == "direct" && g.Blocked == "" {
 		return "direct"
 	}
 	return "blocked"
@@ -156,6 +156,13 @@ func (m *Manager) Run(stop <-chan struct{}, envFn func() *Env, load func() ([]*E
 		case <-stop:
 			return
 		case <-t.C:
+		case <-m.wake:
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
 		}
 		exits, groups := load()
 		if len(exits) > 0 {
@@ -325,6 +332,9 @@ func avg(ss []Sample) (loss, rtt float64) {
 
 // isHealthy: erfüllt ein Ausgang die Grenzen der Gruppe? (m.mu gesperrt)
 func (m *Manager) isHealthy(g *Group, e *Exit) (bool, string) {
+	if e != nil && e.Blocked != "" {
+		return false, "abgeschaltet – " + e.Blocked
+	}
 	if e == nil || !e.Enabled {
 		return false, "deaktiviert"
 	}
@@ -406,7 +416,9 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 	for _, id := range order {
 		inGroup = inGroup || id == cur
 	}
-	if cur != 0 && inGroup && ok[cur] {
+	if g.Blocked != "" {
+		next, reason = 0, g.Blocked
+	} else if cur != 0 && inGroup && ok[cur] {
 		// bevorzugter Ausgang wieder stabil? → zurück
 		for _, id := range order {
 			if id == cur {
@@ -431,6 +443,9 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 				name = "„" + e.Name + "“"
 			}
 			reason = name + " gestört"
+			if e := exits[cur]; e != nil && e.Blocked != "" {
+				reason, why[cur] = name+" abgeschaltet: "+e.Blocked, ""
+			}
 			if why[cur] != "" {
 				reason += ": " + why[cur]
 			}
@@ -439,9 +454,14 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 		}
 	}
 	gs := m.groups[g.ID]
-	changed := next != cur
+	limitChanged := (g.Blocked != "") != gs.Limit
+	gs.Limit = g.Blocked != ""
+	changed := next != cur || limitChanged
 	if changed {
 		gs.Active, gs.Since, gs.Reason = next, now.Unix(), reason
+		if reason == "" && limitChanged {
+			gs.Reason = "Datenlimit wieder frei"
+		}
 	}
 	switch {
 	case next == 0:
@@ -460,7 +480,7 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 		return
 	}
 	// Ausgang in Bereitschaft (z. B. Rückkehr zum bevorzugten): erst verbinden
-	if x := exits[next]; x.Standby() && !m.isConn(next) {
+	if x := exits[next]; next != 0 && x.Standby() && !m.isConn(next) {
 		if err := m.connect(env, x); err != nil {
 			m.disconnect(env, x)
 			m.mu.Lock()
@@ -473,6 +493,9 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 	m.routeGroup(env, g, next)
 	env.Set(fmt.Sprintf("exits:active:%d", g.ID), strconv.FormatInt(next, 10))
 	to := "keiner (" + map[string]string{"block": "gesperrt", "direct": "direkt über den Server"}[g.OnFail] + ")"
+	if g.Blocked != "" {
+		to = "keiner (gesperrt – Datenlimit der Gruppe)"
+	}
 	if e := exits[next]; e != nil {
 		to = "„" + e.Name + "“"
 	}

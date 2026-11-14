@@ -4,7 +4,7 @@
   import { limitsSummary, WEEKDAYS } from '../lib/format.js';
 
   // Limits: Datenvolumen, Zeitraum, Verhalten bei Limit, Grundtempo, Drosselstufen, Geräte
-  // exit: für Ausgänge (ohne Zugänge, „Abschalten“ statt „Sperren“)
+  // exit: für Ausgänge (true/'exit': „Abschalten“) bzw. Gruppen ('group': „Sperren“) – ohne Zugänge
   let { value = $bindable(), exit = false } = $props();
 
   $effect.pre(() => {
@@ -30,7 +30,7 @@
 
 {#if value}
   <div class="stack">
-    <div class="notice"><Icon name="info" /> <span>{exit ? limitsSummary(value).replace('danach gesperrt', 'danach abgeschaltet') : limitsSummary(value)}</span></div>
+    <div class="notice"><Icon name="info" /> <span>{exit && exit !== 'group' ? limitsSummary(value).replace('danach gesperrt', 'danach abgeschaltet') : limitsSummary(value)}</span></div>
 
     <section>
       <h3><Icon name="layers" size={16} /> Datenvolumen</h3>
@@ -75,7 +75,7 @@
               <span class="ic"><Icon name="gauge" /></span><span><span class="strong">Drosseln</span><br /><span class="muted small">Weiter nutzbar, aber langsam</span></span>
             </button>
             <button type="button" class="choice" class:active={value.on_limit === 'block'} onclick={() => (value.on_limit = 'block')}>
-              <span class="ic"><Icon name="lock" /></span><span><span class="strong">{exit ? 'Abschalten' : 'Sperren'}</span><br /><span class="muted small">{exit ? 'Bis zum nächsten Zeitraum – Gruppen schalten um' : 'Bis zum nächsten Zeitraum'}</span></span>
+              <span class="ic"><Icon name="lock" /></span><span><span class="strong">{exit && exit !== 'group' ? 'Abschalten' : 'Sperren'}</span><br /><span class="muted small">{exit === 'group' ? 'Kein Verkehr mehr über die Gruppe bis zum nächsten Zeitraum' : exit ? 'Bis zum nächsten Zeitraum – Gruppen schalten um' : 'Bis zum nächsten Zeitraum'}</span></span>
             </button>
           </div>
         </div>

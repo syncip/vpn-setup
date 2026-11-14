@@ -87,6 +87,10 @@ var migrations = []string{
 	// Login-Sperre nach Adresse (IPv4 einzeln, IPv6 je /64); until 0 = dauerhaft
 	`CREATE TABLE login_locks (net TEXT PRIMARY KEY, until INTEGER NOT NULL DEFAULT 0, manual INTEGER NOT NULL DEFAULT 0,
 	   strikes INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL);`,
+	// Verkehr über die Ausgangsgruppen je Stunde (dem jeweils aktiven Ausgang zugerechnet)
+	`CREATE TABLE group_traffic (group_id INTEGER NOT NULL, hour INTEGER NOT NULL, up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
+	   PRIMARY KEY (group_id, hour));
+	 CREATE INDEX group_traffic_hour ON group_traffic(hour);`,
 }
 
 // SchemaVersion: Stand der Datenbank, den dieses Programm kennt (für die Prüfung von Sicherungen).
@@ -558,6 +562,9 @@ func (s *Store) PruneTraffic(before int64) error {
 	_, err := s.db.Exec(`DELETE FROM traffic WHERE hour < ?`, before)
 	if err == nil {
 		_, err = s.db.Exec(`DELETE FROM exit_traffic WHERE hour < ?`, before)
+	}
+	if err == nil {
+		_, err = s.db.Exec(`DELETE FROM group_traffic WHERE hour < ?`, before)
 	}
 	return err
 }

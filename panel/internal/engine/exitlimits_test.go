@@ -198,3 +198,38 @@ func TestSeedAlarms(t *testing.T) {
 		t.Fatal("gelöschte Alarme kommen wieder")
 	}
 }
+
+func TestGroupLimit(t *testing.T) {
+	e, _ := newTest(t)
+	gr := &store.Object{Kind: "group", Name: "AL", Enabled: true, Data: store.M{"slot": 1, "exits": []int64{},
+		"limits": store.Limits{TrafficGB: 2, Period: "daily", OnLimit: "block"}}}
+	if err := e.St.SaveObject(gr); err != nil {
+		t.Fatal(err)
+	}
+	_ = e.St.AddGroupTraffic(gr.ID, time.Now().Unix(), GB, GB)
+	if !e.checkExitLimits() {
+		t.Fatal("Gruppen-Limit nicht erkannt")
+	}
+	_, gs := e.LoadExits()
+	if len(gs) != 1 || gs[0].Blocked == "" {
+		t.Fatalf("Gruppe nicht gesperrt: %+v", gs)
+	}
+	if err := e.SwitchExit(gr.ID, 1); err == nil || !strings.Contains(err.Error(), "Datenlimit") {
+		t.Fatalf("Umschalten trotz Sperre: %v", err)
+	}
+	if err := e.ResetUsage("group", gr.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.checkExitLimits()
+	if _, gs := e.LoadExits(); gs[0].Blocked != "" {
+		t.Fatal("nach Zurücksetzen noch gesperrt")
+	}
+	// gedrosselte Gruppe: Geschwindigkeit gilt für ihren aktiven Ausgang
+	gr.Data["limits"] = store.Limits{TrafficGB: 1, Period: "daily", OnLimit: "throttle", LimitDownMbit: 4}
+	_ = e.St.SaveObject(gr)
+	_ = e.St.AddGroupTraffic(gr.ID, time.Now().Unix(), GB, GB)
+	e.checkExitLimits()
+	if s := e.savedGroupLimits()[gr.ID]; s.Status != "throttled" || s.RateDown != 4 {
+		t.Fatalf("Drosselung: %+v", s)
+	}
+}

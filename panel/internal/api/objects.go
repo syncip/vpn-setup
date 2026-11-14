@@ -39,17 +39,20 @@ type exitRow struct {
 }
 
 type groupRow struct {
-	ID      int64              `json:"id"`
-	Name    string             `json:"name"`
-	Enabled bool               `json:"enabled"`
-	Exits   []int64            `json:"exits"`
-	OnFail  string             `json:"on_fail"`
-	MaxLoss float64            `json:"max_loss"`
-	MaxRTT  float64            `json:"max_rtt"`
-	MinMbit float64            `json:"min_mbit"`
-	DNS     string             `json:"dns"`
-	Status  *exits.GroupStatus `json:"status"`
-	Users   []map[string]any   `json:"users"`
+	ID      int64                       `json:"id"`
+	Name    string                      `json:"name"`
+	Enabled bool                        `json:"enabled"`
+	Exits   []int64                     `json:"exits"`
+	OnFail  string                      `json:"on_fail"`
+	MaxLoss float64                     `json:"max_loss"`
+	MaxRTT  float64                     `json:"max_rtt"`
+	MinMbit float64                     `json:"min_mbit"`
+	DNS     string                      `json:"dns"`
+	Status  *exits.GroupStatus          `json:"status"`
+	Users   []map[string]any            `json:"users"`
+	Limits  *store.Limits               `json:"limits"`  // nil = keine
+	Limit   *engine.ExitLimitState      `json:"limit"`   // Verbrauch und Status im Zeitraum
+	Traffic map[string]store.ExitTotals `json:"traffic"` // day | month (über die Gruppe gelaufen)
 }
 
 func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
@@ -63,10 +66,18 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 	errs := a.E.Errors()
 	inGroups := map[int64][]int64{}
 	groups := []*groupRow{}
+	glim := a.E.GroupLimitStates()
+	now0 := time.Now()
+	gtDay, _ := a.St.GroupTraffic(now0.Add(-24 * time.Hour).Unix())
+	gtMonth, _ := a.St.GroupTraffic(now0.AddDate(0, 0, -30).Unix())
 	for _, o := range gro {
 		g := exits.GroupFrom(o)
 		row := &groupRow{ID: g.ID, Name: g.Name, Enabled: g.Enabled, Exits: g.Exits, OnFail: g.OnFail, MaxLoss: g.MaxLoss,
-			MaxRTT: g.MaxRTT, MinMbit: g.MinMbit, DNS: strings.Join(g.DNS, ", "), Users: []map[string]any{}}
+			MaxRTT: g.MaxRTT, MinMbit: g.MinMbit, DNS: strings.Join(g.DNS, ", "), Users: []map[string]any{},
+			Limits: engine.ExitLimits(o), Traffic: map[string]store.ExitTotals{"day": gtDay[g.ID], "month": gtMonth[g.ID]}}
+		if st, ok := glim[g.ID]; ok {
+			row.Limit = &st
+		}
 		if row.Exits == nil {
 			row.Exits = []int64{}
 		}
@@ -236,26 +247,9 @@ func (a *API) saveExit(w http.ResponseWriter, r *http.Request, o *store.Object) 
 		}
 		o.Data["check_min"] = *in.CheckMin
 	}
-	if len(in.Limits) > 0 {
-		if string(in.Limits) == "null" {
-			delete(o.Data, "limits")
-		} else {
-			var l store.Limits
-			if err := json.Unmarshal(in.Limits, &l); err != nil {
-				errJSON(w, http.StatusBadRequest, "Limits: "+err.Error())
-				return
-			}
-			if err := engine.ValidateLimits(&l); err != nil {
-				errJSON(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			l.MaxDevices = 0 // gibt es bei Ausgängen nicht
-			if l.HasAny() {
-				o.Data["limits"] = l
-			} else {
-				delete(o.Data, "limits")
-			}
-		}
+	if msg := setObjLimits(o, in.Limits); msg != "" {
+		errJSON(w, http.StatusBadRequest, msg)
+		return
 	}
 	if o.ID == 0 {
 		slot, err := a.E.NewSlot("exit")
@@ -321,9 +315,42 @@ func (a *API) deleteExit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// resetExitUsage: Verbrauch eines Ausgangs im laufenden Zeitraum auf 0 setzen.
+// setObjLimits übernimmt Limits aus der Eingabe (fehlt = unverändert, null = keine). Fehlertext oder "".
+func setObjLimits(o *store.Object, raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	if string(raw) == "null" {
+		delete(o.Data, "limits")
+		return ""
+	}
+	var l store.Limits
+	if err := json.Unmarshal(raw, &l); err != nil {
+		return "Limits: " + err.Error()
+	}
+	if err := engine.ValidateLimits(&l); err != nil {
+		return err.Error()
+	}
+	l.MaxDevices = 0 // gibt es bei Ausgängen und Gruppen nicht
+	if l.HasAny() {
+		o.Data["limits"] = l
+	} else {
+		delete(o.Data, "limits")
+	}
+	return ""
+}
+
+// resetExitUsage / resetGroupUsage: Verbrauch im laufenden Zeitraum auf 0 setzen.
 func (a *API) resetExitUsage(w http.ResponseWriter, r *http.Request) {
-	if err := a.E.ResetExitUsage(pathID(r)); err != nil {
+	if err := a.E.ResetUsage("exit", pathID(r)); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (a *API) resetGroupUsage(w http.ResponseWriter, r *http.Request) {
+	if err := a.E.ResetUsage("group", pathID(r)); err != nil {
 		fail(w, err)
 		return
 	}
@@ -361,14 +388,15 @@ func (a *API) checkExit(w http.ResponseWriter, r *http.Request) {
 }
 
 type groupInput struct {
-	Name    *string  `json:"name"`
-	Enabled *bool    `json:"enabled"`
-	Exits   []int64  `json:"exits"`
-	OnFail  string   `json:"on_fail"`
-	MaxLoss *float64 `json:"max_loss"`
-	MaxRTT  *float64 `json:"max_rtt"`
-	MinMbit *float64 `json:"min_mbit"`
-	DNS     *string  `json:"dns"`
+	Name    *string         `json:"name"`
+	Enabled *bool           `json:"enabled"`
+	Exits   []int64         `json:"exits"`
+	OnFail  string          `json:"on_fail"`
+	MaxLoss *float64        `json:"max_loss"`
+	MaxRTT  *float64        `json:"max_rtt"`
+	MinMbit *float64        `json:"min_mbit"`
+	DNS     *string         `json:"dns"`
+	Limits  json.RawMessage `json:"limits"` // fehlt = unverändert, null = keine Limits
 }
 
 func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, o *store.Object) {
@@ -442,6 +470,10 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, o *store.Object)
 		}
 		o.Data["dns"] = strings.Join(ok, ",")
 	}
+	if msg := setObjLimits(o, in.Limits); msg != "" {
+		errJSON(w, http.StatusBadRequest, msg)
+		return
+	}
 	if o.ID == 0 {
 		slot, err := a.E.NewSlot("group")
 		if err != nil {
@@ -490,6 +522,7 @@ func (a *API) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "Die Gruppe "+msg)
 		return
 	}
+	_ = a.St.DeleteGroupTraffic(o.ID)
 	if err := a.St.DeleteObject("group", o.ID); err != nil {
 		fail(w, err)
 		return
@@ -718,6 +751,12 @@ func (a *API) deleteIPList(w http.ResponseWriter, r *http.Request) {
 	a.E.Log("warn", "IP-Liste „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// exitLive: aktueller Durchsatz je Ausgang und Gruppe (Byte/s), für die Live-Anzeige.
+func (a *API) exitLive(w http.ResponseWriter, r *http.Request) {
+	ex, gr, act := a.E.ExitLive()
+	writeJSON(w, map[string]any{"ts": time.Now().UnixMilli(), "exits": ex, "groups": gr, "active": act})
 }
 
 // exitTraffic: Verkehr je Ausgang als Zeitreihe (?days=1|7|30|90).

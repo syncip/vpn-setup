@@ -136,7 +136,20 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   = Download) oder **abgeschaltet**: der Tunnel wird getrennt und Gruppen schalten wie bei einem Ausfall
   auf den nächsten Ausgang um. Im nächsten Zeitraum, bei höherem Limit oder nach „Verbrauch zurücksetzen“
   (der Verlauf bleibt) verbindet er sich von selbst wieder. Geprüft wird bei jeder Statistik-Runde
-  (Vorgabe 60 s); ein neu verbundener Ausgang bekommt die Drosselung dabei wieder.
+  (Vorgabe 60 s); ein neu verbundener Ausgang bekommt die Drosselung dabei wieder. Wird der aktive
+  Ausgang einer Gruppe abgeschaltet (Limit oder von Hand), schaltet die Gruppe **sofort** um – ohne auf
+  die nächste Prüfung zu warten.
+- **Limits je Gruppe** (Knopf „Limit“ auf der Gruppenkarte oder im Gruppen-Editor): gezählt wird
+  hoch + runter am jeweils aktiven Ausgang der Gruppe (stündlich gespeichert, Verkehr heute / 30 Tage
+  auf der Karte). **Drosseln** bremst den aktiven Ausgang (nutzen ihn weitere Gruppen, sind sie
+  mitgebremst; gilt auch ein eigenes Ausgangs-Limit, zählt das langsamere). **Sperren** lässt keinen
+  Verkehr mehr über die Gruppe – auch nicht direkt, selbst bei „Bei Ausfall: direkt“.
+- **Zustand** je Ausgang als farbiges Abzeichen: *Verbunden*, *Instabil*, *Gestört*, *Getrennt*,
+  *Bereitschaft*, *Wird geprüft*, *Abgeschaltet* (Limit), *Deaktiviert*, dazu *gedrosselt*; darunter
+  der Grund. Gruppen zeigen ihre Mitglieder genauso.
+- **Live-Anzeige** (Übersicht und Ausgänge): Durchsatz je Ausgang und Gruppe alle 2 Sekunden,
+  Diagramm der letzten 2–30 Minuten (gesammelt, solange die Seite offen ist); Zeile anklicken = nur
+  dieser Ausgang bzw. diese Gruppe.
 - **Gruppen:** mehrere Ausgänge in fester Reihenfolge. Alle 30 Sekunden prüft der Server jeden Ausgang
   (Ping, HTTPS-Abruf über den Tunnel → öffentliche IP und Land; auf Wunsch ein Geschwindigkeitstest mit
   5 MB, Einstellung `exit_speedtest`). Überschreitet der aktive Ausgang die Grenzen (Verlust,
@@ -431,7 +444,7 @@ unabhängig von den Anlässen unter „Benachrichtigungen“ (nur der Mailserver
 
 - **Arten:** CPU, Arbeitsspeicher, Speicherplatz (%), Durchsatz (Mbit/s), Fehler beim Anwenden,
   Sicherheitsupdates, Unbound, Ablauf des DoH/DoT-Zertifikats, Login-Sperren; je Ausgang Verbrauch in %
-  vom Limit oder in GB, Limit erreicht, Ausgang gestört; Ausgangsgruppe ohne Ausgang; je Nutzer Verbrauch
+  vom Limit oder in GB, Limit erreicht, Ausgang gestört; je Gruppe Verbrauch in % vom Limit, Limit erreicht, Gruppe ohne Ausgang; je Nutzer Verbrauch
   in % vom Datenlimit und Limit erreicht. Für Ausgänge, Gruppen und Nutzer: alle oder ein bestimmter.
 - **Dauer:** gemeldet wird erst, wenn die Bedingung so viele Minuten ohne Unterbrechung gilt (gegen Spitzen).
 - **Melden:** einmal oder wiederholt (stündlich bis wöchentlich), solange der Alarm besteht; auf Wunsch

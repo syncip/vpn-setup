@@ -67,9 +67,19 @@ func (e *Engine) Attention(version string) []AttentionItem {
 			add("exit:"+strconv.FormatInt(x.ID, 10), "warn", "Ausgang „"+x.Name+"“ gestört", clip(s.Error, 160), "#/proxy/exits")
 		}
 		if groups, err := e.St.Objects("group"); err == nil {
+			glim := e.savedGroupLimits()
+			for _, g := range groups {
+				id := strconv.FormatInt(g.ID, 10)
+				switch l := glim[g.ID]; l.Status {
+				case "blocked":
+					add("grouplimit:"+id, "warn", "Gruppe „"+g.Name+"“ gesperrt", l.Reason+" – bis zum nächsten Zeitraum. Limit erhöhen oder Verbrauch zurücksetzen.", "#/proxy/groups")
+				case "throttled":
+					add("grouplimit:"+id, "info", "Gruppe „"+g.Name+"“ gedrosselt", l.Reason, "#/proxy/groups")
+				}
+			}
 			for _, g := range groups {
 				st, ok := gs[g.ID]
-				if !g.Enabled || !ok || (st.State != "blocked" && st.State != "direct") {
+				if !g.Enabled || !ok || st.Limit || (st.State != "blocked" && st.State != "direct") {
 					continue
 				}
 				what := map[string]string{"blocked": "Verkehr gesperrt", "direct": "Verkehr läuft direkt über den Server"}[st.State]

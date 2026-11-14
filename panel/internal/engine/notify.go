@@ -241,7 +241,7 @@ func (e *Engine) watch(version string) {
 			if !ok || g.State == "waiting" || g.State == "" {
 				continue
 			}
-			bad := g.State == "blocked" || g.State == "direct"
+			bad := !g.Limit && (g.State == "blocked" || g.State == "direct") // Datenlimit meldet der Alarm
 			what := map[string]string{"blocked": "Verkehr gesperrt", "direct": "Verkehr läuft direkt über den Server"}[g.State]
 			e.watchState("exit", "group:"+strconv.FormatInt(id, 10), bad,
 				"Ausgangsgruppe „"+name+"“ ohne Ausgang", "Die Ausgangsgruppe „"+name+"“ hat keinen funktionierenden Ausgang mehr ("+what+").\n\nGrund: "+g.Reason,

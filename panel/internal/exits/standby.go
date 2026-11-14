@@ -105,7 +105,7 @@ func (m *Manager) CheckAll(env *Env, exits []*Exit, groups []*Group, speedEvery 
 func (m *Manager) failoverCandidates(env *Env, groups []*Group, byID map[int64]*Exit, probe func(*Exit)) {
 	tried := map[int64]bool{}
 	for _, g := range groups {
-		if !g.Enabled || g.Slot < 1 {
+		if !g.Enabled || g.Slot < 1 || g.Blocked != "" {
 			continue
 		}
 		cur := m.active(env, g, byID)

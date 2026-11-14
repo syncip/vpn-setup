@@ -338,6 +338,7 @@ func proto2addr(p *store.Peer) string {
 
 // seedDemoExitTraffic: zwei Wochen Verkehr über die Ausgänge (nur Testmodus).
 func seedDemoExitTraffic(e *engine.Engine) error {
+	seedDemoGroupTraffic(e)
 	if t, _ := e.St.ExitTraffic(0); len(t) > 0 {
 		return nil
 	}
@@ -355,4 +356,24 @@ func seedDemoExitTraffic(e *engine.Engine) error {
 		}
 	}
 	return nil
+}
+
+// seedDemoGroupTraffic: zwei Wochen Verkehr über die Gruppen (nur Testmodus).
+func seedDemoGroupTraffic(e *engine.Engine) {
+	if t, _ := e.St.GroupTraffic(0); len(t) > 0 {
+		return
+	}
+	groups, _ := e.St.Objects("group")
+	now := time.Now().Unix()
+	for i, g := range groups {
+		for h := int64(0); h < 14*24; h++ {
+			ts := now - h*3600
+			hour := (ts / 3600) % 24
+			down := int64(30_000_000/(i+1)) * (1 + (hour+int64(i)*3)%6)
+			if hour < 7 {
+				down /= 8
+			}
+			_ = e.St.AddGroupTraffic(g.ID, ts, down/9, down)
+		}
+	}
 }

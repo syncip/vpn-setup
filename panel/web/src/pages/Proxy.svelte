@@ -11,6 +11,9 @@
   import TimeChart from '../components/TimeChart.svelte';
   import LimitsForm from '../components/LimitsForm.svelte';
   import Usage from '../components/Usage.svelte';
+  import ExitLive from '../components/ExitLive.svelte';
+  import StateBadge from '../components/StateBadge.svelte';
+  import { exitState, toneClass } from '../lib/exitstate.js';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { ago, clone, date, fmtNum, bytes, limitsSummary } from '../lib/format.js';
@@ -58,16 +61,16 @@
     waiting: ['muted', 'Wird geprüft …'],
   };
 
+  // [Badge-Klasse, Text] – Grundlage ist exitState (lib/exitstate.js)
   function health(e) {
-    const s = e.status;
-    if (!e.enabled) return ['muted', 'deaktiviert'];
-    if (e.limit?.status === 'blocked') return ['warn', 'Limit erreicht – abgeschaltet'];
-    if (!s || !s.checked) return ['muted', 'noch nicht geprüft'];
-    if (!s.up) return ['bad', s.error || 'nicht verbunden'];
-    if (s.error) return ['bad', s.error];
-    if (s.loss >= 50) return ['bad', `${fmtNum(s.loss)} % Verlust`];
-    if (s.loss > 10 || s.rtt > 300) return ['warn', 'instabil'];
-    return ['ok', 'verbunden'];
+    const st = exitState(e);
+    return [toneClass(st.tone), st.tone === 'bad' ? `${st.label}: ${st.detail}` : st.label];
+  }
+  // Zustand einer Gruppe (Datenlimit vor Ausfall)
+  function groupState(g) {
+    if (!g.enabled) return ['muted', 'deaktiviert'];
+    if (g.limit?.status === 'blocked' || g.status?.limit) return ['warn', 'Gesperrt – Datenlimit'];
+    return STATE[g.status?.state || 'waiting'] || ['muted', 'wird geprüft'];
   }
 
   // ---------- Übersicht ----------
@@ -204,11 +207,13 @@
 
   // ---------- Limits ----------
   let limOpen = $state(false);
+  let limKind = $state('exit'); // exit | group
   let limCur = $state(null);
   let limOn = $state(false);
   let lim = $state(null);
   let limBusy = $state(false);
-  function openLimit(e) {
+  function openLimit(e, kind = 'exit') {
+    limKind = kind;
     limCur = e;
     limOn = !!e.limits;
     lim = e.limits ? clone(e.limits) : { traffic_gb: 0, period: 'monthly', reset_day: 1, on_limit: 'block', tiers: [] };
@@ -216,18 +221,19 @@
   }
   async function saveLimit() {
     limBusy = true;
-    const r = await run(() => put(`/exits/${limCur.id}`, { limits: limOn ? lim : null }), limOn ? 'Limit gespeichert' : 'Limit entfernt');
+    const r = await run(() => put(`/${limKind === 'group' ? 'groups' : 'exits'}/${limCur.id}`, { limits: limOn ? lim : null }), limOn ? 'Limit gespeichert' : 'Limit entfernt');
     limBusy = false;
     if (r) {
       limOpen = false;
       load();
     }
   }
-  async function resetUsage(e) {
-    if (!(await confirmDialog({ title: `Verbrauch von ${e.name} zurücksetzen?`, text: 'Der Verbrauch im laufenden Zeitraum zählt wieder ab 0 – ein abgeschalteter Ausgang verbindet sich wieder. Der Verlauf bleibt erhalten.', ok: 'Zurücksetzen' }))) return;
-    if (!(await run(() => post(`/exits/${e.id}/reset-usage`), 'Verbrauch zurückgesetzt'))) return;
+  async function resetUsage(e, kind = limKind) {
+    const g = kind === 'group';
+    if (!(await confirmDialog({ title: `Verbrauch von ${e.name} zurücksetzen?`, text: `Der Verbrauch im laufenden Zeitraum zählt wieder ab 0 – ${g ? 'eine gesperrte Gruppe nutzt wieder ihre Ausgänge' : 'ein abgeschalteter Ausgang verbindet sich wieder'}. Der Verlauf bleibt erhalten.`, ok: 'Zurücksetzen' }))) return;
+    if (!(await run(() => post(`/${g ? 'groups' : 'exits'}/${e.id}/reset-usage`), 'Verbrauch zurückgesetzt'))) return;
     await load();
-    if (limCur?.id === e.id) limCur = d.exits.find((x) => x.id === e.id) || limCur;
+    if (limCur?.id === e.id) limCur = (g ? d.groups : d.exits).find((x) => x.id === e.id) || limCur;
   }
   const LIMIT_STATE = { blocked: ['bad', 'abgeschaltet'], throttled: ['warn', 'gedrosselt'] };
 
@@ -364,7 +370,7 @@
     <div class="card-head"><h3>Gruppen und aktiver Ausgang</h3></div>
     <div class="list">
       {#each d.groups as g}
-        {@const st = STATE[g.status?.state || (g.enabled ? 'waiting' : '')] || ['muted', 'deaktiviert']}
+        {@const st = groupState(g)}
         {@const act = exitById[g.status?.active]}
         <button class="item linkitem" onclick={() => go('/proxy/groups')}>
           <Icon name="layers" size={18} />
@@ -373,7 +379,7 @@
             <div class="muted tiny">{g.exits.length} Ausgänge · {g.users.length ? `genutzt von ${g.users.map((u) => u.name).slice(0, 4).join(', ')}${g.users.length > 4 ? ' …' : ''}` : 'von keiner Regel genutzt'}</div>
           </div>
           <span class="small">{act ? act.name : '–'}{#if act?.status?.loc}&nbsp;<span class="badge">{act.status.loc}</span>{/if}</span>
-          <span class="badge {st[0]}">{g.enabled ? st[1] : 'deaktiviert'}</span>
+          <span class="badge {st[0]}">{st[1]}</span>
         </button>
       {:else}
         <div class="empty small">{d.exits.length ? 'Noch keine Gruppe.' : 'Noch keine Ausgänge – lade unter „Ausgänge“ die Konfiguration deines VPN-Anbieters hoch.'}</div>
@@ -381,10 +387,12 @@
     </div>
   </div>
   {/snippet}
+  {#snippet w_live()}<ExitLive exits={d.exits} groups={d.groups} />{/snippet}
   <Board
     id="proxy"
     widgets={[
       { id: 'flow', title: 'Ziel-Regeln → Gruppen → Ausgänge', w: 12, body: w_flow },
+      { id: 'live', title: 'Live', w: 12, body: w_live, show: d.exits.length > 0 },
       { id: 'groups', title: 'Gruppen und aktiver Ausgang', w: 12, body: w_groups },
     ]}
   />
@@ -423,7 +431,7 @@
 <div class="muted small" style="margin-bottom:12px">Mehrere Ausgänge in fester Reihenfolge – fällt einer aus, übernimmt der nächste automatisch.</div>
 <div class="grid cols-2">
   {#each d.groups as g}
-    {@const st = STATE[g.status?.state || (g.enabled ? 'waiting' : '')] || ['muted', 'deaktiviert']}
+    {@const st = groupState(g)}
     {@const act = exitById[g.status?.active]}
     <div class="card group">
       <div class="card-head">
@@ -433,9 +441,23 @@
             Bei Ausfall aller: {g.on_fail === 'direct' ? 'direkt über den Server' : 'sperren'} · Grenzen {fmtNum(g.max_loss)} % Verlust, {fmtNum(g.max_rtt)} ms{g.min_mbit ? `, ${fmtNum(g.min_mbit)} Mbit/s` : ''}
           </div>
         </div>
-        <span class="badge {st[0]}">{g.enabled ? st[1] : 'deaktiviert'}</span>
+        <span class="badge {st[0]}">{st[1]}</span>
       </div>
       <div class="card-pad stack" style="gap:10px">
+        {#if g.limit}
+          {@const L = g.limit}
+          <button class="linkish glim" onclick={() => openLimit(g, 'group')} title={limitsSummary(g.limits).replace('danach gesperrt', 'danach Gruppe gesperrt')}>
+            <span class="spread tiny"><span class="strong"><Icon name="gauge" size={12} /> Limit</span><span class="muted">{#if L.next_reset}neu ab {date(L.next_reset)}{/if}</span></span>
+            <Usage used={L.used} limitGb={L.limits.traffic_gb} tiers={L.limits.tiers || []} />
+            {#if L.status !== 'ok' || L.rate_down || L.rate_up}
+              <span class="row wrap tiny" style="gap:6px;margin-top:4px">
+                {#if LIMIT_STATE[L.status]}<span class="badge {LIMIT_STATE[L.status][0]}">{L.status === 'blocked' ? 'gesperrt' : 'gedrosselt'}</span>{/if}
+                {#if L.rate_down || L.rate_up}<span class="muted">↓ {fmtNum(L.rate_down) || '∞'} ↑ {fmtNum(L.rate_up) || '∞'} Mbit/s</span>{/if}
+                {#if L.reason}<span class="muted">{L.reason}</span>{/if}
+              </span>
+            {/if}
+          </button>
+        {/if}
         {#if g.enabled}
           <div class="active-row">
             <Icon name="route" size={16} />
@@ -450,9 +472,9 @@
           {#each g.exits as id, i}
             {@const e = exitById[id]}
             {#if e}
-              {@const h = health(e)}
+              {@const est = exitState(e)}
               <li class:cur={g.status?.active === id}>
-                <span class="dot {h[0]}" class:on={h[0] === 'ok'}></span>
+                <StateBadge small tone={est.tone} label={est.label} icon={est.icon} title={est.detail} />
                 <span class="grow">{i + 1}. {e.name} {#if g.status?.pinned === id}<span class="badge accent" title="Von Hand gewählt – wird statt des ersten Ausgangs bevorzugt. Ausgang 1 wählen = normale Reihenfolge.">gewählt</span>{/if}</span>
                 <span class="muted tiny">{e.status?.rtt ? `${fmtNum(Math.round(e.status.rtt))} ms` : ''}</span>
                 {#if g.enabled && e.enabled && g.status?.active !== id}
@@ -470,7 +492,9 @@
       </div>
       <div class="actions">
         <button class="btn sm" onclick={() => openGroup(g)}><Icon name="edit" size={15} /> Bearbeiten</button>
+        <button class="btn sm" onclick={() => openLimit(g, 'group')}><Icon name="gauge" size={15} /> Limit</button>
         <span class="grow"></span>
+        {#if g.traffic}<span class="tiny muted" title="Über die Gruppe gelaufen (Verkehr des jeweils aktiven Ausgangs)">{bytes((g.traffic.day?.up || 0) + (g.traffic.day?.down || 0))} heute · {bytes((g.traffic.month?.up || 0) + (g.traffic.month?.down || 0))} 30 T.</span>{/if}
         <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeGroup(g)}><Icon name="trash" size={15} /></button>
       </div>
     </div>
@@ -490,8 +514,8 @@
         <thead><tr><th>Ausgang</th><th>Zustand</th><th>Messung</th><th>Öffentliche IP</th><th class="right">Verkehr <Info title="Verkehr" text="Oben: letzte 24 Stunden, unten: letzte 30 Tage (hoch + runter)." /></th><th>Limit <Info title="Limit" text="Datenvolumen je Zeitraum (hoch + runter, gezählt an der Schnittstelle des Ausgangs), Geschwindigkeit und Drosselstufen – wie bei Nutzern. Beim Erreichen wird der Ausgang gedrosselt oder abgeschaltet; Gruppen schalten dann auf den nächsten Ausgang um." /></th><th class="right">Prüfen</th><th></th></tr></thead>
         <tbody>
           {#each d.exits as e}
-            {@const h = health(e)}
             {@const s = e.status}
+            {@const st = exitState(e)}
             <tr class:off={!e.enabled}>
               <td>
                 <div class="row" style="gap:8px">
@@ -503,7 +527,11 @@
                 </div>
               </td>
               <td>
-                <span class="badge {h[0]}">{h[1]}</span>
+                <div class="row wrap" style="gap:4px">
+                  <StateBadge tone={st.tone} label={st.label} icon={st.icon} title={st.detail} />
+                  {#if e.limit?.status === 'throttled'}<StateBadge small tone="warn" icon="gauge" label="gedrosselt" title={e.limit.reason} />{/if}
+                </div>
+                {#if st.tone !== 'ok' && st.tone !== 'muted'}<div class="tiny stdetail" class:bad-text={st.tone === 'bad'}>{st.detail}</div>{/if}
                 <div class="tiny muted nowrap">
                   {#if e.mode === 'standby'}
                     <span title="Bereitschaft: nur verbunden, solange eine Gruppe den Ausgang nutzt">{s?.connected ? (s?.next_check ? 'Bereitschaft · gerade verbunden' : 'Bereitschaft · in Benutzung') : 'Bereitschaft · getrennt'}</span>
@@ -560,6 +588,7 @@
     </div>
   </div>
   {/snippet}
+  {#snippet w_live()}<ExitLive exits={d.exits} groups={d.groups} />{/snippet}
   {#snippet w_traffic()}
   <div class="card">
     <div class="card-head">
@@ -596,6 +625,7 @@
     id="proxy-exits"
     widgets={[
       { id: 'exits', title: 'Ausgänge', w: 12, body: w_exits },
+      { id: 'live', title: 'Live', w: 12, body: w_live, show: d.exits.length > 0 },
       { id: 'traffic', title: 'Verkehr über die Ausgänge', w: 12, body: w_traffic, show: d.exits.length > 0 },
     ]}
   />
@@ -643,16 +673,16 @@
   {/snippet}
 </Modal>
 
-<Modal bind:open={limOpen} title={limCur ? `Limit für ${limCur.name}` : 'Limit'} width={680}>
+<Modal bind:open={limOpen} title={limCur ? `Limit für ${limKind === 'group' ? 'Gruppe ' : ''}${limCur.name}` : 'Limit'} width={680}>
   {#if limCur}
     <div class="stack">
-      <label class="switch"><input type="checkbox" bind:checked={limOn} /><span class="track"></span> Limits für diesen Ausgang</label>
+      <label class="switch"><input type="checkbox" bind:checked={limOn} /><span class="track"></span> Limits für {limKind === 'group' ? 'diese Gruppe' : 'diesen Ausgang'}</label>
       {#if limCur.limit}
         <div class="card-pad limnow">
           <div class="spread small"><span class="strong">Im laufenden Zeitraum</span>{#if limCur.limit.next_reset}<span class="muted">neu ab {date(limCur.limit.next_reset, true)}</span>{/if}</div>
           <Usage used={limCur.limit.used} limitGb={limCur.limit.limits.traffic_gb} tiers={limCur.limit.limits.tiers || []} />
           <div class="row wrap tiny muted" style="gap:10px;margin-top:6px">
-            <span>↓ {bytes(limCur.limit.down)} vom Anbieter · ↑ {bytes(limCur.limit.up)} zum Anbieter</span>
+            <span>↓ {bytes(limCur.limit.down)} runter · ↑ {bytes(limCur.limit.up)} hoch</span>
             <span class="grow"></span>
             <button class="btn sm" onclick={() => resetUsage(limCur)}><Icon name="refresh" size={13} /> Verbrauch zurücksetzen</button>
           </div>
@@ -660,10 +690,14 @@
         </div>
       {/if}
       {#if limOn}
-        <LimitsForm bind:value={lim} exit />
-        <div class="notice small"><Icon name="info" size={16} /><span>Gezählt wird hoch + runter an der Schnittstelle des Ausgangs (auch Prüfungen und Speedtests). „Download“ ist, was vom Anbieter kommt. Ein abgeschalteter Ausgang verbindet sich im nächsten Zeitraum, bei höherem Limit oder nach „Verbrauch zurücksetzen“ von selbst wieder.</span></div>
+        <LimitsForm bind:value={lim} exit={limKind} />
+        {#if limKind === 'group'}
+          <div class="notice small"><Icon name="info" size={16} /><span>Gezählt wird hoch + runter am jeweils aktiven Ausgang der Gruppe. <b>Drosseln</b> bremst den aktiven Ausgang (nutzen ihn weitere Gruppen, sind sie mitgebremst). <b>Sperren</b> lässt keinen Verkehr mehr über die Gruppe – auch nicht direkt, selbst wenn die Gruppe bei Ausfall „direkt“ weiterleiten würde. Im nächsten Zeitraum, bei höherem Limit oder nach „Verbrauch zurücksetzen“ geht es von selbst weiter.</span></div>
+        {:else}
+          <div class="notice small"><Icon name="info" size={16} /><span>Gezählt wird hoch + runter an der Schnittstelle des Ausgangs (auch Prüfungen und Speedtests). „Download“ ist, was vom Anbieter kommt. Ein abgeschalteter Ausgang wird sofort getrennt, Gruppen schalten auf den nächsten Ausgang um. Im nächsten Zeitraum, bei höherem Limit oder nach „Verbrauch zurücksetzen“ verbindet er sich von selbst wieder.</span></div>
+        {/if}
       {:else}
-        <p class="muted small">Ohne Limits wird der Ausgang nie gedrosselt oder abgeschaltet. Der Verkehr wird trotzdem gezählt.</p>
+        <p class="muted small">Ohne Limits wird {limKind === 'group' ? 'die Gruppe' : 'der Ausgang'} nie gedrosselt oder {limKind === 'group' ? 'gesperrt' : 'abgeschaltet'}. Der Verkehr wird trotzdem gezählt.</p>
       {/if}
     </div>
   {/if}
@@ -714,6 +748,13 @@
       <div class="field"><label for="gr-mbit">Min. Tempo (Mbit/s) <Info title="Min. Tempo" text="Ist der Ausgang langsamer, gilt er als gestört. 0 = egal. Braucht den Geschwindigkeitstest („Geschwindigkeit messen“)." /></label><input id="gr-mbit" class="input" type="number" bind:value={gr.min_mbit} placeholder="0 = egal" /></div>
     </div>
     <div class="field"><label for="gr-dns">DNS-Server (über den Ausgang) <Info title="DNS über den Ausgang" text="Namen werden über den aktiven Ausgang aufgelöst, damit Dienste den passenden Standort sehen." /></label><input id="gr-dns" class="input mono" bind:value={gr.dns} /></div>
+    <div class="field">
+      <span class="label">Limit <Info title="Limit der Gruppe" text="Datenvolumen je Zeitraum, Geschwindigkeit und Drosselstufen für alles, was über die Gruppe läuft (gezählt am jeweils aktiven Ausgang). Beim Erreichen wird gedrosselt oder die Gruppe gesperrt." /></span>
+      <div class="row wrap" style="gap:10px">
+        <span class="small muted grow">{grCur?.limits ? limitsSummary(grCur.limits).replace('danach gesperrt', 'danach Gruppe gesperrt') : 'Keine Limits'}</span>
+        {#if grCur}<button type="button" class="btn sm" onclick={() => openLimit(grCur, 'group')}><Icon name="gauge" size={14} /> Limit einstellen</button>{:else}<span class="tiny muted">nach dem Anlegen einstellbar</span>{/if}
+      </div>
+    </div>
     <label class="switch"><input type="checkbox" bind:checked={gr.enabled} /><span class="track"></span> Aktiv</label>
   </div>
   {#snippet footer()}
@@ -736,6 +777,17 @@
 </Modal>
 
 <style>
+  .stdetail {
+    margin-top: 3px;
+    max-width: 260px;
+    color: var(--text-2);
+  }
+  .glim {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+  }
   .limcell {
     min-width: 140px;
     max-width: 170px;

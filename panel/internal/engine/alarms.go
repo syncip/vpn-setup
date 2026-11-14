@@ -52,6 +52,8 @@ var AlarmTypes = []AlarmType{
 	{"exit_limit", "Ausgänge", "Ausgang: Limit erreicht (abgeschaltet oder gedrosselt)", "", "exit", 0, 0, "Sobald ein Limit greift."},
 	{"exit_down", "Ausgänge", "Ausgang gestört", "", "exit", 0, 5, "Tunnel nicht verbunden oder kein Internet über den Ausgang."},
 	{"group_down", "Ausgänge", "Ausgangsgruppe ohne Ausgang", "", "group", 0, 2, "Alle Ausgänge der Gruppe gestört – Verkehr gesperrt oder direkt."},
+	{"group_usage", "Ausgänge", "Gruppe: Verbrauch vom Datenlimit", "%", "group", 80, 0, "Nur für Gruppen mit Datenlimit, im laufenden Zeitraum."},
+	{"group_limit", "Ausgänge", "Gruppe: Limit erreicht (gesperrt oder gedrosselt)", "", "group", 0, 0, "Sobald ein Limit der Gruppe greift."},
 	{"user_usage", "Nutzer", "Nutzer: Verbrauch vom Datenlimit", "%", "user", 90, 0, "Nur Nutzer mit Datenlimit (eigenes oder Tarif)."},
 	{"user_limit", "Nutzer", "Nutzer: Limit erreicht (gesperrt oder gedrosselt)", "", "user", 0, 0, "Datenlimit oder Drosselstufe greift."},
 }
@@ -223,7 +225,7 @@ func (e *Engine) alarmLoad() {
 
 // alarmOwnAttention: Arten, die „Braucht Aufmerksamkeit“ ohnehin schon zeigt (nicht doppelt).
 var alarmOwnAttention = map[string]bool{"disk": true, "mem": true, "errors": true, "updates": true, "unbound": true, "cert": true,
-	"exit_limit": true, "exit_down": true, "group_down": true}
+	"exit_limit": true, "exit_down": true, "group_down": true, "group_limit": true}
 
 // ActiveAlarms: alle Prüfpunkte, die gerade schlecht sind.
 func (e *Engine) ActiveAlarms() []ActiveAlarm {
@@ -397,6 +399,29 @@ func (e *Engine) evalAlarm(a *Alarm, c *alarmCtx) []alarmHit {
 		return one(n > 0 && float64(n) >= th, fmt.Sprintf("%d Adressen durch die Login-Sperre gesperrt", n), strings.Join(nets, "\n"), strconv.Itoa(n))
 	case "exit_usage", "exit_gb", "exit_limit", "exit_down":
 		return e.evalExitAlarm(a, c)
+	case "group_usage", "group_limit":
+		var out []alarmHit
+		lim := e.GroupLimitStates()
+		groups, _ := e.St.Objects("group")
+		for _, g := range groups {
+			l, ok := lim[g.ID]
+			if !g.Enabled || !ok || (a.Target != 0 && a.Target != g.ID) {
+				continue
+			}
+			key := "group:" + strconv.FormatInt(g.ID, 10)
+			name := "Gruppe „" + g.Name + "“"
+			if a.Type == "group_limit" {
+				out = append(out, alarmHit{Key: key, Bad: l.Status == "blocked" || l.Status == "throttled", Title: name + ": " + l.Reason,
+					Detail: fmt.Sprintf("Verbrauch: %s.%s", gbStr(l.Used), resetText(l.NextReset))})
+				continue
+			}
+			if l.Limits.TrafficGB <= 0 {
+				continue
+			}
+			out = append(out, alarmHit{Key: key, Bad: l.Percent >= a.Threshold, Title: name + ": " + pct(l.Percent) + " vom Datenlimit",
+				Detail: fmt.Sprintf("%s von %s GB im laufenden Zeitraum.%s", gbStr(l.Used), fmtNum(l.Limits.TrafficGB), resetText(l.NextReset)), Value: pct(l.Percent)})
+		}
+		return out
 	case "group_down":
 		var out []alarmHit
 		_, gs := e.Exits.Status()
@@ -406,7 +431,7 @@ func (e *Engine) evalAlarm(a *Alarm, c *alarmCtx) []alarmHit {
 				continue
 			}
 			st, ok := gs[g.ID]
-			bad := ok && (st.State == "blocked" || st.State == "direct")
+			bad := ok && !st.Limit && (st.State == "blocked" || st.State == "direct")
 			what := map[string]string{"blocked": "Verkehr gesperrt", "direct": "Verkehr läuft direkt über den Server"}[st.State]
 			out = append(out, alarmHit{Key: "group:" + strconv.FormatInt(g.ID, 10), Bad: bad, Title: "Ausgangsgruppe „" + g.Name + "“ ohne Ausgang",
 				Detail: strings.TrimSpace(what + "\n" + st.Reason)})

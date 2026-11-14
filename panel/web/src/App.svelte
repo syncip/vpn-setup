@@ -47,7 +47,7 @@
     ] },
     { title: 'Netz', items: [
       { path: '/network', label: 'Netzwerk', icon: 'network' },
-      { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route', keys: ['exit:', 'exitlimit:', 'group:'] },
+      { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route', keys: ['exit:', 'exitlimit:', 'group:', 'grouplimit:'] },
       { path: '/dns', label: 'DNS', icon: 'globe', keys: ['unbound', 'cert:'] },
       { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
     ] },

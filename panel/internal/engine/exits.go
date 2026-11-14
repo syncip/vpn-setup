@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,14 +39,20 @@ func (e *Engine) LoadExits() ([]*exits.Exit, []*exits.Group) {
 			e.setErr(fmt.Sprintf("exit:%d", o.ID), err.Error())
 			x.Enabled = false
 		}
-		if lim[o.ID].Status == "blocked" {
+		if l := lim[o.ID]; l.Status == "blocked" {
 			x.Enabled = false // Datenlimit erreicht – bis zum nächsten Zeitraum abgeschaltet
+			x.Blocked = l.Reason
 		}
 		xs = append(xs, x)
 	}
 	var gs []*exits.Group
+	glim := e.savedGroupLimits()
 	for _, o := range gro {
-		gs = append(gs, exits.GroupFrom(o))
+		g := exits.GroupFrom(o)
+		if l := glim[o.ID]; l.Status == "blocked" {
+			g.Blocked = l.Reason // Datenlimit der Gruppe erreicht – gesperrt
+		}
+		gs = append(gs, g)
 	}
 	return xs, gs
 }
@@ -132,6 +139,9 @@ func (e *Engine) SwitchExit(groupID, exitID int64) error {
 	g := exits.GroupFrom(o)
 	if !g.Enabled || g.Slot < 1 {
 		return fmt.Errorf("Gruppe ist deaktiviert")
+	}
+	if l := e.savedGroupLimits()[g.ID]; l.Status == "blocked" {
+		return fmt.Errorf("Gruppe ist durch ihr Datenlimit gesperrt (%s)", l.Reason)
 	}
 	xs, _ := e.LoadExits()
 	return e.Exits.Switch(e.exitEnv(), g, exitID, exitMap(xs))
@@ -245,6 +255,16 @@ func (e *Engine) collectExitTraffic(ts int64) {
 	}
 	prev := map[int64][2]uint64{}
 	_ = json.Unmarshal([]byte(e.St.GetSetting("state:exits:counters", "")), &prev)
+	// Gruppen, die einen Ausgang gerade nutzen: ihr Verkehr zählt für deren Limits
+	usedBy := map[int64][]int64{}
+	if e.Exits != nil {
+		_, gst := e.Exits.Status()
+		for gid, st := range gst {
+			if st.Active != 0 {
+				usedBy[st.Active] = append(usedBy[st.Active], gid)
+			}
+		}
+	}
 	cur := map[int64][2]uint64{}
 	for _, o := range objs {
 		dev := exits.IfName(o.ID)
@@ -268,6 +288,9 @@ func (e *Engine) collectExitTraffic(ts int64) {
 		}
 		if up+down > 0 {
 			_ = e.St.AddExitTraffic(o.ID, ts, int64(up), int64(down))
+			for _, gid := range usedBy[o.ID] {
+				_ = e.St.AddGroupTraffic(gid, ts, int64(up), int64(down))
+			}
 		}
 	}
 	b, _ := json.Marshal(cur)
@@ -278,4 +301,43 @@ func (e *Engine) collectExitTraffic(ts int64) {
 func (e *Engine) CheckExit(id int64, speed bool) (exits.ExitStatus, error) {
 	xs, _ := e.LoadExits()
 	return e.Exits.CheckOne(e.exitEnv(), exitMap(xs)[id], speed)
+}
+
+// ExitLive: aktueller Durchsatz je Ausgang und je Gruppe (Byte/s) für die Live-Anzeige. Eine Gruppe
+// zeigt den Durchsatz ihres aktiven Ausgangs. Im Testmodus Beispielwerte.
+func (e *Engine) ExitLive() (map[int64]ExitRate, map[int64]ExitRate, map[int64]int64) {
+	var rates map[int64]ExitRate
+	active := map[int64]int64{}
+	if e.Exits != nil {
+		_, gs := e.Exits.Status()
+		for gid, st := range gs {
+			active[gid] = st.Active
+		}
+	}
+	if e.Sys.DryRun() {
+		rates = map[int64]ExitRate{}
+		t := float64(time.Now().UnixMilli()) / 1000
+		xs, _ := e.LoadExits()
+		for _, x := range xs {
+			if !x.Enabled {
+				continue
+			}
+			used := 0.0
+			for _, a := range active {
+				if a == x.ID {
+					used++
+				}
+			}
+			f := float64(x.ID)
+			down := 2_000 + used*(2_500_000+1_800_000*math.Sin(t/(7+f)+f))
+			rates[x.ID] = ExitRate{Down: down, Up: down/9 + 500}
+		}
+	} else {
+		rates = e.ExitRates()
+	}
+	groups := map[int64]ExitRate{}
+	for gid, a := range active {
+		groups[gid] = rates[a]
+	}
+	return rates, groups, active
 }
