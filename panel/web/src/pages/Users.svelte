@@ -16,7 +16,7 @@
     const t = setInterval(() => (now = Date.now() / 1000), 15000);
     return () => clearInterval(t);
   });
-  import { go, protocol, toast } from '../lib/state.svelte.js';
+  import { go, protocol, toast, intent } from '../lib/state.svelte.js';
 
   let users = $state([]);
   let plans = $state([]);
@@ -29,6 +29,10 @@
   async function load() {
     [users, plans, servers] = await Promise.all([get('/users'), get('/plans'), get('/servers')]);
     loaded = true;
+    if (intent.create === 'user') {
+      intent.create = '';
+      openCreate();
+    }
   }
   load();
 

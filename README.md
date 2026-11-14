@@ -410,7 +410,7 @@ Panel-Version lässt sich erst nach einem Update einspielen.
 
 ## Portweiterleitungen prüfen
 
-**Einstellungen → System → Portweiterleitungen auf dem Host → Prüfen** testet jeden Port der aktiven Server
+**Zustand → Portweiterleitungen auf dem Host → Prüfen** testet jeden Port der aktiven Server
 von außen, ohne fremden Prüfdienst: Das Panel spricht die eigene öffentliche Adresse (aus der Server-Adresse)
 über einen verbundenen **Ausgang** an. Die Pakete kommen so wie von einem fremden Gerät aus dem Internet und
 laufen über die Weiterleitung auf dem Host. Eine vorübergehende nft-Tabelle `vpnpanel_portcheck` zählt nur

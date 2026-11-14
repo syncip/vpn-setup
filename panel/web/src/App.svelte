@@ -13,8 +13,10 @@
   import Proxy from './pages/Proxy.svelte';
   import IPLists from './pages/IPLists.svelte';
   import DNS from './pages/DNS.svelte';
-  import { session, meta, toasts, route, go } from './lib/state.svelte.js';
+  import Health from './pages/Health.svelte';
+  import { session, meta, toasts, route, go, status } from './lib/state.svelte.js';
   import { get, post } from './lib/api.js';
+  import { bytes, speed } from './lib/format.js';
 
   let navOpen = $state(false);
   let theme = $state(document.documentElement.dataset.theme || '');
@@ -34,17 +36,62 @@
     if (session.user && !meta.protocols.length) get('/meta').then((m) => Object.assign(meta, m));
   });
 
+  // Menü in Gruppen (gleiche Seiten und Adressen wie bisher; „Zustand“ bündelt System und Ereignisse)
   const nav = [
-    { path: '/', label: 'Übersicht', icon: 'home' },
-    { path: '/users', label: 'Nutzer', icon: 'users' },
-    { path: '/network', label: 'Netzwerk', icon: 'network' },
-    { path: '/servers', label: 'Server', icon: 'server' },
-    { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route' },
-    { path: '/dns', label: 'DNS', icon: 'globe' },
-    { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
-    { path: '/plans', label: 'Tarife & Limits', icon: 'tag' },
-    { path: '/settings', label: 'Einstellungen', icon: 'settings' },
+    { items: [{ path: '/', label: 'Übersicht', icon: 'home', count: true }] },
+    { title: 'Verwalten', items: [
+      { path: '/users', label: 'Nutzer', icon: 'users' },
+      { path: '/servers', label: 'Server', icon: 'server' },
+      { path: '/plans', label: 'Tarife & Limits', icon: 'tag' },
+    ] },
+    { title: 'Netz', items: [
+      { path: '/network', label: 'Netzwerk', icon: 'network' },
+      { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route', keys: ['exit:', 'group:'] },
+      { path: '/dns', label: 'DNS', icon: 'globe', keys: ['unbound', 'cert:'] },
+      { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
+    ] },
+    { title: 'System', items: [
+      { path: '/health', label: 'Zustand', icon: 'activity', keys: ['err:', 'port:', 'disk', 'mem', 'server_host'] },
+      { path: '/settings', label: 'Einstellungen', icon: 'settings' },
+    ] },
   ];
+
+  // Zustand alle 5 s (nur sichtbar und angemeldet)
+  async function pollStatus() {
+    if (!session.user || document.hidden) return;
+    try {
+      Object.assign(status, await get('/status'), { at: Date.now() });
+    } catch {
+      /* nächster Versuch */
+    }
+  }
+  $effect(() => {
+    if (!session.user) return;
+    pollStatus();
+    const t = setInterval(pollStatus, 5000);
+    const vis = () => !document.hidden && pollStatus();
+    document.addEventListener('visibilitychange', vis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', vis);
+    };
+  });
+  const issues = $derived(status.attention.filter((a) => a.level !== 'info'));
+  // schlimmster Zustand je Menüpunkt (Punkt rechts)
+  function navTone(n) {
+    if (!n.keys) return '';
+    const hit = issues.filter((a) => n.keys.some((k) => a.key.startsWith(k)));
+    return hit.some((a) => a.level === 'error') ? 'bad' : hit.length ? 'warn' : '';
+  }
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+  const memPct = $derived(pct(status.host?.mem_used, status.host?.mem_total));
+  const diskPct = $derived(pct(status.host?.disk_used, status.host?.disk_size));
+
+  // alte Adressen von System und Ereignissen (jetzt unter „Zustand“)
+  $effect(() => {
+    if (route.path === '/settings/system') go('/health');
+    else if (route.path === '/settings/events') go('/health/events');
+  });
 
   const parts = $derived(route.path.split('/').filter(Boolean));
   const section = $derived('/' + (parts[0] || ''));
@@ -93,9 +140,34 @@
           </div>
         </div>
       </div>
+      <a class="mini" href="#/health" title="Zustand des Servers – Details unter „Zustand“">
+        {#if status.host}
+          {@const h = status.host}
+          <div class="mrow"><span>CPU</span><span>{Math.round(h.cpu)} %</span></div>
+          <div class="bar"><i style="width:{Math.min(100, h.cpu)}%" class:hot={h.cpu > 85}></i></div>
+          <div class="mrow"><span>RAM</span><span title="{bytes(h.mem_used)} von {bytes(h.mem_total)}">{memPct} %</span></div>
+          <div class="bar"><i style="width:{memPct}%" class:hot={memPct > 90}></i></div>
+          {#if h.disk_size}
+            <div class="mrow"><span>Speicher</span><span title="{bytes(h.disk_used)} von {bytes(h.disk_size)}">{diskPct} %</span></div>
+            <div class="bar"><i style="width:{diskPct}%" class:hot={diskPct > 90}></i></div>
+          {/if}
+          <div class="mrow" title="Durchsatz auf {h.iface}"><span>Traffic</span><span class="nowrap"><Icon name="down" size={11} />{speed(h.rx)} <Icon name="up" size={11} />{speed(h.tx)}</span></div>
+          <div class="mrow"><span>Geräte online</span><span>{status.peers_online} / {status.peers}</span></div>
+        {:else}
+          <div class="mrow"><span>Lade Zustand …</span></div>
+        {/if}
+      </a>
       <nav>
-        {#each nav as n}
-          <a href="#{n.path}" class:active={active(n.path)}><Icon name={n.icon} /> {n.label}</a>
+        {#each nav as g}
+          {#if g.title}<div class="nav-title">{g.title}</div>{/if}
+          {#each g.items as n}
+            {@const tone = navTone(n)}
+            <a href="#{n.path}" class:active={active(n.path)}>
+              <Icon name={n.icon} /> <span class="grow">{n.label}</span>
+              {#if n.count && issues.length}<span class="nav-count" class:bad={issues.some((a) => a.level === 'error')} title="Braucht Aufmerksamkeit">{issues.length}</span>{/if}
+              {#if tone}<span class="nav-dot {tone}" title="Braucht Aufmerksamkeit"></span>{/if}
+            </a>
+          {/each}
         {/each}
       </nav>
       <div class="side-foot">
@@ -132,6 +204,8 @@
         <IPLists />
       {:else if section === '/plans'}
         <Plans />
+      {:else if section === '/health'}
+        <Health tab={parts[1] || 'overview'} />
       {:else if section === '/settings'}
         <Settings tab={parts[1] || 'general'} />
       {:else if section === '/account'}
@@ -184,12 +258,13 @@
     top: 0;
     height: 100vh;
     z-index: 30;
+    overflow-y: auto;
   }
   .brand {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 20px 18px 22px;
+    padding: 18px 18px 14px;
     color: #fff;
   }
   .host {
@@ -228,6 +303,82 @@
     background: var(--sidebar-hover);
     color: var(--sidebar-active);
     box-shadow: inset 3px 0 0 #6f88ff;
+  }
+  .mini {
+    display: grid;
+    gap: 4px;
+    margin: 0 12px 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--sidebar-text);
+    font-size: 12px;
+  }
+  .mini:hover {
+    background: var(--sidebar-hover);
+  }
+  .mrow {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .mrow span:last-child {
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .bar {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    margin-bottom: 3px;
+    overflow: hidden;
+  }
+  .bar i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: #6f88ff;
+    transition: width 0.6s;
+  }
+  .bar i.hot {
+    background: #f0a33a;
+  }
+  .nav-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--sidebar-text);
+    opacity: 0.55;
+    padding: 12px 12px 4px;
+  }
+  .nav-count {
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 9px;
+    background: #f0a33a;
+    color: #1b1f2a;
+    font-size: 11px;
+    font-weight: 650;
+    display: grid;
+    place-items: center;
+  }
+  .nav-count.bad {
+    background: #f06a6a;
+    color: #fff;
+  }
+  .nav-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #f0a33a;
+  }
+  .nav-dot.bad {
+    background: #f06a6a;
   }
   .side-foot {
     margin-top: auto;

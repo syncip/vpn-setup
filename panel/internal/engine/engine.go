@@ -54,6 +54,7 @@ type Engine struct {
 
 	exitRates exitRateState // Durchsatz der Ausgänge (exits.go)
 	notif     notifyState   // E-Mail-Benachrichtigungen (notify.go)
+	host      hostSampler   // CPU/RAM/Durchsatz für die Seitenleiste (hoststats.go)
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {

@@ -6,7 +6,8 @@
   import PageHead from '../components/PageHead.svelte';
   import { get, post, run } from '../lib/api.js';
   import { bytes, date, ago } from '../lib/format.js';
-  import { protocol, meta } from '../lib/state.svelte.js';
+  import { protocol, meta, status, intent, go } from '../lib/state.svelte.js';
+  import AttentionList from '../components/AttentionList.svelte';
   import SearchInput from '../components/SearchInput.svelte';
   import Fold from '../components/Fold.svelte';
   import { tokens, matches } from '../lib/pick.js';
@@ -53,13 +54,34 @@
 {#if err}<div class="notice bad">{err}</div>{/if}
 
 {#if d}
-  {#if Object.keys(d.errors || {}).length}
-    <div style="margin-bottom:16px">
-      <Fold id="ov-errors" icon="alert" tone="bad" title="Beim Anwenden ist ein Fehler aufgetreten" count={Object.keys(d.errors).length}>
-        {#each Object.entries(d.errors) as [k, v]}<div class="small"><b>{k}:</b> {v}</div>{/each}
-      </Fold>
+  <div class="grid ov-top" style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-head">
+        <h2>Braucht Aufmerksamkeit</h2>
+        {#if status.attention.length}<span class="badge {status.attention.some((a) => a.level === 'error') ? 'bad' : 'warn'}">{status.attention.length}</span>{/if}
+        <span class="grow"></span><a href="#/health" class="small">Zustand</a>
+      </div>
+      <AttentionList />
+      {#if Object.keys(d.errors || {}).length}
+        <div class="card-pad" style="padding-top:0">
+          <Fold id="ov-errors" icon="alert" tone="bad" title="Fehler beim Anwenden – Rohdaten" count={Object.keys(d.errors).length}>
+            {#each Object.entries(d.errors) as [k, v]}<div class="small"><b>{k}:</b> {v}</div>{/each}
+          </Fold>
+        </div>
+      {/if}
     </div>
-  {/if}
+    <div class="card">
+      <div class="card-head"><h2>Schnellaktionen</h2></div>
+      <div class="card-pad quick">
+        <button class="btn" onclick={() => { intent.create = 'user'; go('/users'); }}><Icon name="plus" size={15} /> Nutzer anlegen</button>
+        <a class="btn" href="#/proxy/exits"><Icon name="globe" size={15} /> Ausgänge</a>
+        <a class="btn" href="#/health"><Icon name="activity" size={15} /> Ports prüfen</a>
+        <a class="btn" href="#/settings/backup"><Icon name="archive" size={15} /> Sicherung</a>
+        <a class="btn" href="#/dns/log"><Icon name="list" size={15} /> DNS-Protokoll</a>
+        <a class="btn" href="#/health/events"><Icon name="clock" size={15} /> Ereignisse</a>
+      </div>
+    </div>
+  </div>
 
   <LivePanel />
 
@@ -186,7 +208,7 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Ereignisse</h2><a href="#/settings/events" class="small">Alle</a></div>
+      <div class="card-head"><h2>Ereignisse</h2><a href="#/health/events" class="small">Alle</a></div>
       <div class="list">
         {#each d.events as e}
           <div class="item ev">
@@ -276,5 +298,22 @@
     height: 100%;
     background: var(--accent);
     border-radius: 5px;
+  }
+  .ov-top {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 1100px) {
+    .ov-top {
+      grid-template-columns: 1fr;
+    }
+  }
+  .quick {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 8px;
+  }
+  .quick .btn {
+    justify-content: flex-start;
   }
 </style>

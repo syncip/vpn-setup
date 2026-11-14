@@ -2,7 +2,6 @@
   import Icon from '../components/Icon.svelte';
   import PageHead from '../components/PageHead.svelte';
   import Info from '../components/Info.svelte';
-  import PortHelp from '../components/PortHelp.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run, postFile, upload } from '../lib/api.js';
   import { date } from '../lib/format.js';
@@ -15,8 +14,6 @@
     ['notify', 'Benachrichtigungen', 'mail'],
     ['backup', 'Sicherung', 'archive'],
     ['admins', 'Administratoren', 'users'],
-    ['system', 'System', 'terminal'],
-    ['events', 'Ereignisse', 'list'],
   ];
 
   // ---------- Allgemein ----------
@@ -172,44 +169,6 @@
     if (await run(() => del(`/admins/${a.id}`), 'Gelöscht')) loadAdmins();
   }
 
-  // ---------- System ----------
-  let sys = $state(null);
-  async function loadSystem() {
-    sys = await get('/system');
-    if (!pc) pc = (await get('/system/portcheck').catch(() => ({}))).last || null;
-  }
-  // Portweiterleitungen von außen prüfen (über einen Ausgang)
-  let pc = $state(null);
-  let pcBusy = $state(false);
-  let pcError = $state('');
-  async function checkPorts() {
-    pcBusy = true;
-    pcError = '';
-    try {
-      pc = await post('/system/portcheck');
-    } catch (e) {
-      pcError = e.message;
-    }
-    pcBusy = false;
-  }
-  const pcKey = (p) => `${p.server}|${p.proto}|${p.port}`;
-  const pcFor = (p, fam) => pc?.items?.find((i) => i.family === fam && pcKey(i) === pcKey(p));
-  const pcLabel = { ok: 'erreichbar', arrived: 'kein Dienst', missing: 'kommt nicht an', skipped: 'nicht prüfbar' };
-  const pcClass = { ok: 'ok', arrived: 'warn', missing: 'bad', skipped: 'muted' };
-  async function applyNow() {
-    if (await run(() => post('/system/apply'), 'Konfiguration angewendet')) loadSystem();
-  }
-  async function collectNow() {
-    if (await run(() => post('/system/collect'), 'Statistik eingesammelt')) loadSystem();
-  }
-
-  // ---------- Ereignisse ----------
-  let events = $state([]);
-  let level = $state('');
-  async function loadEvents() {
-    events = await get(`/events?limit=300${level ? `&level=${level}` : ''}`);
-  }
-
   $effect(() => {
     const t = tab;
     if (t === 'general') loadSettings();
@@ -217,8 +176,6 @@
     if (t === 'notify') loadNotify();
     if (t === 'backup') loadBackup();
     if (t === 'admins') loadAdmins();
-    if (t === 'system') loadSystem();
-    if (t === 'events') loadEvents();
   });
 
   const generalFields = [
@@ -240,7 +197,7 @@
   let showAdv = $state(false);
 </script>
 
-<PageHead title="Einstellungen" subtitle="Server-Adresse, Sicherheit, Benachrichtigungen, Sicherung, Administratoren und System" />
+<PageHead title="Einstellungen" subtitle="Server-Adresse, Sicherheit, Benachrichtigungen, Sicherung und Administratoren · System und Ereignisse stehen jetzt unter „Zustand“" />
 
 <div class="tabs">
   {#each tabs as [id, label, icon]}
@@ -445,101 +402,6 @@ systemctl restart vpnpanel</pre>
         <div><button class="btn primary" onclick={addAdmin} disabled={!na.username || !na.password}>Anlegen</button></div>
         <div class="row small muted" style="gap:6px">Passwort vergessen? <Info title="Passwort vergessen" wide><p>Auf dem Server als root:</p><pre>vpn admin passwd &lt;name&gt;</pre><p>2FA abschalten: <code>vpn admin 2fa-off &lt;name&gt;</code>. 2FA richtet jeder Administrator selbst ein.</p></Info></div>
       </div>
-    </div>
-  </div>
-{:else if tab === 'system' && sys}
-  <div class="stack" style="max-width:1100px">
-    <div class="row">
-      <button class="btn primary" onclick={applyNow}><Icon name="refresh" size={16} /> Konfiguration jetzt anwenden</button>
-      <button class="btn" onclick={collectNow}><Icon name="activity" size={16} /> Statistik einsammeln</button>
-      <span class="grow"></span>
-      <span class="muted small">Version {sys.version}</span>
-    </div>
-    {#if Object.keys(sys.errors || {}).length}
-      <div class="notice bad"><Icon name="alert" /><div>{#each Object.entries(sys.errors) as [k, v]}<div class="small"><b>{k}:</b> {v}</div>{/each}</div></div>
-    {/if}
-    <div class="grid cols-2">
-      <div class="card">
-        <div class="card-head"><h3>Komponenten</h3></div>
-        <div class="table-wrap">
-          <table class="table">
-            <tbody>
-              {#each sys.checks as c}
-                <tr><td><span class="row"><span class="dot" class:on={c.ok} class:bad={!c.ok}></span>{c.name}</span></td><td class="small muted right">{c.detail}</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <h3>Portweiterleitungen auf dem Host <Info title="Firewall-Regeln für den Proxmox-Host" wide><PortHelp ports={sys.ports} /></Info></h3>
-          <span class="row" style="gap:6px">
-            <button class="btn sm" onclick={checkPorts} disabled={pcBusy || !sys.ports.length} title="Von außen prüfen, ob die Ports ankommen"><Icon name="refresh" size={14} /> {pcBusy ? 'Prüfe …' : 'Prüfen'}</button>
-          </span>
-        </div>
-        <div class="card-pad stack-sm">
-          {#if pcError}<div class="notice bad small">{pcError}</div>{/if}
-          {#if !pc && !pcError}
-            <div class="small muted">„Prüfen“ spricht die öffentliche Adresse über einen verbundenen Ausgang (externes VPN) an – wie ein fremdes
-              Gerät aus dem Internet, ohne fremden Prüfdienst. UDP gilt als erreichbar, wenn das Prüfpaket im Container ankommt.
-              IPv6 lässt sich so nicht prüfen (Ausgänge nur IPv4), bei Portbereichen zählt der erste Port.</div>
-          {/if}
-          {#if pc}
-            <div class="small muted">
-              Geprüft {date(pc.at, true)} über Ausgang „{pc.via}“{pc.via_ip ? ` (${pc.via_ip})` : ''} an {pc.addr4}{#if pc.dry_run}{' · '}<span class="badge warn">Testmodus – nur simuliert</span>{/if}
-            </div>
-          {/if}
-          <table class="table">
-            <tbody>
-              {#each sys.ports as p}
-                {@const r4 = pcFor(p, 'IPv4')}
-                {@const r6 = pcFor(p, 'IPv6')}
-                <tr>
-                  <td>
-                    <span class="badge">{p.proto.toUpperCase()} {p.port}{p.to ? `–${p.to}` : ''}</span>
-                    {#if r4}<div class="row" style="gap:4px;margin-top:4px;flex-wrap:wrap"><span class="badge {pcClass[r4.state]}" title={r4.detail}>{pc.addr6 ? 'IPv4 ' : ''}{pcLabel[r4.state]}</span>{#if r6 && pc.addr6}<span class="badge {pcClass[r6.state]}" title={r6.detail}>IPv6 {pcLabel[r6.state]}</span>{/if}</div>{/if}
-                  </td>
-                  <td class="small">{p.server}</td><td class="small muted">{p.note}</td>
-                </tr>
-                {#if r4 && r4.state !== 'ok'}<tr><td colspan="3" class="small" style="padding-top:0;color:var(--{r4.state === 'missing' ? 'bad' : 'warn'})">{r4.detail}</td></tr>{/if}
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-    {#if sys.dry_run}
-      <div class="card">
-        <div class="card-head"><h3>Testmodus – ausgeführte Befehle</h3><span class="badge warn">nicht wirklich ausgeführt</span></div>
-        <pre class="code" style="border:none;border-radius:0 0 12px 12px;max-height:420px">{sys.dry_log.slice(-150).join('\n')}</pre>
-      </div>
-    {/if}
-  </div>
-{:else if tab === 'events'}
-  <div class="card" style="max-width:1100px">
-    <div class="card-head">
-      <h3>Ereignisse</h3>
-      <div class="segmented">
-        {#each [['', 'Alle'], ['info', 'Info'], ['warn', 'Warnungen'], ['error', 'Fehler']] as [k, l]}
-          <button class:active={level === k} onclick={() => { level = k; loadEvents(); }}>{l}</button>
-        {/each}
-      </div>
-    </div>
-    <div class="table-wrap">
-      <table class="table">
-        <tbody>
-          {#each events as e}
-            <tr>
-              <td class="small muted nowrap" style="width:150px">{date(e.ts, true)}</td>
-              <td style="width:90px"><span class="badge {e.level === 'error' ? 'bad' : e.level === 'warn' ? 'warn' : 'muted'}">{e.level}</span></td>
-              <td class="small">{e.msg}</td>
-            </tr>
-          {:else}
-            <tr><td class="empty">Keine Ereignisse</td></tr>
-          {/each}
-        </tbody>
-      </table>
     </div>
   </div>
 {/if}
