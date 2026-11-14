@@ -12,6 +12,7 @@
   import { peerItems, userItems, serverItems } from '../lib/pick.js';
   import DNSExternal from '../components/DNSExternal.svelte';
   import DNSLive from '../components/DNSLive.svelte';
+  import Board from '../components/Board.svelte';
 
   let { tab = 'overview' } = $props();
 
@@ -484,8 +485,26 @@
     </div>
   </div>
 
-  {#if d.settings.enabled === '1'}<DNSLive />{/if}
-
+  {#snippet toplist(title, rows, bl)}
+    <div class="card">
+      <div class="card-head"><h3>{title}</h3></div>
+      <div class="toplist">
+        {#each rows as r}
+          <div class="toprow">
+            <span class="mono tiny ellipsis grow" title={r.name}>{r.name}</span>
+            <span class="tiny muted">{fmtNum(r.count)}</span>
+            <button class="btn sm icon ghost" title={bl ? 'Freigeben' : 'Sperren'} onclick={() => openQuick(r.name, bl)}><Icon name={bl ? 'check' : 'lock'} size={13} /></button>
+          </div>
+        {:else}
+          <div class="muted small" style="padding:12px 14px">Noch nichts.</div>
+        {/each}
+      </div>
+    </div>
+  {/snippet}
+  {#snippet w_live()}
+    <DNSLive />
+  {/snippet}
+  {#snippet w_filter()}
   <div class="card filtercard">
     <div class="card-head">
       <h3>
@@ -533,129 +552,137 @@
       {/if}
     </div>
   </div>
-
-  {#if stats}
-    <div class="grid cols-4 kpis">
-      <div class="card card-pad"><div class="muted tiny">Anfragen</div><div class="kpi">{fmtNum(stats.total)}</div></div>
-      <div class="card card-pad"><div class="muted tiny">Gesperrt</div><div class="kpi bad-text">{fmtNum(stats.blocked)} <span class="tiny muted">{pct(stats.blocked, stats.total)} %</span></div></div>
-      <div class="card card-pad"><div class="muted tiny">Aus dem Speicher</div><div class="kpi">{pct(stats.cached, stats.total)} %</div></div>
-      <div class="card card-pad"><div class="muted tiny">Ø Antwortzeit (aufgelöst)</div><div class="kpi">{fmtNum(Math.round(stats.avg_ms))} ms</div></div>
+  {/snippet}
+  {#snippet w_requests()}
+    <div class="card card-pad"><div class="muted tiny">Anfragen</div><div class="kpi">{fmtNum(stats.total)}</div></div>
+  {/snippet}
+  {#snippet w_blocked()}
+    <div class="card card-pad"><div class="muted tiny">Gesperrt</div><div class="kpi bad-text">{fmtNum(stats.blocked)} <span class="tiny muted">{pct(stats.blocked, stats.total)} %</span></div></div>
+  {/snippet}
+  {#snippet w_cached()}
+    <div class="card card-pad"><div class="muted tiny">Aus dem Speicher</div><div class="kpi">{pct(stats.cached, stats.total)} %</div></div>
+  {/snippet}
+  {#snippet w_avgms()}
+    <div class="card card-pad"><div class="muted tiny">Ø Antwortzeit (aufgelöst)</div><div class="kpi">{fmtNum(Math.round(stats.avg_ms))} ms</div></div>
+  {/snippet}
+  {#snippet w_chart()}
+  <div class="card card-pad">
+    <div class="row" style="gap:14px;margin-bottom:8px">
+      <strong class="small">Anfragen je {hours > 24 * 7 ? `${Math.ceil(hours / 168)} Stunden` : 'Stunde'}</strong>
+      <span class="tiny muted"><span class="sw"></span> aufgelöst <span class="sw bl"></span> gesperrt</span>
     </div>
-
-    <div class="card card-pad" style="margin-top:14px">
-      <div class="row" style="gap:14px;margin-bottom:8px">
-        <strong class="small">Anfragen je {hours > 24 * 7 ? `${Math.ceil(hours / 168)} Stunden` : 'Stunde'}</strong>
-        <span class="tiny muted"><span class="sw"></span> aufgelöst <span class="sw bl"></span> gesperrt</span>
-      </div>
-      <div class="bars">
-        {#each bars as b}
-          <div class="bar" title="{day(b.ts)} {clock(b.ts).slice(0, 5)} – {fmtNum(b.tot)} Anfragen, {fmtNum(b.bl)} gesperrt">
-            <div class="fill" style="height:{(b.tot / maxBar) * 100}%"><div class="blk" style="height:{b.tot ? (b.bl / b.tot) * 100 : 0}%"></div></div>
-          </div>
-        {/each}
-      </div>
-      {#if !stats.total}<div class="muted small" style="margin-top:8px">Im gewählten Zeitraum keine Anfragen protokolliert.</div>{/if}
-    </div>
-
-    <div class="grid cols-3" style="margin-top:14px">
-      {#each [['Häufigste Domains', stats.top_domains, false], ['Am häufigsten gesperrt', stats.top_blocked, true]] as [title, rows, bl]}
-        <div class="card">
-          <div class="card-head"><h3>{title}</h3></div>
-          <div class="toplist">
-            {#each rows as r}
-              <div class="toprow">
-                <span class="mono tiny ellipsis grow" title={r.name}>{r.name}</span>
-                <span class="tiny muted">{fmtNum(r.count)}</span>
-                <button class="btn sm icon ghost" title={bl ? 'Freigeben' : 'Sperren'} onclick={() => openQuick(r.name, bl)}><Icon name={bl ? 'check' : 'lock'} size={13} /></button>
-              </div>
-            {:else}
-              <div class="muted small" style="padding:12px 14px">Noch nichts.</div>
-            {/each}
-          </div>
+    <div class="bars">
+      {#each bars as b}
+        <div class="bar" title="{day(b.ts)} {clock(b.ts).slice(0, 5)} – {fmtNum(b.tot)} Anfragen, {fmtNum(b.bl)} gesperrt">
+          <div class="fill" style="height:{(b.tot / maxBar) * 100}%"><div class="blk" style="height:{b.tot ? (b.bl / b.tot) * 100 : 0}%"></div></div>
         </div>
       {/each}
-      <div class="card">
-        <div class="card-head"><h3>Geräte</h3></div>
-        <div class="toplist">
-          {#each stats.top_clients as r}
-            <button class="toprow linkrow" onclick={() => {
-              filter = { q: '', peer: r.peer_id, action: '' };
-              go('/dns/log');
-            }}>
-              <span class="small ellipsis grow">{peerLabel(r.peer_id)}</span>
-              <span class="tiny muted">{fmtNum(r.count)}{#if r.blocked}&nbsp;· <span class="bad-text">{fmtNum(r.blocked)} gesperrt</span>{/if}</span>
-            </button>
-          {:else}
-            <div class="muted small" style="padding:12px 14px">Noch nichts.</div>
-          {/each}
-        </div>
+    </div>
+    {#if !stats.total}<div class="muted small" style="margin-top:8px">Im gewählten Zeitraum keine Anfragen protokolliert.</div>{/if}
+  </div>
+  {/snippet}
+  {#snippet w_topdomains()}
+    {@render toplist('Häufigste Domains', stats.top_domains, false)}
+  {/snippet}
+  {#snippet w_topblocked()}
+    {@render toplist('Am häufigsten gesperrt', stats.top_blocked, true)}
+  {/snippet}
+  {#snippet w_clients()}
+    <div class="card">
+      <div class="card-head"><h3>Geräte</h3></div>
+      <div class="toplist">
+        {#each stats.top_clients as r}
+          <button class="toprow linkrow" onclick={() => {
+            filter = { q: '', peer: r.peer_id, action: '' };
+            go('/dns/log');
+          }}>
+            <span class="small ellipsis grow">{peerLabel(r.peer_id)}</span>
+            <span class="tiny muted">{fmtNum(r.count)}{#if r.blocked}&nbsp;· <span class="bad-text">{fmtNum(r.blocked)} gesperrt</span>{/if}</span>
+          </button>
+        {:else}
+          <div class="muted small" style="padding:12px 14px">Noch nichts.</div>
+        {/each}
       </div>
     </div>
-
-    <div class="grid cols-4 kpis" style="margin-top:14px">
-      <div class="card card-pad"><div class="muted tiny">Verschiedene Domains</div><div class="kpi">{fmtNum(stats.domains || 0)}</div><div class="tiny muted">von {fmtNum(stats.clients || 0)} {stats.clients === 1 ? 'Gerät' : 'Geräten'}</div></div>
-      <div class="card card-pad"><div class="muted tiny">Antwortzeit Median / 95 % <Info title="Antwortzeit" text="Nur Anfragen, die das Panel bei einem DNS-Server nachfragen musste. 95 % = so schnell waren 95 von 100 Antworten." /></div><div class="kpi">{fmtNum(stats.p50 || 0)} <span class="tiny muted">/ {fmtNum(stats.p95 || 0)} ms</span></div></div>
-      <div class="card card-pad"><div class="muted tiny">„Gibt es nicht“ (NXDOMAIN) <Info title="NXDOMAIN" text="Namen, die es nicht gibt (Tippfehler, abgeschaltete Dienste, Suchanfragen von Geräten). Gesperrte Namen zählen hier nicht mit." /></div><div class="kpi">{pct(stats.nxdomain || 0, stats.total)} %</div><div class="tiny muted">{fmtNum(stats.nxdomain || 0)} Anfragen</div></div>
-      <div class="card card-pad"><div class="muted tiny">Fehler (keine Antwort, SERVFAIL)</div><div class="kpi" class:bad-text={stats.errors + (stats.servfail || 0) > 0}>{pct(stats.errors + (stats.servfail || 0), stats.total)} %</div><div class="tiny muted">{fmtNum(stats.errors)} ohne Antwort · {fmtNum(stats.servfail || 0)} SERVFAIL</div></div>
-    </div>
-
-    <div class="grid cols-3" style="margin-top:14px">
-      <div class="card">
-        <div class="card-head"><h3>Abfragetypen <Info title="Abfragetypen" text="A = IPv4-Adresse, AAAA = IPv6-Adresse, HTTPS/SVCB = Verbindungshinweise für Browser, PTR = Rückwärtsauflösung, TXT/SRV = Dienstinfos." /></h3></div>
-        <div class="toplist">
-          {#each stats.qtypes || [] as r}
-            <div class="toprow"><span class="small grow">{QTYPE[r.name] || `Typ ${r.name}`}</span><span class="share"><span style="width:{pct(r.count, stats.total)}%"></span></span><span class="tiny muted num">{pct(r.count, stats.total)} %</span></div>
-          {:else}<div class="muted small" style="padding:12px 14px">Noch nichts.</div>{/each}
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Sperrgründe</h3></div>
-        <div class="toplist">
-          {#each stats.reasons || [] as r}
-            <div class="toprow"><span class="small ellipsis grow" title={r.name}>{r.name || 'unbekannt'}</span><span class="tiny muted">{fmtNum(r.count)}</span></div>
-          {:else}<div class="muted small" style="padding:12px 14px">Nichts gesperrt.</div>{/each}
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Weg der Anfragen <Info title="Weg" text="Direkt = über die DNS-Server des Panels (bzw. Unbound). Gruppe = Ziel-Regel: Der Name wurde über die Ausgangsgruppe aufgelöst." /></h3></div>
-        <div class="toplist">
-          {#each stats.via || [] as r}
-            <div class="toprow"><span class="small ellipsis grow">{r.peer_id ? `Gruppe „${groupById[r.peer_id]?.name || r.peer_id}“` : 'direkt'}</span><span class="share"><span style="width:{pct(r.count, stats.total)}%"></span></span><span class="tiny muted num">{pct(r.count, stats.total)} %</span></div>
-          {:else}<div class="muted small" style="padding:12px 14px">Noch nichts.</div>{/each}
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>DNS-Server <Info title="DNS-Server im Zeitraum" text="Welcher DNS-Server die nicht zwischengespeicherten Anfragen beantwortet hat (aus dem Protokoll), mit mittlerer Antwortzeit. Gesperrte und gespeicherte Antworten fragen keinen Server." /></h3></div>
-        <div class="toplist">
-          {#each stats.upstreams || [] as r}
-            {@const all = stats.upstreams.reduce((a, x) => a + x.count, 0)}
-            <div class="toprow" title={r.name}><span class="small ellipsis grow">{srvName(r.name)}{#if srvName(r.name) !== srvHost(r.name)}&nbsp;<span class="mono tiny muted">{srvHost(r.name)}</span>{/if}</span><span class="share"><span style="width:{pct(r.count, all)}%"></span></span><span class="tiny muted num">{pct(r.count, all)} %</span><span class="tiny muted num">{r.ms} ms</span></div>
-          {:else}<div class="muted small" style="padding:12px 14px">Noch nichts protokolliert.</div>{/each}
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Namen ohne Antwort <Info title="NXDOMAIN" text="Häufig gefragte Namen, die es nicht gibt – oft Geräte, die nach abgeschalteten Diensten suchen, oder Tippfehler in eigenen Regeln." /></h3></div>
-        <div class="toplist">
-          {#each stats.top_nx || [] as r}
-            <div class="toprow"><span class="mono tiny ellipsis grow" title={r.name}>{r.name}</span><span class="tiny muted">{fmtNum(r.count)}</span></div>
-          {:else}<div class="muted small" style="padding:12px 14px">Keine.</div>{/each}
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Meiste Sperren je Gerät</h3></div>
-        <div class="toplist">
-          {#each stats.blocked_by || [] as r}
-            <button class="toprow linkrow" onclick={() => {
-              filter = { q: '', peer: r.peer_id, action: 'blocked' };
-              go('/dns/log');
-            }}><span class="small ellipsis grow">{peerLabel(r.peer_id)}</span><span class="tiny bad-text">{fmtNum(r.count)}</span></button>
-          {:else}<div class="muted small" style="padding:12px 14px">Nichts gesperrt.</div>{/each}
-        </div>
+  {/snippet}
+  {#snippet w_domains()}
+    <div class="card card-pad"><div class="muted tiny">Verschiedene Domains</div><div class="kpi">{fmtNum(stats.domains || 0)}</div><div class="tiny muted">von {fmtNum(stats.clients || 0)} {stats.clients === 1 ? 'Gerät' : 'Geräten'}</div></div>
+  {/snippet}
+  {#snippet w_latency()}
+    <div class="card card-pad"><div class="muted tiny">Antwortzeit Median / 95 % <Info title="Antwortzeit" text="Nur Anfragen, die das Panel bei einem DNS-Server nachfragen musste. 95 % = so schnell waren 95 von 100 Antworten." /></div><div class="kpi">{fmtNum(stats.p50 || 0)} <span class="tiny muted">/ {fmtNum(stats.p95 || 0)} ms</span></div></div>
+  {/snippet}
+  {#snippet w_nxdomain()}
+    <div class="card card-pad"><div class="muted tiny">„Gibt es nicht“ (NXDOMAIN) <Info title="NXDOMAIN" text="Namen, die es nicht gibt (Tippfehler, abgeschaltete Dienste, Suchanfragen von Geräten). Gesperrte Namen zählen hier nicht mit." /></div><div class="kpi">{pct(stats.nxdomain || 0, stats.total)} %</div><div class="tiny muted">{fmtNum(stats.nxdomain || 0)} Anfragen</div></div>
+  {/snippet}
+  {#snippet w_errors()}
+    <div class="card card-pad"><div class="muted tiny">Fehler (keine Antwort, SERVFAIL)</div><div class="kpi" class:bad-text={stats.errors + (stats.servfail || 0) > 0}>{pct(stats.errors + (stats.servfail || 0), stats.total)} %</div><div class="tiny muted">{fmtNum(stats.errors)} ohne Antwort · {fmtNum(stats.servfail || 0)} SERVFAIL</div></div>
+  {/snippet}
+  {#snippet w_qtypes()}
+    <div class="card">
+      <div class="card-head"><h3>Abfragetypen <Info title="Abfragetypen" text="A = IPv4-Adresse, AAAA = IPv6-Adresse, HTTPS/SVCB = Verbindungshinweise für Browser, PTR = Rückwärtsauflösung, TXT/SRV = Dienstinfos." /></h3></div>
+      <div class="toplist">
+        {#each stats.qtypes || [] as r}
+          <div class="toprow"><span class="small grow">{QTYPE[r.name] || `Typ ${r.name}`}</span><span class="share"><span style="width:{pct(r.count, stats.total)}%"></span></span><span class="tiny muted num">{pct(r.count, stats.total)} %</span></div>
+        {:else}<div class="muted small" style="padding:12px 14px">Noch nichts.</div>{/each}
       </div>
     </div>
-  {/if}
-
-  <div class="card card-pad" style="margin-top:14px">
+  {/snippet}
+  {#snippet w_reasons()}
+    <div class="card">
+      <div class="card-head"><h3>Sperrgründe</h3></div>
+      <div class="toplist">
+        {#each stats.reasons || [] as r}
+          <div class="toprow"><span class="small ellipsis grow" title={r.name}>{r.name || 'unbekannt'}</span><span class="tiny muted">{fmtNum(r.count)}</span></div>
+        {:else}<div class="muted small" style="padding:12px 14px">Nichts gesperrt.</div>{/each}
+      </div>
+    </div>
+  {/snippet}
+  {#snippet w_via()}
+    <div class="card">
+      <div class="card-head"><h3>Weg der Anfragen <Info title="Weg" text="Direkt = über die DNS-Server des Panels (bzw. Unbound). Gruppe = Ziel-Regel: Der Name wurde über die Ausgangsgruppe aufgelöst." /></h3></div>
+      <div class="toplist">
+        {#each stats.via || [] as r}
+          <div class="toprow"><span class="small ellipsis grow">{r.peer_id ? `Gruppe „${groupById[r.peer_id]?.name || r.peer_id}“` : 'direkt'}</span><span class="share"><span style="width:{pct(r.count, stats.total)}%"></span></span><span class="tiny muted num">{pct(r.count, stats.total)} %</span></div>
+        {:else}<div class="muted small" style="padding:12px 14px">Noch nichts.</div>{/each}
+      </div>
+    </div>
+  {/snippet}
+  {#snippet w_upstreams()}
+    <div class="card">
+      <div class="card-head"><h3>DNS-Server <Info title="DNS-Server im Zeitraum" text="Welcher DNS-Server die nicht zwischengespeicherten Anfragen beantwortet hat (aus dem Protokoll), mit mittlerer Antwortzeit. Gesperrte und gespeicherte Antworten fragen keinen Server." /></h3></div>
+      <div class="toplist">
+        {#each stats.upstreams || [] as r}
+          {@const all = stats.upstreams.reduce((a, x) => a + x.count, 0)}
+          <div class="toprow" title={r.name}><span class="small ellipsis grow">{srvName(r.name)}{#if srvName(r.name) !== srvHost(r.name)}&nbsp;<span class="mono tiny muted">{srvHost(r.name)}</span>{/if}</span><span class="share"><span style="width:{pct(r.count, all)}%"></span></span><span class="tiny muted num">{pct(r.count, all)} %</span><span class="tiny muted num">{r.ms} ms</span></div>
+        {:else}<div class="muted small" style="padding:12px 14px">Noch nichts protokolliert.</div>{/each}
+      </div>
+    </div>
+  {/snippet}
+  {#snippet w_nx()}
+    <div class="card">
+      <div class="card-head"><h3>Namen ohne Antwort <Info title="NXDOMAIN" text="Häufig gefragte Namen, die es nicht gibt – oft Geräte, die nach abgeschalteten Diensten suchen, oder Tippfehler in eigenen Regeln." /></h3></div>
+      <div class="toplist">
+        {#each stats.top_nx || [] as r}
+          <div class="toprow"><span class="mono tiny ellipsis grow" title={r.name}>{r.name}</span><span class="tiny muted">{fmtNum(r.count)}</span></div>
+        {:else}<div class="muted small" style="padding:12px 14px">Keine.</div>{/each}
+      </div>
+    </div>
+  {/snippet}
+  {#snippet w_blockedby()}
+    <div class="card">
+      <div class="card-head"><h3>Meiste Sperren je Gerät</h3></div>
+      <div class="toplist">
+        {#each stats.blocked_by || [] as r}
+          <button class="toprow linkrow" onclick={() => {
+            filter = { q: '', peer: r.peer_id, action: 'blocked' };
+            go('/dns/log');
+          }}><span class="small ellipsis grow">{peerLabel(r.peer_id)}</span><span class="tiny bad-text">{fmtNum(r.count)}</span></button>
+        {:else}<div class="muted small" style="padding:12px 14px">Nichts gesperrt.</div>{/each}
+      </div>
+    </div>
+  {/snippet}
+  {#snippet w_check()}
+  <div class="card card-pad">
     <div style="margin-bottom:8px"><strong class="small">Domain prüfen</strong> <Info title="Domain prüfen" text="Zeigt, was der Panel-DNS für ein Gerät mit einem Namen machen würde – ohne ihn aufzulösen: Profil, Sperre oder Freigabe und den Weg." /></div>
     <div class="row wrap" style="gap:8px">
       <Picker items={peerPick} bind:value={check.peer} placeholder="Gerät suchen …" width="300px" />
@@ -676,6 +703,33 @@
       </div>
     {/if}
   </div>
+  {/snippet}
+  <Board
+    id="dns"
+    widgets={[
+      { id: 'live', title: 'DNS live', w: 12, body: w_live, show: d.settings.enabled === '1' },
+      { id: 'filter', title: 'So wird gefiltert', w: 12, body: w_filter },
+      { id: 'requests', title: 'Anfragen', w: 3, body: w_requests, show: !!stats },
+      { id: 'blocked', title: 'Gesperrt', w: 3, body: w_blocked, show: !!stats },
+      { id: 'cached', title: 'Aus dem Speicher', w: 3, body: w_cached, show: !!stats },
+      { id: 'avgms', title: 'Ø Antwortzeit', w: 3, body: w_avgms, show: !!stats },
+      { id: 'chart', title: 'Anfragen je Stunde', w: 12, body: w_chart, show: !!stats },
+      { id: 'topdomains', title: 'Häufigste Domains', w: 4, body: w_topdomains, show: !!stats },
+      { id: 'topblocked', title: 'Am häufigsten gesperrt', w: 4, body: w_topblocked, show: !!stats },
+      { id: 'clients', title: 'Geräte', w: 4, body: w_clients, show: !!stats },
+      { id: 'domains', title: 'Verschiedene Domains', w: 3, body: w_domains, show: !!stats },
+      { id: 'latency', title: 'Antwortzeit Median / 95 %', w: 3, body: w_latency, show: !!stats },
+      { id: 'nxdomain', title: '„Gibt es nicht“ (NXDOMAIN)', w: 3, body: w_nxdomain, show: !!stats },
+      { id: 'errors', title: 'Fehler (keine Antwort, SERVFAIL)', w: 3, body: w_errors, show: !!stats },
+      { id: 'qtypes', title: 'Abfragetypen', w: 4, body: w_qtypes, show: !!stats },
+      { id: 'reasons', title: 'Sperrgründe', w: 4, body: w_reasons, show: !!stats },
+      { id: 'via', title: 'Weg der Anfragen', w: 4, body: w_via, show: !!stats },
+      { id: 'upstreams', title: 'DNS-Server', w: 4, body: w_upstreams, show: !!stats },
+      { id: 'nx', title: 'Namen ohne Antwort', w: 4, body: w_nx, show: !!stats },
+      { id: 'blockedby', title: 'Meiste Sperren je Gerät', w: 4, body: w_blockedby, show: !!stats },
+      { id: 'check', title: 'Domain prüfen', w: 12, body: w_check },
+    ]}
+  />
 {:else if tab === 'log'}
   <div class="row wrap" style="gap:8px;margin-bottom:12px">
     <input class="input grow" style="min-width:180px" placeholder="Domain suchen …" bind:value={filter.q} />
@@ -1240,7 +1294,7 @@
     background: var(--ok-soft);
   }
   .filtercard {
-    margin-bottom: 14px;
+    margin-bottom: 0;
   }
   .fline {
     display: flex;

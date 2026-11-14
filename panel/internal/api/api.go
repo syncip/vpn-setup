@@ -164,6 +164,8 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("GET /api/traffic", a.auth(a.traffic))
 	api.HandleFunc("GET /api/live", a.auth(a.live))
 	api.HandleFunc("GET /api/status", a.auth(a.status))
+	api.HandleFunc("GET /api/layout", a.auth(a.getLayout))
+	api.HandleFunc("PUT /api/layout", a.auth(a.putLayout))
 
 	static := a.staticHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

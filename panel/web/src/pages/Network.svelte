@@ -1,6 +1,7 @@
 <script>
   import Icon from '../components/Icon.svelte';
   import PageHead from '../components/PageHead.svelte';
+  import Board from '../components/Board.svelte';
   import Modal from '../components/Modal.svelte';
   import PeerEditor from '../components/PeerEditor.svelte';
   import ConfigView from '../components/ConfigView.svelte';
@@ -181,14 +182,20 @@
 {:else}
 
   {#if net}
-    <div class="grid cols-4 facts">
+    {#snippet w_net()}
       <div class="card card-pad"><div class="muted small">Tunnelnetz</div><div class="mono strong">{st.net4}</div>{#if st.net6}<div class="mono tiny muted">{st.net6}</div>{/if}</div>
+    {/snippet}
+    {#snippet w_endpoint()}
       <div class="card card-pad"><div class="muted small">Endpunkt</div><div class="mono strong">{st.endpoint || 'Server-Domain'}:{st.port}</div><div class="tiny muted">UDP · {st.interface}</div></div>
+    {/snippet}
+    {#snippet w_internet()}
       <div class="card card-pad"><div class="muted small">Internet über Server</div><div class="strong">{st.internet ? 'Ja' : 'Nein'}</div><div class="tiny muted">Standard-Zugriff: {{ all: 'alle Geräte', own: 'eigene Geräte', none: 'keiner' }[st.default_access]}</div></div>
+    {/snippet}
+    {#snippet w_devices()}
       <div class="card card-pad"><div class="muted small">Geräte</div><div class="strong">{nodes.filter((n) => n.online).length} online / {nodes.length}</div><div class="tiny muted">{nodes.reduce((s, n) => s + (n.settings?.routes?.length || 0), 0)} Netze dahinter</div></div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
+    {/snippet}
+    {#snippet w_map()}
+    <div class="card">
       <div class="card-head">
         <h2>{view === 'map' ? 'Karte' : 'Zugriffsmatrix'}</h2>
         <div class="row wrap">
@@ -286,8 +293,9 @@
         <div class="legend tiny muted"><span>{#if nq}Die Suche filtert Zeilen und Spalten. {/if}Antworten auf erlaubte Verbindungen kommen immer zurück. Regeln stellst du pro Gerät unter „Zugriff auf andere Geräte“ ein.</span></div>
       {/if}
     </div>
-
-    <div class="card" style="margin-top:16px">
+    {/snippet}
+    {#snippet w_list()}
+    <div class="card">
       <div class="card-head">
         <h2>Geräte <span class="muted small">{filtered ? `${shownNodes.length} von ${nodes.length}` : nodes.length} · {groups.length} Nutzer</span></h2>
         {#if grouped}
@@ -351,6 +359,18 @@
         {#if !shownNodes.length && nodes.length}<div class="empty small">Kein Gerät passt zu Suche und Filter.</div>{/if}
       </div>
     </div>
+    {/snippet}
+    <Board
+      id="network"
+      widgets={[
+        { id: 'net', title: 'Tunnelnetz', w: 3, body: w_net },
+        { id: 'endpoint', title: 'Endpunkt', w: 3, body: w_endpoint },
+        { id: 'internet', title: 'Internet über Server', w: 3, body: w_internet },
+        { id: 'devices', title: 'Geräte (Anzahl)', w: 3, body: w_devices },
+        { id: 'map', title: 'Karte / Zugriffsmatrix', w: 12, body: w_map },
+        { id: 'list', title: 'Geräte', w: 12, body: w_list },
+      ]}
+    />
   {/if}
 {/if}
 

@@ -1,5 +1,7 @@
 <script>
   import Icon from '../components/Icon.svelte';
+  import Board from '../components/Board.svelte';
+  import LayoutButton from '../components/LayoutButton.svelte';
   import ProtoLogo from '../components/ProtoLogo.svelte';
   import Modal from '../components/Modal.svelte';
   import Info from '../components/Info.svelte';
@@ -155,6 +157,7 @@
       </div>
     </div>
     <div class="row">
+      {#if tab === 'overview'}<LayoutButton />{/if}
       <button class="btn" onclick={toggleEnabled}><Icon name="power" size={16} /> {u.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
       <button class="btn danger" onclick={remove}><Icon name="trash" size={16} /> Löschen</button>
     </div>
@@ -169,34 +172,38 @@
   </div>
 
   {#if tab === 'overview'}
-   <div class="ud">
-   <div class="ud-main">
-    <div class="grid cols-4">
+    {#snippet w_usage()}
       <div class="card card-pad">
         <div class="muted small">Verbrauch {PERIODS[u.effective?.period] || 'gesamt'}</div>
         <div style="margin-top:6px"><Usage used={u.period_up + u.period_down} limitGb={u.effective?.traffic_gb || 0} tiers={u.effective?.tiers || []} /></div>
         {#if u.next_reset}<div class="muted tiny" style="margin-top:6px">Zurücksetzung am {date(u.next_reset)}</div>{/if}
       </div>
+    {/snippet}
+    {#snippet w_speed()}
       <div class="card card-pad">
         <div class="muted small">Aktuelles Tempo</div>
         <div class="big">{u.rate_down || u.rate_up ? rate(u.rate_down) : 'frei'}</div>
         <div class="muted tiny">{u.rate_up ? `Upload ${rate(u.rate_up)}` : 'ohne Begrenzung'}</div>
       </div>
+    {/snippet}
+    {#snippet w_total()}
       <div class="card card-pad">
         <div class="muted small">Gesamt seit Beginn</div>
         <div class="big">{bytes(u.total_up + u.total_down)}</div>
         <div class="muted tiny">↓ {bytes(u.total_down)} · ↑ {bytes(u.total_up)}</div>
       </div>
+    {/snippet}
+    {#snippet w_online()}
       <div class="card card-pad">
         <div class="muted small">{liveOn > 0 || u.online ? 'Online' : 'Zuletzt da'}</div>
         <div class="big row"><span class="dot" class:on={liveOn > 0 || u.online || isOnline(u.last_seen)}></span>{liveOn > 0 || u.online ? (u.online_since ? duration(now - u.online_since) : 'online') : ago(u.last_seen)}</div>
         <div class="muted tiny">{(liveOn > 0 || u.online) && u.online_since ? `${sinceClock(u.online_since)} · ` : ''}{u.devices} Zugänge</div>
       </div>
-    </div>
-    <div style="margin-top:16px"><LivePanel user={id} compact bind:connected={liveOn} /></div>
-    <div style="margin-top:16px"><TrafficPanel url={`/users/${id}/traffic`} /></div>
-   </div>
-   <aside class="ud-side">
+    {/snippet}
+    {#snippet w_live()}
+    <LivePanel user={id} compact bind:connected={liveOn} />
+    {/snippet}
+    {#snippet w_sub()}
     <div class="card">
       <div class="card-head"><h3>Abo-Link</h3><button class="btn sm ghost" onclick={() => setTab('sub')}>Mehr</button></div>
       <div class="card-pad stack-sm side-sub">
@@ -216,6 +223,11 @@
         </div>
       </div>
     </div>
+    {/snippet}
+    {#snippet w_traffic()}
+    <TrafficPanel url={`/users/${id}/traffic`} />
+    {/snippet}
+    {#snippet w_peers()}
     <div class="card">
       <div class="card-head"><h3>Zugänge</h3><button class="btn sm ghost" onclick={() => setTab('peers')}>Verwalten</button></div>
       <div class="side-list">
@@ -234,6 +246,8 @@
         {/each}
       </div>
     </div>
+    {/snippet}
+    {#snippet w_info()}
     <div class="card card-pad">
       <dl class="kv">
         <dt>Limits</dt><dd>{d.custom ? 'Individuell' : u.plan_name ? `Tarif ${u.plan_name}` : 'keine'}</dd>
@@ -244,8 +258,21 @@
         {#if u.note}<dt>Notiz</dt><dd style="white-space:pre-wrap">{u.note}</dd>{/if}
       </dl>
     </div>
-   </aside>
-   </div>
+    {/snippet}
+    <Board
+      id="user"
+      widgets={[
+        { id: 'usage', title: 'Verbrauch', w: 3, body: w_usage },
+        { id: 'speed', title: 'Aktuelles Tempo', w: 3, body: w_speed },
+        { id: 'total', title: 'Gesamt seit Beginn', w: 3, body: w_total },
+        { id: 'online', title: 'Online / zuletzt da', w: 3, body: w_online },
+        { id: 'live', title: 'Live', w: 8, body: w_live },
+        { id: 'sub', title: 'Abo-Link', w: 4, body: w_sub },
+        { id: 'traffic', title: 'Traffic-Verlauf', w: 8, body: w_traffic },
+        { id: 'peers', title: 'Zugänge', w: 4, body: w_peers },
+        { id: 'info', title: 'Limits und Daten', w: 4, body: w_info },
+      ]}
+    />
   {:else if tab === 'peers'}
     <div class="spread" style="margin-bottom:12px">
       <div class="muted small">Jeder Zugang ist ein Gerät (WireGuard) bzw. eine Kennung (VLESS, Hysteria2). Limits gelten für den Nutzer.</div>
@@ -428,19 +455,6 @@
     font-size: 12px;
     padding: 4px 10px;
   }
-  .ud {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: 16px;
-    align-items: start;
-  }
-  .ud-side {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    position: sticky;
-    top: 16px;
-  }
   .side-sub {
     align-items: center;
   }
@@ -468,17 +482,6 @@
   }
   .side-peer:hover {
     background: var(--panel-2);
-  }
-  @media (max-width: 1320px) {
-    .ud {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .ud-side {
-      position: static;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      align-items: start;
-    }
   }
   .sub {
     display: flex;

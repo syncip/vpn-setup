@@ -707,6 +707,10 @@ func (s *Store) SaveAdmin(a *Admin) error {
 
 func (s *Store) DeleteAdmin(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM admins WHERE id=?`, id)
+	if err == nil {
+		// Fenster-Anordnung des Admins mit entfernen (api/layout.go)
+		_, _ = s.db.Exec(`DELETE FROM settings WHERE key=?`, fmt.Sprintf("state:layout:%d", id))
+	}
 	return err
 }
 

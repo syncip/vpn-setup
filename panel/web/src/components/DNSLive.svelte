@@ -176,7 +176,7 @@
     font-size: 11px;
   }
   .livecard {
-    margin-bottom: 14px;
+    margin-bottom: 0;
   }
   .pulse {
     display: inline-block;

@@ -1,5 +1,6 @@
 <script>
   import Icon from '../components/Icon.svelte';
+  import Board from '../components/Board.svelte';
   import PageHead from '../components/PageHead.svelte';
   import QR from '../components/QR.svelte';
   import Info from '../components/Info.svelte';
@@ -79,7 +80,7 @@
 
 <PageHead title="Mein Konto" subtitle="Name, E-Mail, Passwort, Zwei-Faktor-Anmeldung und Anmeldungen" />
 
-<div class="grid cols-2" style="max-width:1100px">
+{#snippet w_profile()}
   <div class="card">
     <div class="card-head"><h3><Icon name="user" size={16} /> Profil</h3><span class="muted small">seit {date(session.user.created)}</span></div>
     <div class="card-pad stack">
@@ -95,7 +96,8 @@
       <div><button class="btn primary" onclick={saveProfile} disabled={!prof.username.trim() || (needPw && !prof.current)}>Speichern</button></div>
     </div>
   </div>
-
+{/snippet}
+{#snippet w_password()}
   <div class="card">
     <div class="card-head"><h3><Icon name="key" size={16} /> Passwort ändern</h3></div>
     <div class="card-pad stack">
@@ -105,7 +107,8 @@
       <div><button class="btn primary" onclick={changePw} disabled={!pw.current || !pw.new}>Ändern</button></div>
     </div>
   </div>
-
+{/snippet}
+{#snippet w_totp()}
   <div class="card">
     <div class="card-head"><h3><Icon name="shield" size={16} /> Zwei-Faktor-Anmeldung</h3>{#if session.user.totp_enabled}<span class="badge ok">aktiv</span>{:else}<span class="badge warn">aus</span>{/if}</div>
     <div class="card-pad stack">
@@ -129,7 +132,8 @@
       {/if}
     </div>
   </div>
-
+{/snippet}
+{#snippet w_sessions()}
   <div class="card">
     <div class="card-head"><h3><Icon name="eye" size={16} /> Angemeldete Sitzungen</h3><button class="btn sm" onclick={logoutOthers} disabled={sessions.length < 2}>Alle anderen abmelden</button></div>
     <div class="table-wrap">
@@ -147,8 +151,9 @@
       </table>
     </div>
   </div>
-
-  <div class="card" style="grid-column:1/-1">
+{/snippet}
+{#snippet w_logins()}
+  <div class="card">
     <div class="card-head">
       <h3><Icon name="list" size={16} /> Anmeldungen am Panel <Info title="Anmeldungen" text="Alle Anmeldeversuche am Panel, auch mit unbekanntem Benutzernamen. Nach 8 Fehlversuchen in 15 Minuten wird eine Adresse bzw. ein Name für 15 Minuten gesperrt. Aufbewahrt werden 90 Tage." /></h3>
       <div class="row">
@@ -183,7 +188,17 @@
       </div>
     {/if}
   </div>
-</div>
+{/snippet}
+<Board
+  id="account"
+  widgets={[
+    { id: 'profile', title: 'Profil', w: 6, body: w_profile },
+    { id: 'password', title: 'Passwort ändern', w: 6, body: w_password },
+    { id: 'totp', title: 'Zwei-Faktor-Anmeldung', w: 6, body: w_totp },
+    { id: 'sessions', title: 'Angemeldete Sitzungen', w: 6, body: w_sessions },
+    { id: 'logins', title: 'Anmeldungen am Panel', w: 12, body: w_logins },
+  ]}
+/>
 
 <style>
   .tiles {

@@ -2,6 +2,7 @@
   import Icon from '../components/Icon.svelte';
   import ProtoLogo from '../components/ProtoLogo.svelte';
   import PageHead from '../components/PageHead.svelte';
+  import Board from '../components/Board.svelte';
   import Modal from '../components/Modal.svelte';
   import FieldForm from '../components/FieldForm.svelte';
   import Info from '../components/Info.svelte';
@@ -292,37 +293,41 @@
 {#if d.error}<div class="notice bad" style="margin-bottom:16px"><Icon name="alert" /><span>{d.error}</span></div>{/if}
 
 {#if tab === 'overview'}
-  <div class="flow">
-    <button class="tile" onclick={() => go('/proxy/rules')}>
-      <span class="tl"><Icon name="route" size={16} /> Ziel-Regeln</span>
-      <span class="big">{ruleCount ? ruleCount.on : '…'}</span>
-      <span class="tiny muted">{ruleCount ? `aktiv${ruleCount.all > ruleCount.on ? `, ${ruleCount.all - ruleCount.on} aus` : ''}` : ''} · welcher Verkehr über welche Gruppe läuft</span>
-    </button>
-    <span class="arrow"><Icon name="chevron" size={18} /></span>
-    <button class="tile" onclick={() => go('/proxy/groups')}>
-      <span class="tl"><Icon name="layers" size={16} /> Gruppen</span>
-      <span class="big">{d.groups.length}</span>
-      <span class="tiny muted">{groupIssues.length ? `${groupIssues.length} mit Störung` : 'alle auf dem bevorzugten Ausgang'} · Reihenfolge mit Ausweich-Ausgängen</span>
-    </button>
-    <span class="arrow"><Icon name="chevron" size={18} /></span>
-    <button class="tile" onclick={() => go('/proxy/exits')}>
-      <span class="tl"><Icon name="globe" size={16} /> Ausgänge</span>
-      <span class="big">{d.exits.length}</span>
-      <span class="tiny"><span class="ok-text">{exitHealth.ok} verbunden</span>{#if exitHealth.warn}&nbsp;· <span class="warn-text">{exitHealth.warn} instabil</span>{/if}{#if exitHealth.bad}&nbsp;· <span class="bad-text">{exitHealth.bad} gestört</span>{/if}</span>
-    </button>
-  </div>
-  <div class="muted small" style="margin:6px 0 14px">Daneben gibt es <button class="linkbtn" onclick={() => go('/proxy/proxy')}>{servers.length} Proxy-Server</button> (SOCKS5/HTTP) für Geräte ohne VPN-App – sie nutzen ebenfalls eine Gruppe als Ausgang.</div>
-
-  {#if badExits.length || groupIssues.length}
-    <div class="notice warn small" style="margin-bottom:14px">
-      <Icon name="alert" size={16} />
-      <span>
-        {#each groupIssues as g}<span>Gruppe <b>{g.name}</b>: {STATE[g.status.state]?.[1]}. </span>{/each}
-        {#each badExits as e}<span>Ausgang <b>{e.name}</b>: {health(e)[1]}. </span>{/each}
-      </span>
+  {#snippet w_flow()}
+    <div>
+    <div class="flow">
+      <button class="tile" onclick={() => go('/proxy/rules')}>
+        <span class="tl"><Icon name="route" size={16} /> Ziel-Regeln</span>
+        <span class="big">{ruleCount ? ruleCount.on : '…'}</span>
+        <span class="tiny muted">{ruleCount ? `aktiv${ruleCount.all > ruleCount.on ? `, ${ruleCount.all - ruleCount.on} aus` : ''}` : ''} · welcher Verkehr über welche Gruppe läuft</span>
+      </button>
+      <span class="arrow"><Icon name="chevron" size={18} /></span>
+      <button class="tile" onclick={() => go('/proxy/groups')}>
+        <span class="tl"><Icon name="layers" size={16} /> Gruppen</span>
+        <span class="big">{d.groups.length}</span>
+        <span class="tiny muted">{groupIssues.length ? `${groupIssues.length} mit Störung` : 'alle auf dem bevorzugten Ausgang'} · Reihenfolge mit Ausweich-Ausgängen</span>
+      </button>
+      <span class="arrow"><Icon name="chevron" size={18} /></span>
+      <button class="tile" onclick={() => go('/proxy/exits')}>
+        <span class="tl"><Icon name="globe" size={16} /> Ausgänge</span>
+        <span class="big">{d.exits.length}</span>
+        <span class="tiny"><span class="ok-text">{exitHealth.ok} verbunden</span>{#if exitHealth.warn}&nbsp;· <span class="warn-text">{exitHealth.warn} instabil</span>{/if}{#if exitHealth.bad}&nbsp;· <span class="bad-text">{exitHealth.bad} gestört</span>{/if}</span>
+      </button>
     </div>
-  {/if}
+    <div class="muted small" style="margin-top:6px">Daneben gibt es <button class="linkbtn" onclick={() => go('/proxy/proxy')}>{servers.length} Proxy-Server</button> (SOCKS5/HTTP) für Geräte ohne VPN-App – sie nutzen ebenfalls eine Gruppe als Ausgang.</div>
 
+    {#if badExits.length || groupIssues.length}
+      <div class="notice warn small" style="margin-top:10px">
+        <Icon name="alert" size={16} />
+        <span>
+          {#each groupIssues as g}<span>Gruppe <b>{g.name}</b>: {STATE[g.status.state]?.[1]}. </span>{/each}
+          {#each badExits as e}<span>Ausgang <b>{e.name}</b>: {health(e)[1]}. </span>{/each}
+        </span>
+      </div>
+    {/if}
+    </div>
+  {/snippet}
+  {#snippet w_groups()}
   <div class="card">
     <div class="card-head"><h3>Gruppen und aktiver Ausgang</h3></div>
     <div class="list">
@@ -343,6 +348,14 @@
       {/each}
     </div>
   </div>
+  {/snippet}
+  <Board
+    id="proxy"
+    widgets={[
+      { id: 'flow', title: 'Ziel-Regeln → Gruppen → Ausgänge', w: 12, body: w_flow },
+      { id: 'groups', title: 'Gruppen und aktiver Ausgang', w: 12, body: w_groups },
+    ]}
+  />
 {/if}
 
 {#if tab === 'proxy'}
@@ -438,68 +451,69 @@
 
 {#if tab === 'exits'}
 <div class="muted small" style="margin-bottom:12px">Externe VPN-Verbindungen – nur für Gruppen, der Server selbst nutzt sie nicht.</div>
-<div class="card">
-  <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Ausgang</th><th>Zustand</th><th>Messung</th><th>Öffentliche IP</th><th class="right">Verkehr <Info title="Verkehr" text="Oben: letzte 24 Stunden, unten: letzte 30 Tage (hoch + runter)." /></th><th class="right">Prüfen</th><th></th></tr></thead>
-      <tbody>
-        {#each d.exits as e}
-          {@const h = health(e)}
-          {@const s = e.status}
-          <tr class:off={!e.enabled}>
-            <td>
-              <div class="row" style="gap:8px">
-                <ProtoLogo id={e.type} size={22} />
-                <div style="min-width:0">
-                  <div class="strong">{e.name}</div>
-                  <div class="muted tiny mono ellipsis exsrv" title={e.server}>{e.server}{#if e.removed.length}&nbsp;<span class="badge muted" title={'Beim Hochladen entfernt: ' + e.removed.join(', ')}><Icon name="filter" size={11} /> {e.removed.length}</span>{/if}</div>
+  {#snippet w_exits()}
+  <div class="card">
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Ausgang</th><th>Zustand</th><th>Messung</th><th>Öffentliche IP</th><th class="right">Verkehr <Info title="Verkehr" text="Oben: letzte 24 Stunden, unten: letzte 30 Tage (hoch + runter)." /></th><th class="right">Prüfen</th><th></th></tr></thead>
+        <tbody>
+          {#each d.exits as e}
+            {@const h = health(e)}
+            {@const s = e.status}
+            <tr class:off={!e.enabled}>
+              <td>
+                <div class="row" style="gap:8px">
+                  <ProtoLogo id={e.type} size={22} />
+                  <div style="min-width:0">
+                    <div class="strong">{e.name}</div>
+                    <div class="muted tiny mono ellipsis exsrv" title={e.server}>{e.server}{#if e.removed.length}&nbsp;<span class="badge muted" title={'Beim Hochladen entfernt: ' + e.removed.join(', ')}><Icon name="filter" size={11} /> {e.removed.length}</span>{/if}</div>
+                  </div>
                 </div>
-              </div>
-            </td>
-            <td>
-              <span class="badge {h[0]}">{h[1]}</span>
-              <div class="tiny muted nowrap">
-                {#if e.mode === 'standby'}
-                  <span title="Bereitschaft: nur verbunden, solange eine Gruppe den Ausgang nutzt">{s?.connected ? (s?.next_check ? 'Bereitschaft · gerade verbunden' : 'Bereitschaft · in Benutzung') : 'Bereitschaft · getrennt'}</span>
-                  {#if !s?.connected && s?.next_check}<br />prüft {checkText(e.check_min)}, nächste {inMin(s.next_check)}{/if}
-                {:else}
-                  immer verbunden · prüft alle 30 s
-                {/if}
-              </div>
-              {#if e.error}<div class="tiny bad-text">{e.error}</div>{/if}
-              {#if e.need_auth && !e.has_auth}<div class="tiny bad-text">Benutzername/Passwort fehlen</div>{/if}
-            </td>
-            <td class="nowrap">
-              {#if s?.checked}
-                <span class="small">{s.rtt ? `${fmtNum(Math.round(s.rtt))} ms` : '–'} · {fmtNum(Math.round(s.loss))} %</span>
-                <div class="tiny muted" title={s.mbit_at ? `Tempo gemessen ${ago(s.mbit_at)}` : ''}>{s.mbit ? `${fmtNum(Math.round(s.mbit))} Mbit/s` : 'Tempo –'}{#if e.mode === 'standby'}&nbsp;· {ago(s.checked) === 'online' ? 'gerade' : ago(s.checked)}{/if}</div>
-              {:else}<span class="muted small">–</span>{/if}
-            </td>
-            <td class="nowrap">{#if s?.ip}<span class="mono small">{s.ip}</span> <span class="badge">{s.loc}</span>{:else}–{/if}</td>
-            <td class="right nowrap small" title="30 Tage: hoch {bytes(e.traffic?.month?.up)}, runter {bytes(e.traffic?.month?.down)} · gesamt {bytes((e.traffic?.all?.up || 0) + (e.traffic?.all?.down || 0))}">
-              {bytes((e.traffic?.day?.up || 0) + (e.traffic?.day?.down || 0))}
-              <div class="tiny muted">{bytes((e.traffic?.month?.up || 0) + (e.traffic?.month?.down || 0))}</div>
-            </td>
-            <td class="right nowrap">
-              <button class="btn sm" title="Ping-Prüfung jetzt (Antwortzeit, Verlust, HTTPS über den Tunnel){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, false)}><Icon name="activity" size={13} /> {testing[e.id] === 'ping' ? '…' : 'Ping'}</button>
-              <button class="btn sm" title="Speedtest jetzt (lädt 5 MB über den Ausgang){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, true)}><Icon name="gauge" size={13} /> {testing[e.id] === 'speed' ? 'misst …' : 'Speed'}</button>
-            </td>
-            <td class="right nowrap">
-              <button class="btn sm icon ghost" title={e.enabled ? 'Deaktivieren' : 'Aktivieren'} onclick={() => toggleExit(e)}><Icon name="power" size={15} /></button>
-              <button class="btn sm icon ghost" title="Bearbeiten" onclick={() => openExit(e)}><Icon name="edit" size={15} /></button>
-              <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeExit(e)}><Icon name="trash" size={15} /></button>
-            </td>
-          </tr>
-        {:else}
-          <tr><td colspan="7" class="empty small">Noch keine Ausgänge. Lade die WireGuard- oder OpenVPN-Konfiguration deines Anbieters hoch.</td></tr>
-        {/each}
-      </tbody>
-    </table>
+              </td>
+              <td>
+                <span class="badge {h[0]}">{h[1]}</span>
+                <div class="tiny muted nowrap">
+                  {#if e.mode === 'standby'}
+                    <span title="Bereitschaft: nur verbunden, solange eine Gruppe den Ausgang nutzt">{s?.connected ? (s?.next_check ? 'Bereitschaft · gerade verbunden' : 'Bereitschaft · in Benutzung') : 'Bereitschaft · getrennt'}</span>
+                    {#if !s?.connected && s?.next_check}<br />prüft {checkText(e.check_min)}, nächste {inMin(s.next_check)}{/if}
+                  {:else}
+                    immer verbunden · prüft alle 30 s
+                  {/if}
+                </div>
+                {#if e.error}<div class="tiny bad-text">{e.error}</div>{/if}
+                {#if e.need_auth && !e.has_auth}<div class="tiny bad-text">Benutzername/Passwort fehlen</div>{/if}
+              </td>
+              <td class="nowrap">
+                {#if s?.checked}
+                  <span class="small">{s.rtt ? `${fmtNum(Math.round(s.rtt))} ms` : '–'} · {fmtNum(Math.round(s.loss))} %</span>
+                  <div class="tiny muted" title={s.mbit_at ? `Tempo gemessen ${ago(s.mbit_at)}` : ''}>{s.mbit ? `${fmtNum(Math.round(s.mbit))} Mbit/s` : 'Tempo –'}{#if e.mode === 'standby'}&nbsp;· {ago(s.checked) === 'online' ? 'gerade' : ago(s.checked)}{/if}</div>
+                {:else}<span class="muted small">–</span>{/if}
+              </td>
+              <td class="nowrap">{#if s?.ip}<span class="mono small">{s.ip}</span> <span class="badge">{s.loc}</span>{:else}–{/if}</td>
+              <td class="right nowrap small" title="30 Tage: hoch {bytes(e.traffic?.month?.up)}, runter {bytes(e.traffic?.month?.down)} · gesamt {bytes((e.traffic?.all?.up || 0) + (e.traffic?.all?.down || 0))}">
+                {bytes((e.traffic?.day?.up || 0) + (e.traffic?.day?.down || 0))}
+                <div class="tiny muted">{bytes((e.traffic?.month?.up || 0) + (e.traffic?.month?.down || 0))}</div>
+              </td>
+              <td class="right nowrap">
+                <button class="btn sm" title="Ping-Prüfung jetzt (Antwortzeit, Verlust, HTTPS über den Tunnel){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, false)}><Icon name="activity" size={13} /> {testing[e.id] === 'ping' ? '…' : 'Ping'}</button>
+                <button class="btn sm" title="Speedtest jetzt (lädt 5 MB über den Ausgang){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, true)}><Icon name="gauge" size={13} /> {testing[e.id] === 'speed' ? 'misst …' : 'Speed'}</button>
+              </td>
+              <td class="right nowrap">
+                <button class="btn sm icon ghost" title={e.enabled ? 'Deaktivieren' : 'Aktivieren'} onclick={() => toggleExit(e)}><Icon name="power" size={15} /></button>
+                <button class="btn sm icon ghost" title="Bearbeiten" onclick={() => openExit(e)}><Icon name="edit" size={15} /></button>
+                <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeExit(e)}><Icon name="trash" size={15} /></button>
+              </td>
+            </tr>
+          {:else}
+            <tr><td colspan="7" class="empty small">Noch keine Ausgänge. Lade die WireGuard- oder OpenVPN-Konfiguration deines Anbieters hoch.</td></tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   </div>
-</div>
-
-{#if d.exits.length}
-  <div class="card" style="margin-top:14px">
+  {/snippet}
+  {#snippet w_traffic()}
+  <div class="card">
     <div class="card-head">
       <h3>Verkehr über die Ausgänge <Info title="Verkehr" text="Gezählt an den Schnittstellen der Ausgänge: alles, was Nutzer über Gruppen ins Internet schicken bzw. von dort laden (inkl. Prüfungen). Runter = vom Anbieter empfangen." /> <span class="muted small">{bytes(trSum)}</span></h3>
       <div class="row wrap" style="gap:8px">
@@ -529,7 +543,14 @@
       </div>
     </div>
   </div>
-{/if}
+  {/snippet}
+  <Board
+    id="proxy-exits"
+    widgets={[
+      { id: 'exits', title: 'Ausgänge', w: 12, body: w_exits },
+      { id: 'traffic', title: 'Verkehr über die Ausgänge', w: 12, body: w_traffic, show: d.exits.length > 0 },
+    ]}
+  />
 {/if}
 
 <Modal bind:open={exOpen} title={exCur ? `Ausgang ${exCur.name}` : 'Ausgang hochladen'} width={680}>

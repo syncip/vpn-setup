@@ -10,6 +10,7 @@
   import AttentionList from '../components/AttentionList.svelte';
   import SearchInput from '../components/SearchInput.svelte';
   import Fold from '../components/Fold.svelte';
+  import Board from '../components/Board.svelte';
   import { tokens, matches } from '../lib/pick.js';
 
   let d = $state(null);
@@ -54,7 +55,7 @@
 {#if err}<div class="notice bad">{err}</div>{/if}
 
 {#if d}
-  <div class="grid ov-top" style="margin-bottom:16px">
+  {#snippet w_attention()}
     <div class="card">
       <div class="card-head">
         <h2>Braucht Aufmerksamkeit</h2>
@@ -70,6 +71,8 @@
         </div>
       {/if}
     </div>
+  {/snippet}
+  {#snippet w_quick()}
     <div class="card">
       <div class="card-head"><h2>Schnellaktionen</h2></div>
       <div class="card-pad quick">
@@ -81,11 +84,11 @@
         <a class="btn" href="#/health/events"><Icon name="clock" size={15} /> Ereignisse</a>
       </div>
     </div>
-  </div>
-
+  {/snippet}
+  {#snippet w_live()}
   <LivePanel />
-
-  <div class="grid cols-2" style="margin-top:16px">
+  {/snippet}
+  {#snippet w_version()}
     <div class="card card-pad stat">
       <div class="pill-icon"><Icon name={meta.update?.available ? 'download' : 'check'} /></div>
       <div class="grow">
@@ -101,6 +104,8 @@
       </div>
       {#if !meta.update?.disabled}<button class="btn sm" onclick={checkUpdate} disabled={upChecking}><Icon name="refresh" size={14} /> Jetzt prüfen</button>{/if}
     </div>
+  {/snippet}
+  {#snippet w_groups()}
     <a class="card card-pad stat link-card" href="#/proxy">
       <div class="pill-icon"><Icon name="route" /></div>
       <div class="grow">
@@ -118,9 +123,8 @@
         {/if}
       </div>
     </a>
-  </div>
-
-  <div class="grid cols-4" style="margin-top:16px">
+  {/snippet}
+  {#snippet w_users()}
     <div class="card card-pad stat">
       <div class="pill-icon"><Icon name="users" /></div>
       <div>
@@ -128,6 +132,8 @@
         <div class="big">{d.counts.users || 0}<span class="muted">{' · '}{d.counts.peers || 0} Zugänge</span></div>
       </div>
     </div>
+  {/snippet}
+  {#snippet w_servercount()}
     <div class="card card-pad stat">
       <div class="pill-icon"><Icon name="server" /></div>
       <div>
@@ -135,6 +141,8 @@
         <div class="big">{d.counts.servers || 0}</div>
       </div>
     </div>
+  {/snippet}
+  {#snippet w_today()}
     <div class="card card-pad stat">
       <div class="pill-icon"><Icon name="activity" /></div>
       <div>
@@ -142,6 +150,8 @@
         <div class="big">{bytes(d.today.up + d.today.down)}</div>
       </div>
     </div>
+  {/snippet}
+  {#snippet w_month()}
     <div class="card card-pad stat">
       <div class="pill-icon"><Icon name="calendar" /></div>
       <div>
@@ -149,11 +159,11 @@
         <div class="big">{bytes(d.month.up + d.month.down)}</div>
       </div>
     </div>
-  </div>
-
-  <div class="grid main-grid" style="margin-top:16px">
+  {/snippet}
+  {#snippet w_traffic()}
     <TrafficPanel url="/traffic" {refresh} />
-
+  {/snippet}
+  {#snippet w_servers()}
     <div class="card">
       <div class="card-head"><h2>Server</h2><a href="#/servers" class="small">Alle</a></div>
       <div class="list">
@@ -171,9 +181,8 @@
         {/each}
       </div>
     </div>
-  </div>
-
-  <div class="grid cols-3" style="margin-top:16px">
+  {/snippet}
+  {#snippet w_alerts()}
     <Fold id="ov-alerts" icon="alert" tone={d.alerts.length ? 'warn' : ''} title="Hinweise" count={d.alerts.length}>
       {#if d.alerts.length > 6}<div style="padding:0 0 6px"><SearchInput bind:value={aq} placeholder="Hinweise durchsuchen …" width="100%" /></div>{/if}
       <div class="list" style="max-height:420px;overflow:auto;padding:0">
@@ -190,7 +199,8 @@
         {/each}
       </div>
     </Fold>
-
+  {/snippet}
+  {#snippet w_top()}
     <div class="card">
       <div class="card-head"><h2>Top-Nutzer</h2><span class="muted small">30 Tage</span></div>
       <div class="list">
@@ -206,7 +216,8 @@
         {/each}
       </div>
     </div>
-
+  {/snippet}
+  {#snippet w_events()}
     <div class="card">
       <div class="card-head"><h2>Ereignisse</h2><a href="#/health/events" class="small">Alle</a></div>
       <div class="list">
@@ -221,7 +232,26 @@
         {/each}
       </div>
     </div>
-  </div>
+  {/snippet}
+  <Board
+    id="overview"
+    widgets={[
+      { id: 'attention', title: 'Braucht Aufmerksamkeit', w: 8, body: w_attention },
+      { id: 'quick', title: 'Schnellaktionen', w: 4, body: w_quick },
+      { id: 'live', title: 'Live', w: 12, body: w_live },
+      { id: 'version', title: 'Version', w: 6, body: w_version },
+      { id: 'groups', title: 'Ausgangsgruppen', w: 6, body: w_groups },
+      { id: 'users', title: 'Nutzer gesamt', w: 3, body: w_users },
+      { id: 'servercount', title: 'Anzahl Server', w: 3, body: w_servercount },
+      { id: 'today', title: 'Traffic heute', w: 3, body: w_today },
+      { id: 'month', title: 'Traffic diesen Monat', w: 3, body: w_month },
+      { id: 'traffic', title: 'Traffic-Verlauf', w: 8, body: w_traffic },
+      { id: 'servers', title: 'Server', w: 4, body: w_servers },
+      { id: 'alerts', title: 'Hinweise', w: 4, body: w_alerts },
+      { id: 'top', title: 'Top-Nutzer', w: 4, body: w_top },
+      { id: 'events', title: 'Ereignisse', w: 4, body: w_events },
+    ]}
+  />
 {/if}
 
 <style>
@@ -257,14 +287,6 @@
     font-size: 16px;
     font-weight: 600;
   }
-  .main-grid {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  }
-  @media (max-width: 1100px) {
-    .main-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
-  }
   .list {
     display: flex;
     flex-direction: column;
@@ -298,15 +320,6 @@
     height: 100%;
     background: var(--accent);
     border-radius: 5px;
-  }
-  .ov-top {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-    gap: 16px;
-  }
-  @media (max-width: 1100px) {
-    .ov-top {
-      grid-template-columns: 1fr;
-    }
   }
   .quick {
     display: grid;
