@@ -34,7 +34,32 @@
   async function loadSecurity() {
     const all = await get('/settings');
     priv = { block: all.private_block !== '0', allow: all.private_allow || '' };
+    lockCfg = { login_max_fails: all.login_max_fails, login_window: all.login_window, login_lock: all.login_lock, login_lock_grow: all.login_lock_grow, login_allow: all.login_allow || '' };
+    loadLocks();
   }
+  // Login-Sperre nach Adresse
+  let lockCfg = $state(null);
+  let locks = $state(null);
+  let lockForm = $state({ net: '', minutes: '1440', reason: '' });
+  let showOld = $state(false);
+  async function loadLocks() {
+    locks = await get('/security/locks');
+  }
+  async function saveLockCfg() {
+    const r = await run(() => put('/settings', $state.snapshot(lockCfg)), 'Login-Sperre gespeichert');
+    if (r) lockCfg = { login_max_fails: r.login_max_fails, login_window: r.login_window, login_lock: r.login_lock, login_lock_grow: r.login_lock_grow, login_allow: r.login_allow || '' };
+  }
+  async function addLock() {
+    const r = await run(() => post('/security/locks', { net: lockForm.net.trim(), minutes: Number(lockForm.minutes) || 0, reason: lockForm.reason }), 'Adresse gesperrt');
+    if (r) {
+      lockForm = { net: '', minutes: '1440', reason: '' };
+      loadLocks();
+    }
+  }
+  async function unlock(net) {
+    if (await run(() => post('/security/locks/remove', { net }), `${net} entsperrt`)) loadLocks();
+  }
+  const lockUntil = (l) => (l.until ? (l.active ? `bis ${date(l.until, true)}` : `abgelaufen ${date(l.until, true)}`) : 'dauerhaft');
   async function savePrivate() {
     if (!priv.block && !(await confirmDialog({ title: 'Lokale Netze freigeben?', text: 'VPN-Nutzer können dann das interne Netz des Servers erreichen – auch den Proxmox-Host und dessen Weboberfläche.', ok: 'Freigeben', danger: true }))) return;
     const r = await run(() => put('/settings', { private_block: priv.block ? '1' : '0', private_allow: priv.allow }), 'Gespeichert');
@@ -252,6 +277,79 @@
           </div>
           <div><button class="btn primary" onclick={savePrivate}>Speichern</button></div>
         </div>
+      </div>
+    {/if}
+    {#if lockCfg}
+      <div class="card">
+        <div class="card-head">
+          <h3>
+            <Icon name="shield" size={16} /> Login-Sperre
+            <Info title="Login-Sperre nach Adresse" wide>
+              <p>Nach zu vielen fehlgeschlagenen Anmeldungen wird die <b>Adresse</b> gesperrt, von der sie kamen – nie der Benutzername. So kann niemand, der deinen Namen kennt, dich aussperren: Von einer anderen Adresse kommst du immer rein.</p>
+              <ul>
+                <li>IPv4 zählt je Adresse, IPv6 je /64-Netz (ein Anschluss hat dort beliebig viele Adressen).</li>
+                <li>Kommt eine Adresse innerhalb eines Tages wieder in die Sperre, verdoppelt sich die Dauer (höchstens 24 Stunden).</li>
+                <li>Falsche 2FA-Codes zählen als Fehlversuch.</li>
+                <li>Bei einer Sperre gibt es einen Eintrag unter Zustand → Ereignisse und – falls eingerichtet – eine E-Mail.</li>
+              </ul>
+            </Info>
+          </h3>
+        </div>
+        <div class="card-pad stack">
+          <div class="grid cols-3">
+            <div class="field"><label for="ll-f">Fehlversuche</label><input id="ll-f" class="input" inputmode="numeric" bind:value={lockCfg.login_max_fails} /></div>
+            <div class="field"><label for="ll-w">innerhalb von (Min.)</label><input id="ll-w" class="input" inputmode="numeric" bind:value={lockCfg.login_window} /></div>
+            <div class="field"><label for="ll-l">Sperre für (Min.)</label><input id="ll-l" class="input" inputmode="numeric" bind:value={lockCfg.login_lock} /></div>
+          </div>
+          <label class="switch"><input type="checkbox" checked={lockCfg.login_lock_grow !== '0'} onchange={(e) => (lockCfg.login_lock_grow = e.currentTarget.checked ? '1' : '0')} /><span class="track"></span> Bei Wiederholung innerhalb eines Tages die Dauer verdoppeln (bis 24 h)</label>
+          <div class="field">
+            <label for="ll-a">Nie sperren <span class="muted">(optional, eine Adresse oder ein Netz je Zeile)</span> <Info title="Nie sperren" text="Zum Beispiel dein Zuhause mit fester Adresse oder das Tailscale-Netz 100.64.0.0/10. Von hier aus wird nie gesperrt – Fehlversuche stehen trotzdem im Anmeldeprotokoll." /></label>
+            <textarea id="ll-a" class="input mono" rows="3" bind:value={lockCfg.login_allow} placeholder={'203.0.113.7\n100.64.0.0/10'}></textarea>
+            {#if locks?.you}<div class="tiny muted">Deine Adresse gerade: <span class="mono">{locks.you}</span></div>{/if}
+          </div>
+          <div><button class="btn primary" onclick={saveLockCfg}>Speichern</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3><Icon name="lock" size={16} /> Gesperrte Adressen</h3>
+          {#if locks}<span class="badge {locks.locks.some((l) => l.active) ? 'warn' : 'muted'}">{locks.locks.filter((l) => l.active).length} aktiv</span>{/if}
+        </div>
+        <div class="card-pad stack-sm">
+          <div class="row wrap" style="gap:8px">
+            <input class="input mono grow" style="min-width:180px" placeholder="IP-Adresse oder Netz" bind:value={lockForm.net} onkeydown={(e) => e.key === 'Enter' && lockForm.net.trim() && addLock()} />
+            <select class="input" style="width:auto" bind:value={lockForm.minutes}>
+              <option value="60">1 Stunde</option>
+              <option value="1440">1 Tag</option>
+              <option value="10080">7 Tage</option>
+              <option value="43200">30 Tage</option>
+              <option value="0">dauerhaft</option>
+            </select>
+            <button class="btn" onclick={addLock} disabled={!lockForm.net.trim()}><Icon name="lock" size={15} /> Sperren</button>
+          </div>
+          <input class="input" placeholder="Grund (optional)" bind:value={lockForm.reason} maxlength="120" />
+        </div>
+        {#if locks}
+          {@const shown = locks.locks.filter((l) => l.active || showOld)}
+          <div class="table-wrap">
+            <table class="table">
+              <tbody>
+                {#each shown as l (l.net)}
+                  <tr class:muted={!l.active}>
+                    <td><span class="mono small">{l.net}</span>{#if l.manual}&nbsp;<span class="badge">von Hand</span>{/if}<div class="tiny muted">{l.reason}</div></td>
+                    <td class="small nowrap">{lockUntil(l)}</td>
+                    <td class="right"><button class="btn sm" onclick={() => unlock(l.net)}>{l.active ? 'Entsperren' : 'Entfernen'}</button></td>
+                  </tr>
+                {:else}
+                  <tr><td class="empty small">Keine Adresse gesperrt</td></tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          {#if locks.locks.some((l) => !l.active)}
+            <div class="card-pad" style="padding-top:8px"><label class="switch small"><input type="checkbox" bind:checked={showOld} /><span class="track"></span> Abgelaufene Sperren der letzten 24 Stunden zeigen</label></div>
+          {/if}
+        {/if}
       </div>
     {/if}
   </div>

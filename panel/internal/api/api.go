@@ -165,6 +165,18 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("GET /api/live", a.auth(a.live))
 	api.HandleFunc("GET /api/status", a.auth(a.status))
 	api.HandleFunc("GET /api/layout", a.auth(a.getLayout))
+	api.HandleFunc("GET /api/security/locks", a.auth(a.listLocks))
+	api.HandleFunc("GET /api/search", a.auth(a.searchIndex))
+	api.HandleFunc("GET /api/updates", a.auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, a.E.PkgUpdates(a.Version)) }))
+	api.HandleFunc("POST /api/updates/check", a.auth(func(w http.ResponseWriter, r *http.Request) {
+		if a.E.Setting("update_check") != "0" && !a.E.Sys.DryRun() {
+			a.E.CheckUpdate(a.Version)
+		}
+		writeJSON(w, a.E.CheckPkgUpdates(a.Version))
+	}))
+	api.HandleFunc("POST /api/updates/refresh", a.auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, a.E.RefreshPkgLists(a.Version)) }))
+	api.HandleFunc("POST /api/security/locks", a.auth(a.addLock))
+	api.HandleFunc("POST /api/security/locks/remove", a.auth(a.removeLock))
 	api.HandleFunc("PUT /api/layout", a.auth(a.putLayout))
 
 	static := a.staticHandler()

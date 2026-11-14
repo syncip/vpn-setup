@@ -37,6 +37,7 @@ type Engine struct {
 
 	live     liveState
 	upd      updateState
+	pkg      pkgState // Paket-Updates (pkgupdate.go)
 	Exits    *exits.Manager
 	liveKick chan struct{}
 
@@ -77,6 +78,12 @@ var settingDefaults = map[string]string{
 	"public_port":         "443",
 	"trust_cloudflare":    "1",
 	"session_hours":       "168",
+	"login_max_fails":     "8",   // Login-Sperre: Fehlversuche je Adresse …
+	"login_window":        "15",  // … innerhalb dieser Minuten
+	"login_lock":          "15",  // Sperrdauer in Minuten
+	"login_lock_grow":     "1",   // Dauer bei Wiederholung innerhalb eines Tages verdoppeln (max. 24 h)
+	"login_allow":         "",    // Adressen/Netze, die nie gesperrt werden
+	"pkg_refresh":         "0",   // Paketlisten (apt-get update) täglich selbst aktualisieren
 	"update_check":        "1",   // 0 = nicht bei GitHub nach neuen Versionen fragen
 	"exit_speedtest":      "360", // Minuten zwischen Geschwindigkeitstests der Ausgänge, 0 = aus
 	"dns_enabled":         "1",   // Panel-DNS für WireGuard-/OpenVPN-Geräte

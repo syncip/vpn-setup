@@ -11,6 +11,7 @@
   import SearchInput from '../components/SearchInput.svelte';
   import Fold from '../components/Fold.svelte';
   import Board from '../components/Board.svelte';
+  import UpdatesPanel from '../components/UpdatesPanel.svelte';
   import { tokens, matches } from '../lib/pick.js';
 
   let d = $state(null);
@@ -104,6 +105,9 @@
       </div>
       {#if !meta.update?.disabled}<button class="btn sm" onclick={checkUpdate} disabled={upChecking}><Icon name="refresh" size={14} /> Jetzt prüfen</button>{/if}
     </div>
+  {/snippet}
+  {#snippet w_updates()}
+    <UpdatesPanel compact />
   {/snippet}
   {#snippet w_groups()}
     <a class="card card-pad stat link-card" href="#/proxy">
@@ -241,6 +245,7 @@
       { id: 'live', title: 'Live', w: 12, body: w_live },
       { id: 'version', title: 'Version', w: 6, body: w_version },
       { id: 'groups', title: 'Ausgangsgruppen', w: 6, body: w_groups },
+      { id: 'updates', title: 'Updates', w: 6, body: w_updates },
       { id: 'users', title: 'Nutzer gesamt', w: 3, body: w_users },
       { id: 'servercount', title: 'Anzahl Server', w: 3, body: w_servercount },
       { id: 'today', title: 'Traffic heute', w: 3, body: w_today },

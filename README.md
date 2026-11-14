@@ -369,7 +369,36 @@ nur mit dem aktuellen Passwort), Passwort ändern (meldet alle anderen Sitzungen
 angemeldete Sitzungen und das **Anmeldeprotokoll** – alle Anmeldeversuche mit Zeit, Benutzername, Adresse,
 Gerät und Grund (Passwort falsch, unbekannter Name, 2FA-Code falsch, gesperrt), dazu die Zahl der
 erfolgreichen und fehlgeschlagenen Anmeldungen der letzten 24 Stunden und 30 Tage. Aufbewahrt werden 90 Tage.
-Nach 8 Fehlversuchen in 15 Minuten sind Adresse bzw. Name für 15 Minuten gesperrt.
+Bei fehlgeschlagenen Anmeldungen kann man die Adresse direkt sperren (Schloss neben der Adresse).
+
+### Login-Sperre
+
+Gesperrt wird immer nur die **Adresse**, nie der Benutzername – wer den Namen kennt, kann den Admin also
+nicht aussperren. Vorgabe: 8 Fehlversuche (auch falsche 2FA-Codes) in 15 Minuten sperren die Adresse für
+15 Minuten; kommt sie innerhalb eines Tages wieder in die Sperre, verdoppelt sich die Dauer (höchstens
+24 Stunden). IPv4 zählt je Adresse, IPv6 je /64-Netz. Alles einstellbar unter **Einstellungen → Sicherheit →
+Login-Sperre**, dazu eine Liste von Adressen/Netzen, die nie gesperrt werden (z. B. das eigene Zuhause oder
+100.64.0.0/10 für Tailscale). Unter **Gesperrte Adressen** stehen die aktiven Sperren mit Grund und Ende;
+dort lässt sich entsperren und eine Adresse oder ein Netz von Hand sperren (1 Stunde bis dauerhaft – die
+eigene Adresse lehnt das Panel ab). Jede Sperre landet im Ereignisprotokoll und – falls eingerichtet – per Mail.
+
+## Updates
+
+**Zustand → Updates** zeigt neue Versionen von Panel, Xray, Hysteria2 und den Debian-Paketen
+(Sicherheitsupdates und vom Panel genutzte Pakete hervorgehoben); die Übersicht hat dazu ein Fenster und
+„Braucht Aufmerksamkeit“ meldet Sicherheitsupdates. **Installiert wird nichts automatisch:** Panel wie unten
+beschrieben, Xray und Hysteria2 mit `bash vpn-setup.sh`, Debian-Pakete mit `apt full-upgrade` im Container.
+Geprüft wird alle 12 Stunden (Panel, Xray und Hysteria2 per GitHub, abschaltbar mit der Update-Prüfung unter
+Einstellungen → Allgemein); die Debian-Prüfung ist eine Simulation (`apt-get -s dist-upgrade`) und sieht, was
+in den Paketlisten steht. Die Listen aktualisiert Debian meist selbst; sonst „Paketlisten aktualisieren“ oder
+den Schalter für tägliches `apt-get update`. Das WireGuard-Kernelmodul liegt auf dem Proxmox-Host und lässt
+sich aus dem Container nicht prüfen.
+
+## Schnellsuche
+
+**Strg+K** (Mac: ⌘K) oder „Suchen …“ in der Seitenleiste öffnet die Suche über Seiten und Einstellungen
+(z. B. „smtp“, „2fa“, „blocklisten“), Nutzer, Geräte, Server, Ausgänge, Gruppen und Tarife.
+Pfeiltasten wählen, Enter öffnet.
 
 ## Benachrichtigungen per E-Mail
 

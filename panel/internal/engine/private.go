@@ -101,3 +101,37 @@ func (e *Engine) privateGuard() *proto.PrivateGuard {
 	sort.Slice(g.Nets, func(i, j int) bool { return g.Nets[i].String() < g.Nets[j].String() })
 	return g
 }
+
+// ParseNetList: Liste von Adressen/Netzen (eine je Zeile, Komma oder Leerzeichen, # = Kommentar),
+// z. B. für Adressen, die die Login-Sperre nie trifft. Höchstens 50 Einträge.
+func ParseNetList(v string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	seen := map[netip.Prefix]bool{}
+	for _, line := range strings.Split(v, "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		for _, f := range strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' || r == '\r' || r == ';' || r == '\t' }) {
+			var p netip.Prefix
+			if a, err := netip.ParseAddr(f); err == nil {
+				a = a.Unmap()
+				p = netip.PrefixFrom(a, a.BitLen())
+			} else if q, err := netip.ParsePrefix(f); err == nil {
+				p = q.Masked()
+			} else {
+				return nil, fmt.Errorf("„%s“: bitte eine Adresse (203.0.113.7) oder ein Netz (203.0.113.0/24) angeben", f)
+			}
+			if p.Bits() == 0 {
+				return nil, fmt.Errorf("„%s“ ist zu groß", f)
+			}
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	if len(out) > 50 {
+		return nil, fmt.Errorf("höchstens 50 Einträge")
+	}
+	return out, nil
+}

@@ -56,7 +56,29 @@ func ValidateSetting(k, v string) (string, error) {
 		if n, err := strconv.Atoi(v); err != nil || n < 0 {
 			return "", fmt.Errorf("%s: bitte eine Zahl ab 0", k)
 		}
-	case "trust_cloudflare", "update_check", "dns_enabled", "private_block", "dns_public", "dns_auto", "dns_tls":
+	case "login_max_fails":
+		if n, err := strconv.Atoi(v); err != nil || n < 3 || n > 100 {
+			return "", fmt.Errorf("Login-Sperre: 3 bis 100 Fehlversuche")
+		}
+	case "login_window", "login_lock":
+		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 1440 {
+			return "", fmt.Errorf("Login-Sperre: 1 bis 1440 Minuten")
+		}
+	case "login_allow":
+		list, err := ParseNetList(v)
+		if err != nil {
+			return "", fmt.Errorf("Nie sperren: %v", err)
+		}
+		var parts []string
+		for _, p := range list {
+			if p.IsSingleIP() {
+				parts = append(parts, p.Addr().String())
+			} else {
+				parts = append(parts, p.String())
+			}
+		}
+		v = strings.Join(parts, "\n")
+	case "trust_cloudflare", "update_check", "dns_enabled", "private_block", "dns_public", "dns_auto", "dns_tls", "login_lock_grow", "pkg_refresh":
 		if v != "0" && v != "1" {
 			v = "0"
 		}

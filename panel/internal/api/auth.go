@@ -30,14 +30,14 @@ type limiter struct {
 
 func newLimiter() *limiter { return &limiter{hits: map[string][]time.Time{}} }
 
-// allow: höchstens 8 Fehlversuche pro 15 Minuten und Schlüssel (Adresse bzw. Benutzername).
-func (l *limiter) allow(key string) bool {
+// count: Fehlversuche des Schlüssels im Zeitfenster (räumt dabei alte Einträge weg).
+func (l *limiter) count(key string, window time.Duration) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	cut := time.Now().Add(-15 * time.Minute)
+	cut := time.Now().Add(-window)
 	if time.Since(l.clean) > 5*time.Minute { // alte Einträge wegräumen, damit die Map nicht wächst
 		for k, v := range l.hits {
-			if len(v) == 0 || !v[len(v)-1].After(cut) {
+			if len(v) == 0 || !v[len(v)-1].After(time.Now().Add(-24*time.Hour)) {
 				delete(l.hits, k)
 			}
 		}
@@ -51,10 +51,10 @@ func (l *limiter) allow(key string) bool {
 	}
 	if len(keep) == 0 {
 		delete(l.hits, key)
-		return true
+		return 0
 	}
 	l.hits[key] = keep
-	return len(keep) < 8
+	return len(keep)
 }
 
 func (l *limiter) fail(key string) {
@@ -182,20 +182,17 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := a.clientIP(r)
-	name := strings.ToLower(strings.TrimSpace(in.Username))
-	userKey := "u:" + name
-	if !a.limiter.allow(ip) || !a.limiter.allow(userKey) {
-		errJSON(w, http.StatusTooManyRequests, "Zu viele Fehlversuche – bitte 15 Minuten warten")
+	// Login-Sperre nur nach Adresse (IPv6 je /64) – der Benutzername wird nie gesperrt,
+	// sonst könnte jeder, der den Namen kennt, den Admin aussperren (loginlock.go).
+	if until, locked := a.lockedUntil(ip); locked {
+		a.logLogin(r, in.Username, 0, false, "Adresse gesperrt")
+		errJSON(w, http.StatusTooManyRequests, lockMessage(until))
 		return
 	}
-	// failed: Fehlversuch zählen, protokollieren und bei erreichter Sperre einmal melden
+	// failed: Fehlversuch zählen, protokollieren und bei erreichter Grenze die Adresse sperren
 	failed := func(adminID int64, reason string) {
-		a.limiter.fail(ip)
-		a.limiter.fail(userKey)
-		if !a.limiter.allow(ip) || !a.limiter.allow(userKey) {
-			reason += " · jetzt 15 Minuten gesperrt"
-			a.E.Notify("lockout", ip, "Anmeldung gesperrt nach Fehlversuchen",
-				"Nach zu vielen fehlgeschlagenen Anmeldungen ist die Anmeldung am Panel für 15 Minuten gesperrt.\n\nAdresse: "+ip+"\nBenutzername: "+cleanName(in.Username))
+		if until, now := a.recordFail(ip, cleanName(in.Username)); now {
+			reason += " · Adresse jetzt gesperrt " + lockSpan(until)
 		}
 		a.logLogin(r, in.Username, adminID, false, reason)
 	}
@@ -225,8 +222,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.limiter.reset(ip)
-	a.limiter.reset(userKey)
+	a.limiter.reset(lockKey(ip))
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
 	tok := hex.EncodeToString(raw)

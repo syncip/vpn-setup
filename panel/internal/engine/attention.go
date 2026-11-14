@@ -118,6 +118,23 @@ func (e *Engine) Attention(version string) []AttentionItem {
 	if u := e.Update(version); u.Available {
 		add("update", "info", "Update "+u.Latest+" verfügbar", "Installiert: "+version, u.URL)
 	}
+	e.pkg.mu.Lock()
+	pk := e.pkg.state
+	e.pkg.mu.Unlock()
+	if pk.Security > 0 {
+		add("pkg:security", "warn", fmt.Sprintf("%d Sicherheitsupdates für Debian-Pakete", pk.Security), fmt.Sprintf("Insgesamt %d Paket-Updates – einspielen mit „apt full-upgrade“ im Container.", pk.Debian), "#/health/updates")
+	} else if pk.Debian > 0 {
+		add("pkg:debian", "info", fmt.Sprintf("%d Debian-Pakete aktualisierbar", pk.Debian), "Einspielen mit „apt full-upgrade“ im Container.", "#/health/updates")
+	}
+	if pk.Binaries > 0 {
+		var names []string
+		for _, it := range pk.Items {
+			if it.Kind == "binary" && it.Available {
+				names = append(names, it.Name+" "+it.Latest)
+			}
+		}
+		add("pkg:binary", "info", "Neue Version: "+strings.Join(names, ", "), "Einspielen mit „bash vpn-setup.sh“ im Container.", "#/health/updates")
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if attentionRank[out[i].Level] != attentionRank[out[j].Level] {
 			return attentionRank[out[i].Level] < attentionRank[out[j].Level]

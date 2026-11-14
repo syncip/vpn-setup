@@ -7,6 +7,7 @@
   import PortHelp from '../components/PortHelp.svelte';
   import AttentionList from '../components/AttentionList.svelte';
   import Board from '../components/Board.svelte';
+  import UpdatesPanel from '../components/UpdatesPanel.svelte';
   import { get, post, run } from '../lib/api.js';
   import { date, bytes, speed, duration } from '../lib/format.js';
   import { go, status } from '../lib/state.svelte.js';
@@ -14,6 +15,7 @@
   let { tab = 'overview' } = $props();
   const tabs = [
     ['overview', 'Übersicht', 'activity'],
+    ['updates', 'Updates', 'download'],
     ['events', 'Ereignisse', 'list'],
   ];
 
@@ -63,7 +65,7 @@
   const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
 </script>
 
-<PageHead title="Zustand" subtitle="Was gerade läuft, was Aufmerksamkeit braucht, Komponenten, Ports und Ereignisse" />
+<PageHead title="Zustand" subtitle="Was gerade läuft, was Aufmerksamkeit braucht, Komponenten, Ports, Updates und Ereignisse" />
 
 <div class="tabs">
   {#each tabs as [id, label, icon]}
@@ -177,6 +179,8 @@
       { id: 'drylog', title: 'Testmodus – ausgeführte Befehle', w: 12, body: w_drylog, show: !!sys?.dry_run },
     ]}
   />
+{:else if tab === 'updates'}
+  <UpdatesPanel />
 {:else if tab === 'events'}
   <div class="card">
     <div class="card-head">

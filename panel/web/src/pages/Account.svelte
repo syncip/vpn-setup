@@ -7,6 +7,7 @@
   import { get, post, put, del, run } from '../lib/api.js';
   import { date, ago } from '../lib/format.js';
   import { session } from '../lib/state.svelte.js';
+  import { confirmDialog } from '../components/Confirm.svelte';
 
   // ---------- Profil ----------
   let prof = $state({ username: session.user.username, email: session.user.email || '', notify: !!session.user.notify, current: '' });
@@ -64,6 +65,11 @@
   let onlyFailed = $state(false);
   async function loadLogins() {
     logins = await get('/auth/logins?limit=100');
+  }
+  // Adresse eines Fehlversuchs von Hand sperren (Einstellungen → Sicherheit → Gesperrte Adressen)
+  async function lockIP(ip) {
+    if (!(await confirmDialog({ title: `${ip} sperren?`, text: 'Von dieser Adresse ist dann 7 Tage lang keine Anmeldung am Panel möglich. Entsperren unter Einstellungen → Sicherheit.', ok: 'Sperren', danger: true }))) return;
+    await run(() => post('/security/locks', { net: ip, minutes: 10080, reason: 'aus dem Anmeldeprotokoll gesperrt' }), `${ip} gesperrt`);
   }
   const shown = $derived((logins?.entries || []).filter((l) => !onlyFailed || !l.ok).slice(0, 50));
 
@@ -177,7 +183,7 @@
                 <td class="small nowrap">{date(l.ts, true)}</td>
                 <td class="small">{#if l.ok}<span class="badge ok">erfolgreich</span>{:else}<span class="badge bad">fehlgeschlagen</span>{/if} <span class="muted">{l.reason}</span></td>
                 <td class="small strong ellipsis" style="max-width:180px" title={l.username}>{l.username || '–'}</td>
-                <td class="mono small">{l.ip}</td>
+                <td class="mono small nowrap">{l.ip}{#if !l.ok && l.ip}&nbsp;<button class="btn sm icon ghost" title="Diese Adresse sperren" onclick={() => lockIP(l.ip)}><Icon name="lock" size={13} /></button>{/if}</td>
                 <td class="small muted" title={l.agent}>{device(l.agent)}</td>
               </tr>
             {:else}

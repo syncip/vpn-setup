@@ -5,6 +5,7 @@
   import Overview from './pages/Overview.svelte';
   import Users from './pages/Users.svelte';
   import UserDetail from './pages/UserDetail.svelte';
+  import Search, { search } from './components/Search.svelte';
   import Network from './pages/Network.svelte';
   import Servers from './pages/Servers.svelte';
   import Plans from './pages/Plans.svelte';
@@ -51,7 +52,7 @@
       { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
     ] },
     { title: 'System', items: [
-      { path: '/health', label: 'Zustand', icon: 'activity', keys: ['err:', 'port:', 'disk', 'mem', 'server_host'] },
+      { path: '/health', label: 'Zustand', icon: 'activity', keys: ['err:', 'port:', 'disk', 'mem', 'server_host', 'pkg:'] },
       { path: '/settings', label: 'Einstellungen', icon: 'settings' },
     ] },
   ];
@@ -127,6 +128,7 @@
 {:else if !session.user}
   <Login onlogin={boot} />
 {:else}
+  <Search />
   <div class="layout">
     <aside class="sidebar" class:open={navOpen}>
       <div class="brand">
@@ -157,6 +159,7 @@
           <div class="mrow"><span>Lade Zustand …</span></div>
         {/if}
       </a>
+      <button class="sbtn" onclick={() => (search.open = true)} title="Schnellsuche (Strg+K)"><Icon name="search" size={15} /><span class="grow">Suchen …</span><kbd>Strg K</kbd></button>
       <nav>
         {#each nav as g}
           {#if g.title}<div class="nav-title">{g.title}</div>{/if}
@@ -499,5 +502,31 @@
       transform: translateY(10px);
       opacity: 0;
     }
+  }
+  .sbtn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 10px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--sidebar-hover);
+    background: transparent;
+    color: var(--sidebar-text);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .sbtn:hover {
+    background: var(--sidebar-hover);
+    color: #fff;
+  }
+  .sbtn kbd {
+    font: inherit;
+    font-size: 10px;
+    border: 1px solid var(--sidebar-hover);
+    border-radius: 4px;
+    padding: 0 4px;
   }
 </style>

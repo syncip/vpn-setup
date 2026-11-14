@@ -84,6 +84,9 @@ var migrations = []string{
 	 CREATE TABLE login_log (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, username TEXT NOT NULL DEFAULT '', admin_id INTEGER NOT NULL DEFAULT 0,
 	   ip TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '', ok INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '');
 	 CREATE INDEX login_log_ts ON login_log(ts);`,
+	// Login-Sperre nach Adresse (IPv4 einzeln, IPv6 je /64); until 0 = dauerhaft
+	`CREATE TABLE login_locks (net TEXT PRIMARY KEY, until INTEGER NOT NULL DEFAULT 0, manual INTEGER NOT NULL DEFAULT 0,
+	   strikes INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL);`,
 }
 
 // SchemaVersion: Stand der Datenbank, den dieses Programm kennt (für die Prüfung von Sicherungen).
@@ -817,7 +820,7 @@ func (s *Store) Snapshot(path string, withLogs bool) error {
 		return err
 	}
 	defer db.Close()
-	for _, q := range []string{`DELETE FROM dns_log`, `DELETE FROM login_log`, `VACUUM`} {
+	for _, q := range []string{`DELETE FROM dns_log`, `DELETE FROM login_log`, `DELETE FROM login_locks WHERE manual=0`, `VACUUM`} {
 		if _, err := db.Exec(q); err != nil {
 			return err
 		}

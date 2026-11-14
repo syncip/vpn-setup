@@ -56,6 +56,10 @@ func (e *Engine) RunUpdateCheck(stop <-chan struct{}, current string) {
 		if e.Setting("update_check") != "0" && !e.Sys.DryRun() {
 			e.CheckUpdate(current)
 		}
+		// Paket-Updates (Xray, Hysteria2, Debian); Paketlisten bei pkg_refresh=1 vorher auffrischen
+		if !e.maybeRefreshLists(current) {
+			e.CheckPkgUpdates(current)
+		}
 		t.Reset(12 * time.Hour)
 	}
 }

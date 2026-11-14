@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestFromCloudflare(t *testing.T) {
 	for ip, want := range map[string]bool{
@@ -15,21 +18,18 @@ func TestFromCloudflare(t *testing.T) {
 
 func TestLimiter(t *testing.T) {
 	l := newLimiter()
-	for i := 0; i < 8; i++ {
-		if !l.allow("u:admin") {
-			t.Fatalf("Versuch %d gesperrt", i+1)
-		}
-		l.fail("u:admin")
+	for i := 0; i < 5; i++ {
+		l.fail("203.0.113.7")
 	}
-	if l.allow("u:admin") {
-		t.Errorf("nach 8 Fehlversuchen nicht gesperrt")
+	if n := l.count("203.0.113.7", 15*time.Minute); n != 5 {
+		t.Errorf("Zählung %d, erwartet 5", n)
 	}
-	if !l.allow("u:other") {
-		t.Errorf("anderer Name gesperrt")
+	if n := l.count("203.0.113.8", 15*time.Minute); n != 0 {
+		t.Errorf("andere Adresse mitgezählt: %d", n)
 	}
-	l.reset("u:admin")
-	if !l.allow("u:admin") {
-		t.Errorf("nach reset gesperrt")
+	l.reset("203.0.113.7")
+	if n := l.count("203.0.113.7", 15*time.Minute); n != 0 {
+		t.Errorf("nach reset noch %d", n)
 	}
 }
 
