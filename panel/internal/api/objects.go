@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -33,6 +34,8 @@ type exitRow struct {
 	Mode     string                      `json:"mode"`      // always | standby
 	CheckMin int                         `json:"check_min"` // Prüfabstand in Bereitschaft
 	Traffic  map[string]store.ExitTotals `json:"traffic"`   // day | week | month | all
+	Limits   *store.Limits               `json:"limits"`    // nil = keine
+	Limit    *engine.ExitLimitState      `json:"limit"`     // Verbrauch und Status im Zeitraum
 }
 
 type groupRow struct {
@@ -84,6 +87,7 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 		"month": now.AddDate(0, 0, -30).Unix(), "all": 0} {
 		tr[k], _ = a.St.ExitTraffic(since)
 	}
+	lim := a.E.ExitLimitStates()
 	rows := []*exitRow{}
 	for _, o := range eo {
 		row := &exitRow{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Removed: []string{}, Groups: inGroups[o.ID], Traffic: map[string]store.ExitTotals{}}
@@ -91,6 +95,10 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 			row.Traffic[k] = m[o.ID]
 		}
 		row.Type, _ = o.Data["type"].(string)
+		row.Limits = engine.ExitLimits(o)
+		if st, ok := lim[o.ID]; ok {
+			row.Limit = &st
+		}
 		if l, ok := o.Data["removed"].([]any); ok {
 			for _, v := range l {
 				if s, ok := v.(string); ok {
@@ -125,13 +133,14 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 }
 
 type exitInput struct {
-	Name     *string `json:"name"`
-	Enabled  *bool   `json:"enabled"`
-	Config   string  `json:"config"`
-	Username *string `json:"username"`
-	Password *string `json:"password"`  // leer = unverändert
-	Mode     *string `json:"mode"`      // always | standby
-	CheckMin *int    `json:"check_min"` // Minuten (Bereitschaft)
+	Name     *string         `json:"name"`
+	Enabled  *bool           `json:"enabled"`
+	Config   string          `json:"config"`
+	Username *string         `json:"username"`
+	Password *string         `json:"password"`  // leer = unverändert
+	Mode     *string         `json:"mode"`      // always | standby
+	CheckMin *int            `json:"check_min"` // Minuten (Bereitschaft)
+	Limits   json.RawMessage `json:"limits"`    // fehlt = unverändert, null = keine Limits
 }
 
 // parseExitConfig erkennt die Art und bereinigt die Konfiguration.
@@ -227,6 +236,27 @@ func (a *API) saveExit(w http.ResponseWriter, r *http.Request, o *store.Object) 
 		}
 		o.Data["check_min"] = *in.CheckMin
 	}
+	if len(in.Limits) > 0 {
+		if string(in.Limits) == "null" {
+			delete(o.Data, "limits")
+		} else {
+			var l store.Limits
+			if err := json.Unmarshal(in.Limits, &l); err != nil {
+				errJSON(w, http.StatusBadRequest, "Limits: "+err.Error())
+				return
+			}
+			if err := engine.ValidateLimits(&l); err != nil {
+				errJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			l.MaxDevices = 0 // gibt es bei Ausgängen nicht
+			if l.HasAny() {
+				o.Data["limits"] = l
+			} else {
+				delete(o.Data, "limits")
+			}
+		}
+	}
 	if o.ID == 0 {
 		slot, err := a.E.NewSlot("exit")
 		if err != nil {
@@ -288,6 +318,15 @@ func (a *API) deleteExit(w http.ResponseWriter, r *http.Request) {
 	_ = a.St.DeleteExitTraffic(o.ID)
 	a.E.Log("warn", "Ausgang „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// resetExitUsage: Verbrauch eines Ausgangs im laufenden Zeitraum auf 0 setzen.
+func (a *API) resetExitUsage(w http.ResponseWriter, r *http.Request) {
+	if err := a.E.ResetExitUsage(pathID(r)); err != nil {
+		fail(w, err)
+		return
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

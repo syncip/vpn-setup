@@ -57,6 +57,11 @@ type Limits struct {
 	MaxDevices    int     `json:"max_devices"` // 0 = unbegrenzt
 }
 
+// HasAny: ist überhaupt etwas begrenzt (Volumen, Geschwindigkeit, Drosselstufen)?
+func (l *Limits) HasAny() bool {
+	return l != nil && (l.TrafficGB > 0 || l.SpeedDownMbit > 0 || l.SpeedUpMbit > 0 || len(l.Tiers) > 0)
+}
+
 type Plan struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`

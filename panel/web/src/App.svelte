@@ -47,13 +47,13 @@
     ] },
     { title: 'Netz', items: [
       { path: '/network', label: 'Netzwerk', icon: 'network' },
-      { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route', keys: ['exit:', 'group:'] },
+      { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route', keys: ['exit:', 'exitlimit:', 'group:'] },
       { path: '/dns', label: 'DNS', icon: 'globe', keys: ['unbound', 'cert:'] },
       { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
     ] },
     { title: 'System', items: [
       { path: '/health', label: 'Zustand', icon: 'activity', keys: ['err:', 'port:', 'disk', 'mem', 'server_host', 'pkg:'] },
-      { path: '/settings', label: 'Einstellungen', icon: 'settings' },
+      { path: '/settings', label: 'Einstellungen', icon: 'settings', keys: ['alarm:'] },
     ] },
   ];
 

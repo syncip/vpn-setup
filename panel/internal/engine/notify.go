@@ -175,6 +175,7 @@ func clip(s string, n int) string {
 func (e *Engine) RunNotify(stop <-chan struct{}, version string) {
 	n := &e.notif
 	n.init()
+	e.SeedAlarms()
 	t := time.NewTicker(notifyEvery)
 	defer t.Stop()
 	for {
@@ -281,6 +282,8 @@ func (e *Engine) watch(version string) {
 			e.Notify("update", u.Latest, "Panel-Update "+u.Latest+" verfügbar", body)
 		}
 	}
+	// eigene Alarme (Einstellungen → Alarme)
+	e.runAlarms()
 }
 
 func orDash(s string) string {

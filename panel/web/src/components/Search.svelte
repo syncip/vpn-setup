@@ -38,6 +38,8 @@
     ['/settings/security', 'Einstellungen · Sicherheit', 'lock', 'lokale netze private'],
     ['/settings/security', 'Login-Sperre', 'shield', 'fehlversuche gesperrte adressen ip sperren entsperren brute force'],
     ['/settings/notify', 'Benachrichtigungen', 'mail', 'e-mail smtp mailserver testmail'],
+    ['/settings/alarms', 'Alarme', 'alert', 'alarm schwelle cpu speicher datenträger limit ausgang gestört warnung e-mail'],
+    ['/proxy/exits', 'Limits für Ausgänge', 'gauge', 'ausgang datenlimit volumen drosseln abschalten verbrauch'],
     ['/settings/backup', 'Sicherung', 'archive', 'backup export einspielen wiederherstellen'],
     ['/settings/admins', 'Administratoren', 'users', 'admin konten zugänge panel'],
     ['/account', 'Mein Konto', 'user', 'passwort 2fa zwei-faktor totp sitzungen anmeldeprotokoll e-mail'],

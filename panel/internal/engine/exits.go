@@ -31,11 +31,15 @@ func (e *Engine) LoadExits() ([]*exits.Exit, []*exits.Group) {
 	eo, _ := e.St.Objects("exit")
 	gro, _ := e.St.Objects("group")
 	var xs []*exits.Exit
+	lim := e.savedExitLimits()
 	for _, o := range eo {
 		x, err := exits.ExitFrom(o)
 		if err != nil {
 			e.setErr(fmt.Sprintf("exit:%d", o.ID), err.Error())
 			x.Enabled = false
+		}
+		if lim[o.ID].Status == "blocked" {
+			x.Enabled = false // Datenlimit erreicht – bis zum nächsten Zeitraum abgeschaltet
 		}
 		xs = append(xs, x)
 	}
@@ -55,11 +59,13 @@ func exitMap(xs []*exits.Exit) map[int64]*exits.Exit {
 }
 
 func (e *Engine) applyExits() error {
+	e.checkExitLimits()
 	xs, gs := e.LoadExits()
 	if len(xs) == 0 && len(gs) == 0 && e.St.GetSetting("state:exits:ifaces", "") == "" && e.St.GetSetting("state:exits:rules", "") == "" {
 		return nil // nie benutzt
 	}
 	err := e.Exits.Apply(e.exitEnv(), xs, gs)
+	e.shapeExits()
 	if err != nil {
 		e.setErr("exits", err.Error())
 	} else {

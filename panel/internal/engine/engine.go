@@ -56,6 +56,7 @@ type Engine struct {
 	exitRates exitRateState // Durchsatz der Ausgänge (exits.go)
 	notif     notifyState   // E-Mail-Benachrichtigungen (notify.go)
 	host      hostSampler   // CPU/RAM/Durchsatz für die Seitenleiste (hoststats.go)
+	alarm     alarmState    // Alarme (alarms.go)
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
@@ -476,9 +477,11 @@ func (e *Engine) Collect() error {
 	if err != nil {
 		return err
 	}
-	if e.saveVerdicts(snap) {
+	verdicts := e.saveVerdicts(snap)
+	if e.checkExitLimits() || verdicts {
 		return e.applyLocked()
 	}
+	e.shapeExits() // neu verbundene Ausgänge wieder drosseln
 	return nil
 }
 

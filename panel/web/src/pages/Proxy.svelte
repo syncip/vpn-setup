@@ -9,9 +9,11 @@
   import PortHelp from '../components/PortHelp.svelte';
   import RouteRules from '../components/RouteRules.svelte';
   import TimeChart from '../components/TimeChart.svelte';
+  import LimitsForm from '../components/LimitsForm.svelte';
+  import Usage from '../components/Usage.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
-  import { ago, clone, date, fmtNum, bytes } from '../lib/format.js';
+  import { ago, clone, date, fmtNum, bytes, limitsSummary } from '../lib/format.js';
   import { protocol, toast, go } from '../lib/state.svelte.js';
 
   let { tab = 'overview' } = $props();
@@ -59,6 +61,7 @@
   function health(e) {
     const s = e.status;
     if (!e.enabled) return ['muted', 'deaktiviert'];
+    if (e.limit?.status === 'blocked') return ['warn', 'Limit erreicht – abgeschaltet'];
     if (!s || !s.checked) return ['muted', 'noch nicht geprüft'];
     if (!s.up) return ['bad', s.error || 'nicht verbunden'];
     if (s.error) return ['bad', s.error];
@@ -198,6 +201,35 @@
     if (!(await confirmDialog({ title: `Ausgang ${e.name} löschen?`, text: used.length ? `Er wird auch aus ${used.join(', ')} entfernt.` : 'Der Tunnel wird abgebaut.', ok: 'Löschen', danger: true }))) return;
     if (await run(() => del(`/exits/${e.id}`), 'Ausgang gelöscht')) load();
   }
+
+  // ---------- Limits ----------
+  let limOpen = $state(false);
+  let limCur = $state(null);
+  let limOn = $state(false);
+  let lim = $state(null);
+  let limBusy = $state(false);
+  function openLimit(e) {
+    limCur = e;
+    limOn = !!e.limits;
+    lim = e.limits ? clone(e.limits) : { traffic_gb: 0, period: 'monthly', reset_day: 1, on_limit: 'block', tiers: [] };
+    limOpen = true;
+  }
+  async function saveLimit() {
+    limBusy = true;
+    const r = await run(() => put(`/exits/${limCur.id}`, { limits: limOn ? lim : null }), limOn ? 'Limit gespeichert' : 'Limit entfernt');
+    limBusy = false;
+    if (r) {
+      limOpen = false;
+      load();
+    }
+  }
+  async function resetUsage(e) {
+    if (!(await confirmDialog({ title: `Verbrauch von ${e.name} zurücksetzen?`, text: 'Der Verbrauch im laufenden Zeitraum zählt wieder ab 0 – ein abgeschalteter Ausgang verbindet sich wieder. Der Verlauf bleibt erhalten.', ok: 'Zurücksetzen' }))) return;
+    if (!(await run(() => post(`/exits/${e.id}/reset-usage`), 'Verbrauch zurückgesetzt'))) return;
+    await load();
+    if (limCur?.id === e.id) limCur = d.exits.find((x) => x.id === e.id) || limCur;
+  }
+  const LIMIT_STATE = { blocked: ['bad', 'abgeschaltet'], throttled: ['warn', 'gedrosselt'] };
 
   // ---------- Gruppen ----------
   let grOpen = $state(false);
@@ -455,7 +487,7 @@
   <div class="card">
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Ausgang</th><th>Zustand</th><th>Messung</th><th>Öffentliche IP</th><th class="right">Verkehr <Info title="Verkehr" text="Oben: letzte 24 Stunden, unten: letzte 30 Tage (hoch + runter)." /></th><th class="right">Prüfen</th><th></th></tr></thead>
+        <thead><tr><th>Ausgang</th><th>Zustand</th><th>Messung</th><th>Öffentliche IP</th><th class="right">Verkehr <Info title="Verkehr" text="Oben: letzte 24 Stunden, unten: letzte 30 Tage (hoch + runter)." /></th><th>Limit <Info title="Limit" text="Datenvolumen je Zeitraum (hoch + runter, gezählt an der Schnittstelle des Ausgangs), Geschwindigkeit und Drosselstufen – wie bei Nutzern. Beim Erreichen wird der Ausgang gedrosselt oder abgeschaltet; Gruppen schalten dann auf den nächsten Ausgang um." /></th><th class="right">Prüfen</th><th></th></tr></thead>
         <tbody>
           {#each d.exits as e}
             {@const h = health(e)}
@@ -494,18 +526,34 @@
                 {bytes((e.traffic?.day?.up || 0) + (e.traffic?.day?.down || 0))}
                 <div class="tiny muted">{bytes((e.traffic?.month?.up || 0) + (e.traffic?.month?.down || 0))}</div>
               </td>
+              <td class="limcell">
+                {#if e.limit}
+                  {@const L = e.limit}
+                  <button class="linkish" title={limitsSummary(e.limits).replace('danach gesperrt', 'danach abgeschaltet')} onclick={() => openLimit(e)}>
+                    <Usage used={L.used} limitGb={L.limits.traffic_gb} tiers={L.limits.tiers || []} compact />
+                  </button>
+                  <div class="tiny muted limline">
+                    {#if LIMIT_STATE[L.status]}<span class="badge {LIMIT_STATE[L.status][0]}" title={L.reason}>{LIMIT_STATE[L.status][1]}</span>{/if}
+                    {#if L.rate_down || L.rate_up}<span>↓ {fmtNum(L.rate_down) || '∞'} ↑ {fmtNum(L.rate_up) || '∞'} Mbit/s</span>{/if}
+                    {#if L.next_reset}<span title="Nächster Zeitraum ab {date(L.next_reset, true)}">neu ab {date(L.next_reset)}</span>{/if}
+                  </div>
+                {:else}
+                  <button class="btn sm ghost" onclick={() => openLimit(e)}><Icon name="gauge" size={13} /> Limit setzen</button>
+                {/if}
+              </td>
               <td class="right nowrap">
                 <button class="btn sm" title="Ping-Prüfung jetzt (Antwortzeit, Verlust, HTTPS über den Tunnel){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, false)}><Icon name="activity" size={13} /> {testing[e.id] === 'ping' ? '…' : 'Ping'}</button>
                 <button class="btn sm" title="Speedtest jetzt (lädt 5 MB über den Ausgang){e.mode === 'standby' ? ' – verbindet kurz' : ''}" disabled={!e.enabled || !!testing[e.id]} onclick={() => testExit(e, true)}><Icon name="gauge" size={13} /> {testing[e.id] === 'speed' ? 'misst …' : 'Speed'}</button>
               </td>
               <td class="right nowrap">
                 <button class="btn sm icon ghost" title={e.enabled ? 'Deaktivieren' : 'Aktivieren'} onclick={() => toggleExit(e)}><Icon name="power" size={15} /></button>
+                <button class="btn sm icon ghost" title="Limit" onclick={() => openLimit(e)}><Icon name="gauge" size={15} /></button>
                 <button class="btn sm icon ghost" title="Bearbeiten" onclick={() => openExit(e)}><Icon name="edit" size={15} /></button>
                 <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeExit(e)}><Icon name="trash" size={15} /></button>
               </td>
             </tr>
           {:else}
-            <tr><td colspan="7" class="empty small">Noch keine Ausgänge. Lade die WireGuard- oder OpenVPN-Konfiguration deines Anbieters hoch.</td></tr>
+            <tr><td colspan="8" class="empty small">Noch keine Ausgänge. Lade die WireGuard- oder OpenVPN-Konfiguration deines Anbieters hoch.</td></tr>
           {/each}
         </tbody>
       </table>
@@ -595,6 +643,36 @@
   {/snippet}
 </Modal>
 
+<Modal bind:open={limOpen} title={limCur ? `Limit für ${limCur.name}` : 'Limit'} width={680}>
+  {#if limCur}
+    <div class="stack">
+      <label class="switch"><input type="checkbox" bind:checked={limOn} /><span class="track"></span> Limits für diesen Ausgang</label>
+      {#if limCur.limit}
+        <div class="card-pad limnow">
+          <div class="spread small"><span class="strong">Im laufenden Zeitraum</span>{#if limCur.limit.next_reset}<span class="muted">neu ab {date(limCur.limit.next_reset, true)}</span>{/if}</div>
+          <Usage used={limCur.limit.used} limitGb={limCur.limit.limits.traffic_gb} tiers={limCur.limit.limits.tiers || []} />
+          <div class="row wrap tiny muted" style="gap:10px;margin-top:6px">
+            <span>↓ {bytes(limCur.limit.down)} vom Anbieter · ↑ {bytes(limCur.limit.up)} zum Anbieter</span>
+            <span class="grow"></span>
+            <button class="btn sm" onclick={() => resetUsage(limCur)}><Icon name="refresh" size={13} /> Verbrauch zurücksetzen</button>
+          </div>
+          {#if limCur.limit.reason}<div class="small" style="margin-top:6px">{limCur.limit.reason}</div>{/if}
+        </div>
+      {/if}
+      {#if limOn}
+        <LimitsForm bind:value={lim} exit />
+        <div class="notice small"><Icon name="info" size={16} /><span>Gezählt wird hoch + runter an der Schnittstelle des Ausgangs (auch Prüfungen und Speedtests). „Download“ ist, was vom Anbieter kommt. Ein abgeschalteter Ausgang verbindet sich im nächsten Zeitraum, bei höherem Limit oder nach „Verbrauch zurücksetzen“ von selbst wieder.</span></div>
+      {:else}
+        <p class="muted small">Ohne Limits wird der Ausgang nie gedrosselt oder abgeschaltet. Der Verkehr wird trotzdem gezählt.</p>
+      {/if}
+    </div>
+  {/if}
+  {#snippet footer()}
+    <button class="btn" onclick={() => (limOpen = false)}>Abbrechen</button>
+    <button class="btn primary" onclick={saveLimit} disabled={limBusy}>Speichern</button>
+  {/snippet}
+</Modal>
+
 <Modal open={!!removedInfo} onclose={() => (removedInfo = null)} title="Konfiguration bereinigt" width={520}>
   {#if removedInfo}
     <p class="small">Aus „{removedInfo.name}“ wurden diese Einträge entfernt, weil sie das System verändern könnten:</p>
@@ -658,6 +736,32 @@
 </Modal>
 
 <style>
+  .limcell {
+    min-width: 140px;
+    max-width: 170px;
+  }
+  .limline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+    align-items: center;
+    margin-top: 3px;
+  }
+  .linkish {
+    display: block;
+    width: 100%;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .limnow {
+    border: 1px solid var(--border);
+    border-radius: var(--radius, 10px);
+    background: var(--panel-2);
+  }
   .exsrv {
     max-width: 220px;
   }

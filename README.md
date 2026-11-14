@@ -129,6 +129,14 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
 - **Ping und Speedtest von Hand:** Knöpfe je Ausgang; ein Ausgang in Bereitschaft wird dafür kurz verbunden.
 - **Verkehr je Ausgang:** gezählt an der Schnittstelle `ex<ID>` (stündlich gespeichert), in der Tabelle
   24 Stunden / 30 Tage, darunter ein Diagramm über 24 h bis 90 Tage, gesamt oder je Ausgang.
+- **Limits je Ausgang** (Knopf „Limit“ bzw. Spalte *Limit*): wie bei Nutzern Datenvolumen je Zeitraum
+  (täglich, wöchentlich, monatlich ab Stichtag oder gesamt), Grundgeschwindigkeit und Drosselstufen.
+  Gezählt wird hoch + runter an `ex<ID>` (auch Prüfungen und Speedtests). Ist das Volumen verbraucht,
+  wird der Ausgang **gedrosselt** (tc auf `ex<ID>`: ausgehend HTB = Upload zum Anbieter, eingehend Policer
+  = Download) oder **abgeschaltet**: der Tunnel wird getrennt und Gruppen schalten wie bei einem Ausfall
+  auf den nächsten Ausgang um. Im nächsten Zeitraum, bei höherem Limit oder nach „Verbrauch zurücksetzen“
+  (der Verlauf bleibt) verbindet er sich von selbst wieder. Geprüft wird bei jeder Statistik-Runde
+  (Vorgabe 60 s); ein neu verbundener Ausgang bekommt die Drosselung dabei wieder.
 - **Gruppen:** mehrere Ausgänge in fester Reihenfolge. Alle 30 Sekunden prüft der Server jeden Ausgang
   (Ping, HTTPS-Abruf über den Tunnel → öffentliche IP und Land; auf Wunsch ein Geschwindigkeitstest mit
   5 MB, Einstellung `exit_speedtest`). Überschreitet der aktive Ausgang die Grenzen (Verlust,
@@ -415,6 +423,24 @@ Anmeldung (Vorgabe aus), Sicherung erstellt oder eingespielt. Ausfälle werden n
 Die Testmail zeigt die Antwort des Mailservers mit Queue-ID und steht im Ereignisprotokoll. Ist sie
 angenommen, kommt aber nicht an, liegt es an der Zustellung: Spam-Ordner prüfen und für die Absender-Domain
 SPF, DKIM und einen DMARC-Eintrag setzen (z. B. TXT `_dmarc` = `v=DMARC1; p=none; adkim=r; aspf=r`).
+
+## Alarme
+
+**Einstellungen → Alarme**: eigene Regeln, die jede Minute geprüft und per E-Mail gemeldet werden –
+unabhängig von den Anlässen unter „Benachrichtigungen“ (nur der Mailserver muss eingerichtet sein).
+
+- **Arten:** CPU, Arbeitsspeicher, Speicherplatz (%), Durchsatz (Mbit/s), Fehler beim Anwenden,
+  Sicherheitsupdates, Unbound, Ablauf des DoH/DoT-Zertifikats, Login-Sperren; je Ausgang Verbrauch in %
+  vom Limit oder in GB, Limit erreicht, Ausgang gestört; Ausgangsgruppe ohne Ausgang; je Nutzer Verbrauch
+  in % vom Datenlimit und Limit erreicht. Für Ausgänge, Gruppen und Nutzer: alle oder ein bestimmter.
+- **Dauer:** gemeldet wird erst, wenn die Bedingung so viele Minuten ohne Unterbrechung gilt (gegen Spitzen).
+- **Melden:** einmal oder wiederholt (stündlich bis wöchentlich), solange der Alarm besteht; auf Wunsch
+  mit **Entwarnung**, wenn er vorbei ist.
+- **Empfänger:** eigene Adressen je Alarm oder – leer – alle Administratoren mit Benachrichtigungen.
+  Testmail je Alarm über den Briefumschlag.
+- Bestehende Alarme stehen oben auf der Seite und unter „Braucht Aufmerksamkeit“.
+- Beim ersten Start legt das Panel einige Alarme an (Speicherplatz, Arbeitsspeicher, CPU, Ausgangs-Limits;
+  „Ausgang gestört“ und „Sicherheitsupdates“ ausgeschaltet) – alle änderbar oder löschbar.
 
 ## Sicherung
 

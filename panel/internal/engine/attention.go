@@ -49,6 +49,16 @@ func (e *Engine) Attention(version string) []AttentionItem {
 	if e.Exits != nil {
 		xs, _ := e.LoadExits()
 		es, gs := e.Exits.Status()
+		lim := e.savedExitLimits()
+		for _, x := range xs {
+			id := strconv.FormatInt(x.ID, 10)
+			switch l := lim[x.ID]; l.Status {
+			case "blocked":
+				add("exitlimit:"+id, "warn", "Ausgang „"+x.Name+"“ abgeschaltet", l.Reason+" – bis zum nächsten Zeitraum. Limit erhöhen oder Verbrauch zurücksetzen.", "#/proxy/exits")
+			case "throttled":
+				add("exitlimit:"+id, "info", "Ausgang „"+x.Name+"“ gedrosselt", l.Reason, "#/proxy/exits")
+			}
+		}
 		for _, x := range xs {
 			s, ok := es[x.ID]
 			if !x.Enabled || !ok || s.Error == "" || (s.Standby && !s.Connected) {
@@ -113,6 +123,13 @@ func (e *Engine) Attention(version string) []AttentionItem {
 	}
 	if hs.MemTotal > 0 && float64(hs.MemUsed) > 0.92*float64(hs.MemTotal) {
 		add("mem", "warn", fmt.Sprintf("Arbeitsspeicher zu %d %% belegt", int(100*float64(hs.MemUsed)/float64(hs.MemTotal))), "", "#/health")
+	}
+
+	// bestehende Alarme (Einstellungen → Alarme)
+	for _, a := range e.ActiveAlarms() {
+		if a.Active && !alarmOwnAttention[a.Type] {
+			add("alarm:"+a.Key, "warn", a.Title, clip(a.Detail, 300), "#/settings/alarms")
+		}
 	}
 
 	if u := e.Update(version); u.Available {

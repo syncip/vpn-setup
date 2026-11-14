@@ -4,7 +4,8 @@
   import { limitsSummary, WEEKDAYS } from '../lib/format.js';
 
   // Limits: Datenvolumen, Zeitraum, Verhalten bei Limit, Grundtempo, Drosselstufen, Geräte
-  let { value = $bindable() } = $props();
+  // exit: für Ausgänge (ohne Zugänge, „Abschalten“ statt „Sperren“)
+  let { value = $bindable(), exit = false } = $props();
 
   $effect.pre(() => {
     if (!value) return;
@@ -29,7 +30,7 @@
 
 {#if value}
   <div class="stack">
-    <div class="notice"><Icon name="info" /> <span>{limitsSummary(value)}</span></div>
+    <div class="notice"><Icon name="info" /> <span>{exit ? limitsSummary(value).replace('danach gesperrt', 'danach abgeschaltet') : limitsSummary(value)}</span></div>
 
     <section>
       <h3><Icon name="layers" size={16} /> Datenvolumen</h3>
@@ -74,7 +75,7 @@
               <span class="ic"><Icon name="gauge" /></span><span><span class="strong">Drosseln</span><br /><span class="muted small">Weiter nutzbar, aber langsam</span></span>
             </button>
             <button type="button" class="choice" class:active={value.on_limit === 'block'} onclick={() => (value.on_limit = 'block')}>
-              <span class="ic"><Icon name="lock" /></span><span><span class="strong">Sperren</span><br /><span class="muted small">Bis zum nächsten Zeitraum</span></span>
+              <span class="ic"><Icon name="lock" /></span><span><span class="strong">{exit ? 'Abschalten' : 'Sperren'}</span><br /><span class="muted small">{exit ? 'Bis zum nächsten Zeitraum – Gruppen schalten um' : 'Bis zum nächsten Zeitraum'}</span></span>
             </button>
           </div>
         </div>
@@ -127,6 +128,7 @@
       {/each}
     </section>
 
+    {#if !exit}
     <section>
       <h3><Icon name="phone" size={16} /> Zugänge</h3>
       <div class="field" style="max-width:260px">
@@ -134,6 +136,7 @@
         <div class="input-group"><input id="l-md" class="input" type="number" min="0" value={value.max_devices || ''} oninput={(e) => (value.max_devices = n(e))} placeholder="unbegrenzt" /><span class="suffix">Zugänge</span></div>
       </div>
     </section>
+    {/if}
   </div>
 {/if}
 

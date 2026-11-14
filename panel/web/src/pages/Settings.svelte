@@ -2,6 +2,7 @@
   import Icon from '../components/Icon.svelte';
   import PageHead from '../components/PageHead.svelte';
   import Info from '../components/Info.svelte';
+  import AlarmsPanel from '../components/AlarmsPanel.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run, postFile, upload } from '../lib/api.js';
   import { date } from '../lib/format.js';
@@ -12,6 +13,7 @@
     ['general', 'Allgemein', 'settings'],
     ['security', 'Sicherheit', 'lock'],
     ['notify', 'Benachrichtigungen', 'mail'],
+    ['alarms', 'Alarme', 'alert'],
     ['backup', 'Sicherung', 'archive'],
     ['admins', 'Administratoren', 'users'],
   ];
@@ -417,6 +419,8 @@
       </div>
     </div>
   </div>
+{:else if tab === 'alarms'}
+  <AlarmsPanel />
 {:else if tab === 'backup' && bk}
   <div class="grid cols-2" style="max-width:1100px">
     {#if bk.pending}
