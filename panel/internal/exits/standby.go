@@ -62,6 +62,9 @@ func (m *Manager) neededSet() map[int64]bool {
 	for id := range m.drain {
 		out[id] = true
 	}
+	for id := range m.blkNeed { // Block-Prüfung: Gegenprobe bzw. Ausweich-Ausgang
+		out[id] = true
+	}
 	return out
 }
 

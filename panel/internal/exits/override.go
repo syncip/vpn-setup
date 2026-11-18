@@ -270,3 +270,18 @@ func (m *Manager) HasOverrides(gid int64) bool {
 	defer m.mu.Unlock()
 	return len(m.ov[gid]) > 0
 }
+
+// SetBlockNeed: Ausgänge, die für die Block-Prüfung verbunden sein müssen (Gegenprobe bzw.
+// Ausweich-Ausgang) – auch wenn sie sonst in Bereitschaft warten. Neue werden sofort verbunden.
+func (m *Manager) SetBlockNeed(ids map[int64]bool) {
+	m.mu.Lock()
+	added := false
+	for id := range ids {
+		added = added || !m.blkNeed[id]
+	}
+	m.blkNeed = ids
+	m.mu.Unlock()
+	if added {
+		m.Wake()
+	}
+}

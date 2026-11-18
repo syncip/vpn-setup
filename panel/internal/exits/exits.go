@@ -278,6 +278,7 @@ type Manager struct {
 	now        func() time.Time                   // Uhr (Tests)
 	ov         map[int64]map[string]int64         // Block-Prüfung: Gruppe → Domain → Ausgang
 	ovIPs      map[ovKey]map[netip.Addr]time.Time // gelernte Adressen der Ausnahmen
+	blkNeed    map[int64]bool                     // Ausgänge, die die Block-Prüfung verbunden braucht
 	rngMu      sync.Mutex                         //
 	rng        interface {
 		Float64() float64
@@ -544,8 +545,12 @@ func (m *Manager) applyExit(env *Env, e *Exit) error {
 				return fmt.Errorf("WireGuard-Schnittstelle anlegen: %w", err)
 			}
 		}
+		// Einstellungen über stdin statt aus der Datei: AppArmor erlaubt wg auf manchen Systemen
+		// (neuere Ubuntu-Versionen) keinen Zugriff auf eigene Dateipfade. Die Datei bleibt als Nachweis.
+		if _, err := sys.RunInput(conf, "wg", "setconf", n, "/dev/stdin"); err != nil {
+			return err
+		}
 		steps := [][]string{
-			{"wg", "setconf", n, confDir + "/" + n + ".conf"},
 			{"ip", "-4", "address", "flush", "dev", n},
 			{"ip", "-4", "address", "add", e.WG.Address.String(), "dev", n, "noprefixroute"},
 			{"ip", "link", "set", "dev", n, "mtu", strconv.Itoa(e.WG.MTU), "up"},

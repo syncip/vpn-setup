@@ -252,6 +252,20 @@ func TestLab(t *testing.T) {
 	srvConf := fmt.Sprintf("dev tun\nproto udp\nlocal %s\nport 1194\ntopology subnet\nserver 10.98.0.0 255.255.255.0\ndh none\n"+
 		"keepalive 2 8\npush \"redirect-gateway def1\"\npush \"dhcp-option DNS 10.98.0.1\"\nverb 3\n<ca>\n%s\n</ca>\n<cert>\n%s\n</cert>\n<key>\n%s\n</key>\n", provIP, ca, sc, sk)
 	_ = os.WriteFile(filepath.Join(dir, "server.conf"), []byte(srvConf), 0o600)
+	// stopServer: OpenVPN-Server beenden. Mit DCO (Kernel-Modul ovpn) bleibt die Schnittstelle des
+	// getöteten Servers mit dem Tunnelnetz bestehen – der neue Server legt dann tun1 an und die
+	// Antworten liefen ins Leere. Übrig gebliebene Schnittstellen deshalb entfernen.
+	stopServer := func(c *exec.Cmd) {
+		_ = c.Process.Kill()
+		_, _ = c.Process.Wait()
+		out, _ := exec.Command("ip", "-n", "prov", "-br", "link").CombinedOutput()
+		for _, line := range strings.Split(string(out), "\n") {
+			if f := strings.Fields(line); len(f) > 0 && strings.HasPrefix(f[0], "tun") {
+				t.Logf("Server-Schnittstelle übrig: %s – wird entfernt", line)
+				_ = exec.Command("ip", "-n", "prov", "link", "del", strings.SplitN(f[0], "@", 2)[0]).Run()
+			}
+		}
+	}
 	startServer := func() *exec.Cmd {
 		c := exec.Command("ip", "netns", "exec", "prov", "openvpn", "--config", filepath.Join(dir, "server.conf"))
 		log, _ := os.Create(filepath.Join(dir, "server.log"))
@@ -366,8 +380,7 @@ func TestLab(t *testing.T) {
 	}
 
 	// Ausfall des Anbieters → Gruppe sperrt, Proxy über die Gruppe kommt nicht mehr durch
-	_ = ovpnSrv.Process.Kill()
-	_, _ = ovpnSrv.Process.Wait()
+	stopServer(ovpnSrv)
 	m.Check(env, xs, gs, 0) // ein Aussetzer schaltet nicht um – erst die zweite schlechte Prüfung
 	m.Check(env, xs, gs, 0)
 	_, gst = m.Status()
@@ -399,6 +412,23 @@ func TestLab(t *testing.T) {
 			xst, _ := m.Status()
 			diag := func(a ...string) string { out, _ := exec.Command(a[0], a[1:]...).CombinedOutput(); return string(out) }
 			n := exits.IfName(exitID)
+			// Gegenproben: Prüf-Ping wie das Panel, ohne Markierung, ohne Sicherungs-Route, ohne Tabelle vpnexits
+			pm := fmt.Sprint(exits.ProbeMark(slot))
+			tbl := fmt.Sprint(2000 + slot)
+			ping := func(label string, mark bool) string {
+				a := []string{"ping", "-n", "-q", "-c", "2", "-W", "1", "-I", n, target}
+				if mark {
+					a = append(a[:1], append([]string{"-m", pm}, a[1:]...)...)
+				}
+				return label + ": " + strings.TrimSpace(diag(a...)) + "\n"
+			}
+			probe := ping("mit Markierung", true) + ping("ohne Markierung", false)
+			probe += "iptables:\n" + diag("iptables", "-S") + diag("iptables", "-t", "mangle", "-S") + "conntrack:\n" + diag("conntrack", "-L")
+			_ = diag("ip", "-4", "route", "del", "blackhole", "default", "metric", "10000", "table", tbl)
+			probe += ping("ohne Sicherungs-Route", true)
+			_ = diag("nft", "delete", "table", "inet", "vpnexits")
+			probe += ping("ohne Tabelle vpnexits", true)
+			t.Logf("Gegenproben:\n%s", probe)
 			t.Fatalf("Zeitüberschreitung: Neuverbindung\nAusgang: %+v\nLink:\n%s\nAdressen:\n%s\nRouten (alle Tabellen, dev):\n%s\nRegeln:\n%s\nServer-Log:\n%s",
 				xst[exitID], diag("ip", "-d", "link", "show", n), diag("ip", "-4", "addr", "show", n),
 				diag("ip", "-4", "route", "show", "table", "all"), diag("ip", "-4", "rule"), srvLog)
@@ -422,10 +452,14 @@ func TestLab(t *testing.T) {
 	}
 	sPriv, sPub := genkey()
 	cPriv, cPub := genkey()
-	_ = os.WriteFile(filepath.Join(dir, "wgp.key"), []byte(sPriv+"\n"), 0o600)
 	sh(t, "ip", "netns", "exec", "prov", "ip", "link", "add", "wgp", "type", "wireguard")
-	sh(t, "ip", "netns", "exec", "prov", "wg", "set", "wgp", "private-key", filepath.Join(dir, "wgp.key"), "listen-port", "51820",
+	// Schlüssel über stdin: AppArmor erlaubt wg auf neueren Ubuntu-Runnern keine Dateien unter /tmp
+	wgSet := exec.Command("ip", "netns", "exec", "prov", "wg", "set", "wgp", "private-key", "/dev/stdin", "listen-port", "51820",
 		"peer", cPub, "allowed-ips", wgCli+"/32")
+	wgSet.Stdin = strings.NewReader(sPriv + "\n")
+	if out, err := wgSet.CombinedOutput(); err != nil {
+		t.Fatalf("wg set: %v\n%s", err, out)
+	}
 	sh(t, "ip", "netns", "exec", "prov", "ip", "addr", "add", "10.96.0.1/24", "dev", "wgp")
 	sh(t, "ip", "netns", "exec", "prov", "ip", "link", "set", "wgp", "up")
 	wgUpload := "[Interface]\nPrivateKey = " + cPriv + "\nAddress = " + wgCli + "/32\nDNS = 10.96.0.1\nPostUp = /bin/touch " + dir + "/HACKED-WG\n" +
@@ -536,8 +570,7 @@ func TestLab(t *testing.T) {
 		t.Errorf("DROP-Zähler für ex903 nicht gestiegen:\n%s", out)
 	}
 	// OpenVPN-Anbieter fällt aus → Gruppe weicht auf WireGuard aus
-	_ = ovpnSrv.Process.Kill()
-	_, _ = ovpnSrv.Process.Wait()
+	stopServer(ovpnSrv)
 	m.Check(env, xs, gs, 0) // ein Aussetzer schaltet nicht um – erst die zweite schlechte Prüfung
 	m.Check(env, xs, gs, 0)
 	_, gst = m.Status()

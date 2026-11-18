@@ -89,3 +89,18 @@ func TestBlockCheckSettings(t *testing.T) {
 		t.Fatalf("Rundreise: %+v", got)
 	}
 }
+
+func TestBlockNeedConnectsStandby(t *testing.T) {
+	f := newRotFixture(t, "", true) // B (2) in Bereitschaft
+	if f.m.neededSet()[2] {
+		t.Fatal("B ohne Bedarf verbunden")
+	}
+	f.m.SetBlockNeed(map[int64]bool{2: true})
+	if !f.m.neededSet()[2] {
+		t.Fatal("Block-Prüfung braucht B – muss verbunden werden")
+	}
+	f.m.SetBlockNeed(nil)
+	if f.m.neededSet()[2] {
+		t.Fatal("Bedarf nicht aufgehoben")
+	}
+}

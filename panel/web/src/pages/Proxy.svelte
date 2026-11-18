@@ -396,6 +396,8 @@
     blocked: ['bad', 'gesperrt'],
     error: ['warn', 'Fehler'],
   };
+  // „gerade eben“ / „vor 5 Min.“ (ago() sagt bei frischen Zeiten „online“)
+  const sinceText = (ts) => (Date.now() / 1000 - ts < 90 ? 'gerade eben' : ago(ts));
   function blkCell(r, fails) {
     if (!r) return null;
     if (r.status === 'error' && r.fails >= fails) return ['bad', `${r.fails}× Fehler`];
@@ -984,7 +986,7 @@
       <div class="row wrap" style="gap:8px">
         <span class="small muted grow">
           Ergebnisse je Ziel und Ausgang. Gesperrte Ziele laufen über einen Ausgang mit „erreichbar“.
-          {#if bkData?.last}Letzter Durchlauf {ago(bkData.last)}.{/if}
+          {#if bkData?.last}Letzter Durchlauf {sinceText(bkData.last)}.{/if}
         </span>
         <button class="btn sm" onclick={() => checkBlock()}><Icon name="refresh" size={14} /> Alle jetzt prüfen</button>
       </div>
@@ -1015,7 +1017,7 @@
                     {@const r = row.results[xid]}
                     {@const c = blkCell(r, G.block?.fails || 4)}
                     <td title={r ? `${r.detail || ''}${r.checked ? ' · geprüft ' + date(r.checked, true) : ' · nur gemeldet'}` : 'noch nicht geprüft'}>
-                      {#if c}<span class="badge {c[0]}">{c[1]}</span>{#if r.checked}<div class="tiny muted">{ago(r.checked)}</div>{/if}{:else}<span class="tiny muted">–</span>{/if}
+                      {#if c}<span class="badge {c[0]}">{c[1]}</span>{#if r.checked}<div class="tiny muted">{sinceText(r.checked)}</div>{/if}{:else}<span class="tiny muted">–</span>{/if}
                     </td>
                   {/each}
                   <td>

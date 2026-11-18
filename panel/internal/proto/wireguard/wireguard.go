@@ -675,13 +675,8 @@ func (Driver) applyServer(env *proto.Env, sb *proto.ServerBundle, sc serverCfg) 
 		if err != nil {
 			return err
 		}
-		tmp := "/run/vpnpanel-" + iface + ".conf"
-		if _, err := sys.WriteFile(tmp, []byte(stripped), 0o600); err != nil {
-			return err
-		}
-		_, err = sys.Run("wg", "syncconf", iface, tmp)
-		_ = sys.Remove(tmp)
-		if err != nil {
+		// über stdin statt einer Zwischendatei (AppArmor erlaubt wg auf manchen Systemen keine eigenen Pfade)
+		if _, err = sys.RunInput(stripped, "wg", "syncconf", iface, "/dev/stdin"); err != nil {
 			return err
 		}
 	}

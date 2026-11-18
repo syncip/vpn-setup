@@ -292,6 +292,7 @@ func (e *Engine) decideOverrides(groups []*exits.Group, targets map[int64][]stri
 	prev := e.blk.ov
 	e.blk.mu.Unlock()
 	ov := map[int64]map[string]int64{}
+	need := map[int64]bool{}
 	var msgs []string
 	for _, g := range groups {
 		usable := e.Exits.Usable(g.ID)
@@ -306,7 +307,33 @@ func (e *Engine) decideOverrides(groups []*exits.Group, targets map[int64][]stri
 			}
 			pick, badX, r, check := pickOverride(g.Rotate.Mode == "dest", g.Block.Fails, ids, nat, res[d], prev[g.ID][d])
 			if check {
-				// noch keine Gegenprobe: die anderen Ausgänge bald prüfen
+				// nur, solange ein Ausgang der Gruppe noch kein klares Ergebnis hat – sperren alle,
+				// bleibt es beim normalen Abstand der Prüfungen
+				pending := false
+				for _, x := range g.Exits {
+					o, ok := res[d][x]
+					pending = pending || !ok || o.Checked == 0 || (!blockBad(o, g.Block.Fails) && o.Status != "ok") || (o.Status == "ok" && o.Fails > 0)
+				}
+				check = pending
+			}
+			if pick == 0 && badX != 0 {
+				// Ausweich-Ausgang mit bekanntem „ok“, der gerade in Bereitschaft wartet: verbinden –
+				// beim nächsten Durchlauf ist er nutzbar und das Ziel weicht aus
+				for _, x := range g.Exits {
+					if o, ok := res[d][x]; ok && x != badX && o.Status == "ok" && o.Fails == 0 && o.Checked != 0 {
+						need[x] = true
+						e.blk.mu.Lock()
+						e.blk.urgent[fmt.Sprintf("%d|%s", g.ID, d)] = true
+						e.blk.mu.Unlock()
+					}
+				}
+			}
+			if check {
+				// noch keine Gegenprobe: die anderen Ausgänge bald prüfen – solche in Bereitschaft
+				// werden dafür verbunden
+				for _, x := range g.Exits {
+					need[x] = true
+				}
 				e.blk.mu.Lock()
 				e.blk.urgent[fmt.Sprintf("%d|%s", g.ID, d)] = true
 				e.blk.mu.Unlock()
@@ -319,6 +346,7 @@ func (e *Engine) decideOverrides(groups []*exits.Group, targets map[int64][]stri
 				ov[g.ID] = map[string]int64{}
 			}
 			ov[g.ID][d] = pick
+			need[pick] = true
 			if prev[g.ID][d] != pick {
 				msgs = append(msgs, fmt.Sprintf("Block-Prüfung „%s“: %s sperrt „%s“ (%s) – läuft jetzt über „%s“",
 					g.Name, d, e.Exits.ExitName(nat), r.Detail, e.Exits.ExitName(pick)))
@@ -335,6 +363,7 @@ func (e *Engine) decideOverrides(groups []*exits.Group, targets map[int64][]stri
 	e.blk.ov = ov
 	e.blk.mu.Unlock()
 	env := e.exitEnv()
+	e.Exits.SetBlockNeed(need)
 	e.Exits.SetOverrides(env, ov)
 	if !e.Sys.DryRun() {
 		go e.resolveOverrides(env, ov)
