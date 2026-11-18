@@ -396,8 +396,12 @@ func TestLab(t *testing.T) {
 			if len(srvLog) > 4000 {
 				srvLog = srvLog[len(srvLog)-4000:]
 			}
-			_, xst := m.Status()
-			t.Fatalf("Zeitüberschreitung: Neuverbindung\nAusgang: %+v\nServer-Log:\n%s", xst[exitID], srvLog)
+			xst, _ := m.Status()
+			diag := func(a ...string) string { out, _ := exec.Command(a[0], a[1:]...).CombinedOutput(); return string(out) }
+			n := exits.IfName(exitID)
+			t.Fatalf("Zeitüberschreitung: Neuverbindung\nAusgang: %+v\nLink:\n%s\nAdressen:\n%s\nRouten (alle Tabellen, dev):\n%s\nRegeln:\n%s\nServer-Log:\n%s",
+				xst[exitID], diag("ip", "-d", "link", "show", n), diag("ip", "-4", "addr", "show", n),
+				diag("ip", "-4", "route", "show", "table", "all"), diag("ip", "-4", "rule"), srvLog)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

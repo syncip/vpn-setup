@@ -166,7 +166,7 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   eingestellte Zeit. Ist der alte Ausgang gestört, sind seine Verbindungen ohnehin verloren; dann trennt der
   Proxy sie sofort. Fehlt der Tunnel eines Ausgangs, gehen festgelegte Verbindungen nie direkt hinaus.
 - **Wechsel innerhalb der Gruppe** (Gruppen-Editor → „Wechsel“), damit der Verkehr nicht dauerhaft über
-- **Block-Prüfung:** Ziele werden über jeden Ausgang der Gruppe geprüft (Captcha, Sperrseite, 4 Fehler in Folge). Gesperrte Ziele laufen automatisch über einen funktionierenden Ausgang. Die Ergebnisse liegen in der Datenbank und werden nur selten erneuert. Der Proxy weicht in Echtzeit aus.
+- **Block-Prüfung:** Ziele werden über jeden Ausgang der Gruppe geprüft (Captcha, Sperrseite, 4 Fehler in Folge). Gesperrte Ziele laufen automatisch über einen funktionierenden Ausgang. Die Ergebnisse liegen in der Datenbank und werden nur selten erneuert. Der Proxy weicht in Echtzeit aus. Passive Erkennung: Hängt der Verbindungsaufbau über einen Ausgang (conntrack), zählt das ebenfalls als Fehlversuch – ohne eigene Prüfanfragen.
   dieselbe Adresse läuft:
   - *Ganze Gruppe:* nach einer zufälligen Zeit (von–bis Minuten) und/oder Datenmenge (von–bis GB) wechselt
     die Gruppe auf einen zufällig gewählten anderen gesunden Ausgang. Ausgänge in Bereitschaft werden

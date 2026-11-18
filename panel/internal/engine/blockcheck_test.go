@@ -2,6 +2,7 @@ package engine
 
 import (
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -145,5 +146,24 @@ func TestNormDomain(t *testing.T) {
 		if got := exits.NormDomain(in); got != want {
 			t.Errorf("%q → %q, erwartet %q", in, got, want)
 		}
+	}
+}
+
+func TestNoteNames(t *testing.T) {
+	e, _ := newTest(t)
+	a := netip.MustParseAddr("192.0.2.13")
+	e.noteNames(4, "shop.example.net.", []netip.Addr{a})
+	if e.nameOf(4, a, time.Now()) != "" {
+		t.Fatal("Gruppe ohne Block-Prüfung darf keine Namen sammeln")
+	}
+	e.blk.mu.Lock()
+	e.blk.on = map[int64]bool{4: true}
+	e.blk.mu.Unlock()
+	e.noteNames(4, "Shop.Example.net.", []netip.Addr{a, netip.MustParseAddr("2001:db8::1")})
+	if n := e.nameOf(4, a, time.Now()); n != "shop.example.net" {
+		t.Fatalf("Name: %q", n)
+	}
+	if e.nameOf(4, a, time.Now().Add(3*time.Hour)) != "" || e.nameOf(5, a, time.Now()) != "" {
+		t.Fatal("Zuordnung zu lange bzw. für fremde Gruppe gültig")
 	}
 }

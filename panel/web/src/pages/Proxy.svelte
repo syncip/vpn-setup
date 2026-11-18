@@ -949,7 +949,7 @@
     {/if}
     {#if gr.blk}
       <div class="field rotbox">
-        <span class="label">Block-Prüfung <Info title="Block-Prüfung" wide text="Prüft Ziele (Websites) über jeden Ausgang der Gruppe – wie ein Browser. Kommt über einen Ausgang ein Captcha, eine Sperrseite oder scheitert das Ziel mehrmals in Folge, läuft dieses Ziel automatisch über einen anderen Ausgang der Gruppe, der nachweislich funktioniert (Gegenprobe). Die Ergebnisse werden gespeichert und nur in großen Abständen erneuert – bekannte Ziele werden nicht ständig neu geprüft. Fehlschläge aus dem Verkehr (Proxy) zählen mit und lösen bei Bedarf sofort eine Prüfung aus." /></span>
+        <span class="label">Block-Prüfung <Info title="Block-Prüfung" wide text="Prüft Ziele (Websites) über jeden Ausgang der Gruppe – wie ein Browser. Kommt über einen Ausgang ein Captcha, eine Sperrseite oder scheitert das Ziel mehrmals in Folge, läuft dieses Ziel automatisch über einen anderen Ausgang der Gruppe, der nachweislich funktioniert (Gegenprobe). Die Ergebnisse werden gespeichert und nur in großen Abständen erneuert – bekannte Ziele werden nicht ständig neu geprüft. Fehlschläge aus dem Verkehr zählen mit – Verbindungsfehler des Proxys und Verbindungen der Geräte, deren Aufbau über einen Ausgang hängt (passiv erkannt, ohne eigene Anfragen) – und lösen bei Bedarf sofort eine Prüfung aus." /></span>
         <label class="check"><input type="checkbox" bind:checked={gr.blk.on} /> Ziele prüfen und bei Sperre ausweichen</label>
         {#if gr.blk.on}
           <div class="stack" style="gap:8px;margin-top:8px">

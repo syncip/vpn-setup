@@ -77,6 +77,24 @@ X vxr nft add element inet vpnexits ov1_2 '{ 192.0.2.12 timeout 600s }'   # gele
 X vxc python3 "$D/ov.py"
 `
 
+// Passive Erkennung: Das Ziel 192.0.2.13 verwirft Pakete (Sperre); der Aufbau über ex1 hängt und
+// steht in conntrack als SYN_SENT mit der Markierung des Ausgangs.
+const labSyn = `
+X vxr nft -f "$D/pin.nft"
+X vxt nft add table inet blk
+X vxt nft 'add chain inet blk in { type filter hook input priority 0; }'
+X vxt nft add rule inet blk in ip daddr 192.0.2.13 tcp dport 443 drop
+X vxr python3 -c 'import socket;s=socket.socket();s.setsockopt(socket.SOL_SOCKET,36,0x01000000);s.settimeout(6)
+try: s.connect(("192.0.2.13",443))
+except Exception as e: print("verbinden:", e)' & P=$!
+sleep 2
+echo "== ct"
+X vxr conntrack -L -p tcp --state SYN_SENT -m 0x41000000/0x7f000000 2>&1
+echo "== ct2"
+X vxr conntrack -L -p tcp --state SYN_SENT -m 0x42000000/0x7f000000 2>&1
+wait $P
+`
+
 const pyOv = `import socket
 for i in (10,11,12):
     s=socket.socket(); s.settimeout(4); s.connect(("192.0.2.%d"%i,9000)); print("ziel%d"%i, s.recv(50).decode().strip()); s.close()
@@ -188,5 +206,20 @@ func TestLabOverride(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("fehlt %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestLabPassive(t *testing.T) {
+	out := labRun(t, labSyn)
+	parts := strings.SplitN(out, "== ct2", 2)
+	if len(parts) != 2 {
+		t.Fatalf("Ausgabe:\n%s", out)
+	}
+	c := parseSynSent(parts[0])
+	if len(c) != 1 || c[0].Dst.String() != "192.0.2.13" || c[0].DPort != 443 {
+		t.Fatalf("hängende Verbindung über ex1 nicht erkannt: %+v\n%s", c, out)
+	}
+	if c2 := parseSynSent(parts[1]); len(c2) != 0 {
+		t.Fatalf("Verbindung fälschlich ex2 zugeordnet: %+v", c2)
 	}
 }

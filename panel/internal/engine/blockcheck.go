@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -42,7 +43,9 @@ type blockState struct {
 	running map[string]bool // laufende Prüfungen „Domain|Ausgang“
 	pruned  time.Time
 	last    time.Time
-	on      map[int64]bool // Gruppen mit Block-Prüfung → Echtzeit-Ausweichen im Proxy
+	on      map[int64]bool                   // Gruppen mit Block-Prüfung → Echtzeit-Ausweichen im Proxy
+	names   map[int64]map[netip.Addr]nameRec // Gruppe → Adresse → Name (DNS-Antworten)
+	syn     map[string]*synRec               // hängende Verbindungen (passive Erkennung)
 }
 
 func (b *blockState) init() {
@@ -73,6 +76,8 @@ func (e *Engine) RunBlockCheck(stop <-chan struct{}) {
 	proxy.ExitFail = e.BlockFail
 	t := time.NewTicker(blockTick)
 	defer t.Stop()
+	pt := time.NewTicker(passiveEvery)
+	defer pt.Stop()
 	select { // erst nach dem Hochfahren der Ausgänge
 	case <-stop:
 		return
@@ -80,9 +85,13 @@ func (e *Engine) RunBlockCheck(stop <-chan struct{}) {
 	}
 	for {
 		e.BlockTick()
+	wait:
 		select {
 		case <-stop:
 			return
+		case <-pt.C:
+			e.passiveTick()
+			goto wait
 		case <-t.C:
 		case <-w:
 		}
