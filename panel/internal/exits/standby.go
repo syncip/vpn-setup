@@ -65,11 +65,41 @@ func (m *Manager) neededSet() map[int64]bool {
 	for id := range m.blkNeed { // Block-Prüfung: Gegenprobe bzw. Ausweich-Ausgang
 		out[id] = true
 	}
+	// Kaskade: Ein verbundener bzw. gebrauchter Ausgang braucht seine Vorgänger verbunden
+	for _, e := range m.lastExits {
+		if e.Via == 0 || !e.Enabled || !(out[e.ID] || !e.Standby() || m.conn[e.ID]) {
+			continue
+		}
+		for _, v := range m.chainLocked(e) {
+			out[v.ID] = true
+		}
+	}
 	return out
+}
+
+// connectVia: Vorgänger eines Ausgangs (Kaskade) verbinden, falls sie in Bereitschaft getrennt sind.
+func (m *Manager) connectVia(env *Env, e *Exit) error {
+	m.mu.Lock()
+	chain := m.chainLocked(e)
+	m.mu.Unlock()
+	for i := len(chain) - 1; i >= 0; i-- { // vom ersten Glied der Kette an
+		v := chain[i]
+		if !v.Enabled || !v.Standby() || m.isConn(v.ID) {
+			continue
+		}
+		if err := m.connect(env, v); err != nil {
+			m.disconnect(env, v)
+			return fmt.Errorf("Vorgänger „%s“: %w", v.Name, err)
+		}
+	}
+	return nil
 }
 
 // connect verbindet einen Ausgang (Bereitschaft) und wartet, bis die Schnittstelle da ist.
 func (m *Manager) connect(env *Env, e *Exit) error {
+	if err := m.connectVia(env, e); err != nil {
+		return err
+	}
 	if err := m.applyExit(env, e); err != nil {
 		return err
 	}

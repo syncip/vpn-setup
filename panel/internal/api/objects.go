@@ -36,6 +36,7 @@ type exitRow struct {
 	Traffic  map[string]store.ExitTotals `json:"traffic"`   // day | week | month | all
 	Limits   *store.Limits               `json:"limits"`    // nil = keine
 	Limit    *engine.ExitLimitState      `json:"limit"`     // Verbrauch und Status im Zeitraum
+	Via      int64                       `json:"via"`       // Kaskade: verbunden über diesen Ausgang (0 = direkt)
 }
 
 type groupRow struct {
@@ -126,7 +127,7 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 			row.Groups = []int64{}
 		}
 		if x, err := exits.ExitFrom(o); err == nil {
-			row.Mode, row.CheckMin = x.Mode, x.CheckMin
+			row.Mode, row.CheckMin, row.Via = x.Mode, x.CheckMin, x.Via
 			if x.WG != nil {
 				row.Server, row.Address = x.WG.Endpoint, x.WG.Address.String()
 			} else if x.OVPN != nil {
@@ -157,6 +158,18 @@ type exitInput struct {
 	Mode     *string         `json:"mode"`      // always | standby
 	CheckMin *int            `json:"check_min"` // Minuten (Bereitschaft)
 	Limits   json.RawMessage `json:"limits"`    // fehlt = unverändert, null = keine Limits
+	Via      *int64          `json:"via"`       // Kaskade: über diesen Ausgang verbinden (0 = direkt)
+}
+
+// exitVias: Ausgang → Vorgänger (Kaskade) aller gespeicherten Ausgänge.
+func exitVias(objs []*store.Object) map[int64]int64 {
+	out := map[int64]int64{}
+	for _, o := range objs {
+		if v, ok := o.Data["via"].(float64); ok && v > 0 {
+			out[o.ID] = int64(v)
+		}
+	}
+	return out
 }
 
 // parseExitConfig erkennt die Art und bereinigt die Konfiguration.
@@ -252,6 +265,26 @@ func (a *API) saveExit(w http.ResponseWriter, r *http.Request, o *store.Object) 
 		}
 		o.Data["check_min"] = *in.CheckMin
 	}
+	if in.Via != nil {
+		eo, err := a.St.Objects("exit")
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		ids := map[int64]bool{}
+		for _, x := range eo {
+			ids[x.ID] = true
+		}
+		if msg := exits.CheckVia(o.ID, *in.Via, exitVias(eo), func(id int64) bool { return ids[id] }); msg != "" {
+			errJSON(w, http.StatusBadRequest, msg)
+			return
+		}
+		if *in.Via == 0 {
+			delete(o.Data, "via")
+		} else {
+			o.Data["via"] = *in.Via
+		}
+	}
 	if msg := setObjLimits(o, in.Limits); msg != "" {
 		errJSON(w, http.StatusBadRequest, msg)
 		return
@@ -294,6 +327,15 @@ func (a *API) deleteExit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	// Kaskade: Läuft ein anderer Ausgang über diesen, erst dort umstellen
+	if eo, err := a.St.Objects("exit"); err == nil {
+		for _, x := range eo {
+			if v, _ := x.Data["via"].(float64); int64(v) == o.ID && x.ID != o.ID {
+				errJSON(w, http.StatusConflict, "Ausgang „"+x.Name+"“ läuft über diesen Ausgang – dort zuerst „Verbunden über“ ändern")
+				return
+			}
+		}
 	}
 	// aus allen Gruppen entfernen
 	gro, _ := a.St.Objects("group")

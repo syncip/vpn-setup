@@ -126,6 +126,14 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   wenn der Anbieter viele dauerhafte Verbindungen ungern sieht. Fällt der aktive Ausgang einer Gruppe aus,
   werden Ausgänge in Bereitschaft der Reihe nach verbunden und geprüft, bevor umgeschaltet wird (dauert
   einige Sekunden länger).
+- **Kaskade („Verbunden über“):** Ein Ausgang kann durch einen anderen laufen, z. B. *Server →
+  Cloudflare WARP → Windscribe*. Die Tunnelpakete bekommen die Markierung des Vorgängers (WireGuard
+  `FwMark`, OpenVPN `mark`) und gehen über dessen Tabelle samt Sperr-Route hinaus. Der letzte Anbieter
+  sieht nur die Adresse des Vorgängers, der Vorgänger nur verschlüsselten Verkehr. Höchstens drei
+  Ausgänge hintereinander, keine Kreise; die MTU wird je Stufe um 80 verkleinert. Vorgänger werden
+  mit verbunden (auch in Bereitschaft). Ist ein Vorgänger abgeschaltet oder weg, bleibt der Ausgang
+  getrennt – nie direkt. Ein Ausgang, über den ein anderer läuft, lässt sich erst löschen, wenn dort
+  „Verbunden über“ geändert ist.
 - **Ping und Speedtest von Hand:** Knöpfe je Ausgang; ein Ausgang in Bereitschaft wird dafür kurz verbunden.
 - **Verkehr je Ausgang:** gezählt an der Schnittstelle `ex<ID>` (stündlich gespeichert), in der Tabelle
   24 Stunden / 30 Tage, darunter ein Diagramm über 24 h bis 90 Tage, gesamt oder je Ausgang.

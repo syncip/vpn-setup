@@ -91,6 +91,8 @@ type Exit struct {
 	CheckMin int
 	// Blocked: vom Panel abgeschaltet (Datenlimit erreicht) – Grund für Anzeige und Protokoll
 	Blocked string
+	// Via: Kaskade – der Tunnel dieses Ausgangs läuft über den Ausgang Via (0 = direkt), siehe cascade.go
+	Via int64
 }
 
 // Standby: nur bei Bedarf verbunden.
@@ -123,7 +125,8 @@ func num(m store.M, k string, def float64) float64 {
 
 // ExitFrom liest einen Ausgang aus der Datenbank.
 func ExitFrom(o *store.Object) (*Exit, error) {
-	e := &Exit{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Slot: int(num(o.Data, "slot", 0)), CheckMin: int(num(o.Data, "check_min", 30))}
+	e := &Exit{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Slot: int(num(o.Data, "slot", 0)), CheckMin: int(num(o.Data, "check_min", 30)),
+		Via: int64(num(o.Data, "via", 0))}
 	e.Type, _ = o.Data["type"].(string)
 	if mode, _ := o.Data["mode"].(string); mode == "standby" {
 		e.Mode = "standby"
@@ -517,6 +520,14 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 func (m *Manager) applyExit(env *Env, e *Exit) error {
 	sys := env.Sys
 	n := IfName(e.ID)
+	mark, err := m.viaMark(e)
+	if err != nil {
+		m.disconnect(env, e) // Kaskade ohne Vorgänger: lieber getrennt als direkt hinaus
+		return err
+	}
+	if mark != 0 {
+		m.ensureViaPath(env, e)
+	}
 	switch e.Type {
 	case "wireguard":
 		ep, err := ResolveEndpoint(e.WG.Endpoint, net.LookupIP)
@@ -527,8 +538,9 @@ func (m *Manager) applyExit(env *Env, e *Exit) error {
 				return err
 			}
 		}
-		conf := e.WG.SetConf(ep)
-		sig := fmt.Sprintf("%s|%s|%d", conf, e.WG.Address, e.WG.MTU)
+		conf := withFwMark(e.WG.SetConf(ep), mark)
+		mtu := m.tunnelMTU(e)
+		sig := fmt.Sprintf("%s|%s|%d", conf, e.WG.Address, mtu)
 		exists := sys.DryRun()
 		if !exists {
 			_, err := sys.Run("ip", "link", "show", "dev", n)
@@ -550,10 +562,15 @@ func (m *Manager) applyExit(env *Env, e *Exit) error {
 		if _, err := sys.RunInput(conf, "wg", "setconf", n, "/dev/stdin"); err != nil {
 			return err
 		}
+		fw := "off"
+		if mark != 0 {
+			fw = fmt.Sprintf("0x%08x", mark)
+		}
 		steps := [][]string{
+			{"wg", "set", n, "fwmark", fw},
 			{"ip", "-4", "address", "flush", "dev", n},
 			{"ip", "-4", "address", "add", e.WG.Address.String(), "dev", n, "noprefixroute"},
-			{"ip", "link", "set", "dev", n, "mtu", strconv.Itoa(e.WG.MTU), "up"},
+			{"ip", "link", "set", "dev", n, "mtu", strconv.Itoa(mtu), "up"},
 			{"sysctl", "-qw", "net.ipv4.conf." + n + ".rp_filter=2"},
 		}
 		for _, s := range steps {
@@ -584,7 +601,12 @@ func (m *Manager) applyExit(env *Env, e *Exit) error {
 			}
 			changed = ch
 		}
-		ch, err := sys.WriteFile(confDir+"/"+n+".ovpn", []byte(e.OVPN.Full(n, auth)), 0o600)
+		full := e.OVPN.Full(n, auth)
+		if mark != 0 {
+			// Kaskade: Tunnelpakete über den Vorgänger; kleinere MTU, damit nichts zerteilt werden muss
+			full += fmt.Sprintf("mark %d\ntun-mtu %d\nmssfix\n", mark, m.tunnelMTU(e))
+		}
+		ch, err := sys.WriteFile(confDir+"/"+n+".ovpn", []byte(full), 0o600)
 		if err != nil {
 			return err
 		}

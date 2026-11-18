@@ -119,7 +119,7 @@
   // ---------- Ausgänge ----------
   let exOpen = $state(false);
   let exCur = $state(null);
-  let ex = $state({ name: '', config: '', username: '', password: '', enabled: true, mode: 'always', check_min: 30 });
+  let ex = $state({ name: '', config: '', username: '', password: '', enabled: true, mode: 'always', check_min: 30, via: 0 });
   const CHECKS = [
     [5, 'alle 5 Minuten'],
     [15, 'alle 15 Minuten'],
@@ -167,9 +167,31 @@
   let removedInfo = $state(null);
   const exType = $derived(ex.config.toLowerCase().includes('[interface]') ? 'wireguard' : ex.config.trim() ? 'openvpn' : exCur?.type || '');
 
+  // Kaskade: Vorgänger-Kette (nächster zuerst) als Namen
+  function viaChain(e) {
+    const out = [];
+    const seen = new Set([e.id]);
+    for (let cur = e; cur?.via && out.length < 3; ) {
+      const v = exitById[cur.via];
+      if (!v || seen.has(v.id)) break;
+      seen.add(v.id);
+      out.push(v.name);
+      cur = v;
+    }
+    return out;
+  }
+  // mögliche Vorgänger: alle anderen Ausgänge, die nicht (indirekt) über diesen laufen
+  const viaOptions = $derived(
+    (d?.exits || []).filter((x) => {
+      if (!exCur) return true;
+      for (let cur = x, i = 0; cur && i < 5; cur = exitById[cur.via], i++) if (cur.id === exCur.id) return false;
+      return true;
+    }),
+  );
+
   function openExit(e = null) {
     exCur = e;
-    ex = { name: e?.name || '', config: '', username: e?.username || '', password: '', enabled: e ? e.enabled : true, mode: e?.mode || 'always', check_min: e?.check_min || 30 };
+    ex = { name: e?.name || '', config: '', username: e?.username || '', password: '', enabled: e ? e.enabled : true, mode: e?.mode || 'always', check_min: e?.check_min || 30, via: e?.via || 0 };
     exOpen = true;
   }
   async function readFile(ev) {
@@ -181,7 +203,7 @@
   }
   async function saveExit() {
     exBusy = true;
-    const body = { name: ex.name, enabled: ex.enabled, mode: ex.mode, check_min: Number(ex.check_min) };
+    const body = { name: ex.name, enabled: ex.enabled, mode: ex.mode, check_min: Number(ex.check_min), via: Number(ex.via) || 0 };
     if (ex.config.trim()) body.config = ex.config;
     if (exType === 'openvpn') {
       body.username = ex.username;
@@ -689,6 +711,7 @@
                   <ProtoLogo id={e.type} size={22} />
                   <div style="min-width:0">
                     <div class="strong">{e.name}</div>
+                    {#if e.via}<div class="tiny via-chain" title="Kaskade: Der Tunnel dieses Ausgangs läuft über den Vorgänger – der Anbieter sieht nur dessen Adresse."><Icon name="link" size={11} /> über {viaChain(e).join(' → ')}</div>{/if}
                     <div class="muted tiny mono ellipsis exsrv" title={e.server}>{e.server}{#if e.removed.length}&nbsp;<span class="badge muted" title={'Beim Hochladen entfernt: ' + e.removed.join(', ')}><Icon name="filter" size={11} /> {e.removed.length}</span>{/if}</div>
                   </div>
                 </div>
@@ -831,6 +854,19 @@
           </select>
         {/if}
       </div>
+    </div>
+    <div class="field">
+      <label for="ex-via"
+        >Verbunden über <Info title="Kaskade" wide>
+          <p>Der Tunnel dieses Ausgangs läuft durch einen anderen Ausgang, z. B. <b>Server → Cloudflare WARP → Windscribe</b>. Windscribe sieht dann nur die Adresse von WARP, WARP nur verschlüsselten Verkehr zu Windscribe.</p>
+          <p>Ins Internet geht der Verkehr über <b>diesen</b> Ausgang (den letzten der Kette). Der Vorgänger wird automatisch mit verbunden, auch in Bereitschaft. Ist er gestört oder abgeschaltet, bleibt dieser Ausgang getrennt – nie direkt.</p>
+          <p>Höchstens drei Ausgänge hintereinander. Jede Stufe kostet etwas Tempo und MTU (wird automatisch angepasst).</p>
+        </Info></label
+      >
+      <select id="ex-via" class="input" bind:value={ex.via}>
+        <option value={0}>Direkt (über den Server)</option>
+        {#each viaOptions as o}<option value={o.id}>{o.name}{o.via ? ` (über ${viaChain(o).join(' → ')})` : ''}</option>{/each}
+      </select>
     </div>
     <label class="switch"><input type="checkbox" bind:checked={ex.enabled} /><span class="track"></span> Aktiv</label>
   </div>
@@ -979,7 +1015,7 @@
   {/snippet}
 </Modal>
 
-<Modal bind:open={bkOpen} title={bkGroup ? `Block-Prüfung ${bkGroup.name}` : 'Block-Prüfung'} width={860}>
+<Modal bind:open={bkOpen} title={bkGroup ? `Block-Prüfung ${bkGroup.name}` : 'Block-Prüfung'} width={Math.min(1600, Math.max(960, 560 + (bkGroup?.exits?.length || 1) * 260))}>
   {@const G = bkGroup ? groupById[bkGroup.id] || bkGroup : null}
   {#if G}
     <div class="stack" style="gap:10px">
@@ -1020,7 +1056,7 @@
                       {#if c}<span class="badge {c[0]}">{c[1]}</span>{#if r.checked}<div class="tiny muted">{sinceText(r.checked)}</div>{/if}{:else}<span class="tiny muted">–</span>{/if}
                     </td>
                   {/each}
-                  <td>
+                  <td class="via">
                     {#if row.via}{exitById[row.via]?.name || row.via}{:else}<span class="muted">–</span>{/if}
                     {#if row.over}<div><span class="badge warn">Ausnahme</span></div>{/if}
                   </td>
@@ -1070,6 +1106,9 @@
   }
   .table.blk td {
     vertical-align: top;
+  }
+  .table.blk td.via {
+    min-width: 200px;
   }
   .table.blk tr.over td {
     background: color-mix(in srgb, var(--warn) 7%, transparent);
@@ -1133,6 +1172,12 @@
   }
   .exsrv {
     max-width: 220px;
+  }
+  .via-chain {
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 3px;
   }
   tr.off {
     opacity: 0.6;
