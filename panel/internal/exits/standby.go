@@ -43,6 +43,25 @@ func (m *Manager) neededSet() map[int64]bool {
 			out[g.Active] = true
 		}
 	}
+	// Wechsel: vorbereiteter nächster Ausgang, Verteilung je Ziel (alle Ausgänge der Gruppe, damit
+	// sie geprüft werden und bereitstehen), auslaufende Ausgänge
+	for gid, rs := range m.rot {
+		if rs.cand != 0 {
+			out[rs.cand] = true
+		}
+		if rs.cfg.Mode == "dest" {
+			for _, g := range m.lastGroups {
+				if g.ID == gid && g.Enabled && g.Blocked == "" {
+					for _, id := range g.Exits {
+						out[id] = true
+					}
+				}
+			}
+		}
+	}
+	for id := range m.drain {
+		out[id] = true
+	}
 	return out
 }
 

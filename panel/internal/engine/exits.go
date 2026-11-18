@@ -109,11 +109,18 @@ func (e *Engine) speedEvery() time.Duration {
 
 // RunExits: Prüfschleife der Ausgänge (alle 30 Sekunden).
 func (e *Engine) RunExits(stop <-chan struct{}) {
-	e.Exits.OnSwitch(func(gid int64) {
-		for _, d := range proto.All() {
-			if s, ok := d.(proto.GroupSwitcher); ok {
-				s.GroupSwitched(gid)
+	e.Exits.OnSwitch(func(ev exits.SwitchEvent) {
+		// Nur wenn der alte Ausgang gestört ist, sind seine Verbindungen verloren – dann Proxy-
+		// Verbindungen sofort trennen, damit Apps neu aufbauen. Beim weichen Wechsel laufen sie weiter.
+		if ev.Hard {
+			for _, d := range proto.All() {
+				if s, ok := d.(proto.GroupSwitcher); ok {
+					s.GroupSwitched(ev.Group)
+				}
 			}
+		}
+		if ev.Rotation {
+			e.flushGroupDNS(ev.Group)
 		}
 		e.RequestApply() // Dienste, die sich an den aktiven Ausgang binden (Hysteria2), neu einrichten
 	})
@@ -128,6 +135,32 @@ func (e *Engine) CheckExits(speed bool) {
 		every = time.Nanosecond
 	}
 	e.Exits.CheckAll(e.exitEnv(), xs, gs, every)
+}
+
+// flushGroupDNS: Beim Wechsel den Zwischenspeicher des Unbound der Gruppe leeren (Neustart der
+// Instanz), damit Antworten zum neuen Ausgang passen (Standort, CDN) – falls eingestellt.
+func (e *Engine) flushGroupDNS(gid int64) {
+	o, err := e.St.Object("group", gid)
+	if err != nil || !exits.GroupFrom(o).Rotate.FlushDNS {
+		return
+	}
+	unit := "vpn-unbound@g" + strconv.FormatInt(gid, 10)
+	if e.Sys.DryRun() || e.unitActive(unit) {
+		go func() { _, _ = e.Sys.Run("systemctl", "restart", unit) }()
+	}
+}
+
+// RotateGroup: Wechsel einer Gruppe sofort auslösen.
+func (e *Engine) RotateGroup(groupID int64) error {
+	o, err := e.St.Object("group", groupID)
+	if err != nil {
+		return err
+	}
+	g := exits.GroupFrom(o)
+	if !g.Enabled || g.Slot < 1 {
+		return fmt.Errorf("Gruppe ist deaktiviert")
+	}
+	return e.Exits.RotateNow(g)
 }
 
 // SwitchExit: Gruppe von Hand auf einen Ausgang umschalten.
@@ -255,13 +288,14 @@ func (e *Engine) collectExitTraffic(ts int64) {
 	}
 	prev := map[int64][2]uint64{}
 	_ = json.Unmarshal([]byte(e.St.GetSetting("state:exits:counters", "")), &prev)
-	// Gruppen, die einen Ausgang gerade nutzen: ihr Verkehr zählt für deren Limits
+	// Gruppen, die einen Ausgang gerade nutzen (aktiv, verteilt je Ziel, auslaufend): ihr Verkehr
+	// zählt für deren Limits
 	usedBy := map[int64][]int64{}
 	if e.Exits != nil {
 		_, gst := e.Exits.Status()
 		for gid, st := range gst {
-			if st.Active != 0 {
-				usedBy[st.Active] = append(usedBy[st.Active], gid)
+			for _, id := range st.Uses {
+				usedBy[id] = append(usedBy[id], gid)
 			}
 		}
 	}
@@ -308,10 +342,12 @@ func (e *Engine) CheckExit(id int64, speed bool) (exits.ExitStatus, error) {
 func (e *Engine) ExitLive() (map[int64]ExitRate, map[int64]ExitRate, map[int64]int64) {
 	var rates map[int64]ExitRate
 	active := map[int64]int64{}
+	uses := map[int64][]int64{}
 	if e.Exits != nil {
 		_, gs := e.Exits.Status()
 		for gid, st := range gs {
 			active[gid] = st.Active
+			uses[gid] = st.Uses
 		}
 	}
 	if e.Sys.DryRun() {
@@ -323,9 +359,11 @@ func (e *Engine) ExitLive() (map[int64]ExitRate, map[int64]ExitRate, map[int64]i
 				continue
 			}
 			used := 0.0
-			for _, a := range active {
-				if a == x.ID {
-					used++
+			for _, u := range uses {
+				for _, a := range u {
+					if a == x.ID {
+						used++
+					}
 				}
 			}
 			f := float64(x.ID)
@@ -335,9 +373,16 @@ func (e *Engine) ExitLive() (map[int64]ExitRate, map[int64]ExitRate, map[int64]i
 	} else {
 		rates = e.ExitRates()
 	}
+	// Gruppe = Summe ihrer Ausgänge (aktiver, Verteilung je Ziel, auslaufende). Teilen sich Gruppen
+	// einen Ausgang, zählt er bei jeder.
 	groups := map[int64]ExitRate{}
-	for gid, a := range active {
-		groups[gid] = rates[a]
+	for gid, u := range uses {
+		var r ExitRate
+		for _, id := range u {
+			r.Up += rates[id].Up
+			r.Down += rates[id].Down
+		}
+		groups[gid] = r
 	}
 	return rates, groups, active
 }

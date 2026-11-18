@@ -159,6 +159,25 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   **sperren** (kein Verkehr) oder **direkt** über den Server. Bei „sperren“ greift die Sperre auch in der
   kurzen Zeit, in der ein OpenVPN-Ausgang neu verbindet (kein kurzes Durchrutschen mit der Server-Adresse).
   Von Hand umschalten macht den gewählten Ausgang zum bevorzugten; Ausgang 1 wählen = normale Reihenfolge.
+- **Weiches Umschalten:** Jede Verbindung über eine Gruppe merkt sich bei ihrem Aufbau den Ausgang
+  (conntrack-Markierung, eigene nftables-Tabelle `inet vpnexits`) und bleibt auf ihm, bis sie endet –
+  bei der Rückkehr zum bevorzugten Ausgang, beim Umschalten von Hand und beim Wechsel. Nur neue Verbindungen
+  nehmen den neuen Ausgang. Der alte Ausgang bleibt so lange verbunden („läuft aus“), höchstens die
+  eingestellte Zeit. Ist der alte Ausgang gestört, sind seine Verbindungen ohnehin verloren; dann trennt der
+  Proxy sie sofort. Fehlt der Tunnel eines Ausgangs, gehen festgelegte Verbindungen nie direkt hinaus.
+- **Wechsel innerhalb der Gruppe** (Gruppen-Editor → „Wechsel“), damit der Verkehr nicht dauerhaft über
+  dieselbe Adresse läuft:
+  - *Ganze Gruppe:* nach einer zufälligen Zeit (von–bis Minuten) und/oder Datenmenge (von–bis GB) wechselt
+    die Gruppe auf einen zufällig gewählten anderen gesunden Ausgang. Ausgänge in Bereitschaft werden
+    rechtzeitig vorher verbunden und geprüft (Vorlauf, mindestens 45 s; bei Datenmenge ab 85 %). Es gibt
+    dann keine feste Reihenfolge mehr; fällt der Ausgang aus, übernimmt ein zufälliger gesunder.
+  - *Je Ziel:* neue Verbindungen werden nach Zieladresse auf alle gesunden Ausgänge verteilt (jede Website
+    sieht eine andere Adresse, ein Ziel bleibt beim selben Ausgang). Nach Zeit/Datenmenge wird neu gemischt.
+    Alle Ausgänge der Gruppe bleiben dafür verbunden.
+  - Knopf „Jetzt wechseln“ bzw. „Neu mischen“ auf der Gruppenkarte, dort auch der nächste Zeitpunkt.
+  - Auf Wunsch wird der DNS-Zwischenspeicher der Gruppe (Unbound je Gruppe) beim Wechsel geleert.
+  - Hysteria2-Server, die die Gruppe nutzen, binden sich an den aktiven Ausgang und bauen beim Wechsel kurz
+    neu auf.
 - **DNS** der Proxy-Nutzer wird über den aktiven Ausgang aufgelöst (DNS-Server je Gruppe).
 - **Proxy-Zugänge** hängen wie alle Zugänge am Nutzer (Limits, Drosselung, Statistik, Sperre).
   Geräte ohne Passwort-Unterstützung (viele Fernseher): beim Zugang „Anmeldung per IP“ mit der festen

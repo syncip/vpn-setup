@@ -108,6 +108,8 @@ type Group struct {
 	DNS     []string
 	// Blocked: Datenlimit der Gruppe erreicht (Grund) – kein Ausgang, Verkehr gesperrt (auch bei „direkt“)
 	Blocked string
+	// Rotate: Wechsel innerhalb der Gruppe (ganze Gruppe bzw. je Ziel), siehe rotate.go
+	Rotate Rotation
 }
 
 func num(m store.M, k string, def float64) float64 {
@@ -168,6 +170,7 @@ func GroupFrom(o *store.Object) *Group {
 	if len(g.DNS) == 0 {
 		g.DNS = []string{"1.1.1.1", "9.9.9.9"}
 	}
+	g.Rotate = RotationFrom(o.Data["rotate"])
 	return g
 }
 
@@ -210,6 +213,8 @@ type ExitStatus struct {
 	Standby   bool  `json:"standby"`
 	Connected bool  `json:"connected"`  // gerade verbunden
 	NextCheck int64 `json:"next_check"` // nächste Prüfung (nur Bereitschaft)
+	// Draining: Ausgang läuft aus (eine Gruppe hat gewechselt, laufende Verbindungen bleiben) – bis
+	Draining int64 `json:"draining,omitempty"`
 }
 
 type GroupStatus struct {
@@ -220,6 +225,26 @@ type GroupStatus struct {
 	Reason string `json:"reason,omitempty"`
 	Pinned int64  `json:"pinned,omitempty"` // von Hand gewählter Ausgang (bevorzugt statt des ersten)
 	Limit  bool   `json:"limit,omitempty"`  // durch das Datenlimit der Gruppe gesperrt
+	// Uses: Ausgänge, über die gerade Verkehr der Gruppe läuft (aktiver, Verteilung, auslaufende)
+	Uses []int64 `json:"uses"`
+	// Wechsel (rotate.go): Art, nächster Zeitpunkt, Datenmenge seit dem Wechsel / Ziel (Bytes),
+	// letzter Wechsel, Verteilung je Ziel, vorbereiteter nächster Ausgang
+	Rotate      string  `json:"rotate,omitempty"`
+	NextRotate  int64   `json:"next_rotate,omitempty"`
+	RotateBytes float64 `json:"rotate_bytes,omitempty"`
+	RotateAt    float64 `json:"rotate_at,omitempty"`
+	Rotated     int64   `json:"rotated,omitempty"`
+	Pool        []int64 `json:"pool,omitempty"`
+	Next        int64   `json:"next,omitempty"`
+}
+
+// SwitchEvent: eine Gruppe hat umgeschaltet. Hard = der alte Ausgang ist gestört (seine Verbindungen
+// sind verloren); sonst weich – laufende Verbindungen bleiben auf dem alten Ausgang.
+// Rotation = durch den Wechsel (rotate.go) ausgelöst.
+type SwitchEvent struct {
+	Group    int64
+	Hard     bool
+	Rotation bool
 }
 
 // Env: was der Manager vom Panel braucht.
@@ -236,16 +261,29 @@ type Manager struct {
 	status  map[int64]*ExitStatus
 	groups  map[int64]*GroupStatus
 	healthy map[string]time.Time // „Gruppe/Ausgang“ → gesund seit
-	hooks   []func(groupID int64)
+	hooks   []func(SwitchEvent)
 	probeMu sync.Mutex
 	conn    map[int64]bool // Ausgänge in Bereitschaft, die gerade verbunden sind
 	force   bool           // nächste Prüfung: auch Ausgänge in Bereitschaft (Knopf „Jetzt prüfen“)
 	wake    chan struct{}  // Prüfung sofort statt nach 30 s
+	// Wechsel und weiches Umschalten
+	rot        map[int64]*rotState      // je Gruppe
+	drain      map[int64]drainState     // auslaufende Ausgänge
+	drainBy    map[int64]map[int64]bool // Gruppe → auslaufende Ausgänge
+	lastExits  []*Exit                  // letzter Stand (für die Verbindungs-Zuordnung)
+	lastGroups []*Group                 //
+	now        func() time.Time         // Uhr (Tests)
+	rngMu      sync.Mutex               //
+	rng        interface {
+		Float64() float64
+		Intn(int) int
+		Uint32() uint32
+	}
 }
 
 func New() *Manager {
 	return &Manager{status: map[int64]*ExitStatus{}, groups: map[int64]*GroupStatus{}, healthy: map[string]time.Time{}, conn: map[int64]bool{},
-		wake: make(chan struct{}, 1)}
+		wake: make(chan struct{}, 1), rot: map[int64]*rotState{}, drain: map[int64]drainState{}, drainBy: map[int64]map[int64]bool{}, rng: newRand()}
 }
 
 // Wake: nächste Prüfung sofort (z. B. wenn eine Gruppe ihren Ausgang verloren hat).
@@ -257,7 +295,7 @@ func (m *Manager) Wake() {
 }
 
 // OnSwitch: wird nach jedem Umschalten einer Gruppe aufgerufen (z. B. Proxy trennt Verbindungen).
-func (m *Manager) OnSwitch(f func(groupID int64)) {
+func (m *Manager) OnSwitch(f func(SwitchEvent)) {
 	m.mu.Lock()
 	m.hooks = append(m.hooks, f)
 	m.mu.Unlock()
@@ -267,13 +305,27 @@ func (m *Manager) Status() (map[int64]ExitStatus, map[int64]GroupStatus) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	es, gs := map[int64]ExitStatus{}, map[int64]GroupStatus{}
+	inUse := map[int64]bool{} // aktiv oder in einer Verteilung – dann läuft der Ausgang nicht aus
+	for gid, g := range m.groups {
+		inUse[g.Active] = true
+		if rs := m.rot[gid]; rs != nil {
+			for _, id := range rs.pool {
+				inUse[id] = true
+			}
+		}
+	}
 	for id, s := range m.status {
 		c := *s
 		c.Samples = append([]Sample(nil), s.Samples...)
+		if d, ok := m.drain[id]; ok && !inUse[id] {
+			c.Draining = d.until.Unix()
+		}
 		es[id] = c
 	}
 	for id, s := range m.groups {
-		gs[id] = *s
+		c := *s
+		m.rotStatusLocked(id, &c)
+		gs[id] = c
 	}
 	return es, gs
 }
@@ -329,6 +381,7 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 	for _, e := range exits {
 		byID[e.ID] = e
 	}
+	m.remember(exits, groups)
 	for _, g := range groups {
 		if g.Enabled && g.Slot > 0 {
 			m.active(env, g, byID) // aktuellen Ausgang festlegen – ihn braucht es verbunden
@@ -436,7 +489,18 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 			delete(m.conn, id)
 		}
 	}
+	for id := range m.rot {
+		if !keepG[id] {
+			delete(m.rot, id)
+		}
+	}
+	for id := range m.drain {
+		if e := byID[id]; e == nil || !e.Enabled {
+			m.endDrainLocked(id)
+		}
+	}
 	m.mu.Unlock()
+	m.syncPins(env) // Zuordnung der Verbindungen zu Ausgängen (weicher Wechsel)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
@@ -546,7 +610,11 @@ func (m *Manager) ensureRoutes(env *Env, exits []*Exit, groups []*Group) {
 					_, _ = sys.Run("ip", "-4", "route", "flush", "table", "main", "dev", n)
 				}
 			}
-			_, _ = sys.Run("ip", "-4", "route", "replace", "default", "dev", n, "table", strconv.Itoa(probeTable+e.Slot))
+			t := strconv.Itoa(probeTable + e.Slot)
+			_, _ = sys.Run("ip", "-4", "route", "replace", "default", "dev", n, "table", t)
+			// Sicherung: Verbindungen, die auf diesen Ausgang festgelegt sind (weicher Wechsel), dürfen
+			// nie direkt hinaus, wenn der Tunnel fehlt (getrennt, OpenVPN verbindet neu).
+			_, _ = sys.Run("ip", "-4", "route", "replace", "blackhole", "default", "metric", safetyMetric, "table", t)
 		}
 	}
 	for _, g := range groups {
@@ -583,6 +651,13 @@ func (m *Manager) routeGroup(env *Env, g *Group, active int64) {
 }
 
 const safetyMetric = "10000"
+
+// remember: letzten Stand merken (für die Verbindungs-Zuordnung bei späteren Wechseln).
+func (m *Manager) remember(exits []*Exit, groups []*Group) {
+	m.mu.Lock()
+	m.lastExits, m.lastGroups = exits, groups
+	m.mu.Unlock()
+}
 
 func syncRules(env *Env, want []rule) error {
 	sys := env.Sys

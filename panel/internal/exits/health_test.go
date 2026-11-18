@@ -37,7 +37,7 @@ func TestFailover(t *testing.T) {
 	env, state, logs := testEnv(t)
 	m := New()
 	switched := 0
-	m.OnSwitch(func(int64) { switched++ })
+	m.OnSwitch(func(SwitchEvent) { switched++ })
 	exits := map[int64]*Exit{1: {ID: 1, Name: "A", Enabled: true, Slot: 1}, 2: {ID: 2, Name: "B", Enabled: true, Slot: 2}}
 	g := &Group{ID: 9, Name: "G", Enabled: true, Slot: 1, Exits: []int64{1, 2}, OnFail: "block", MaxLoss: 20, MaxRTT: 400}
 	active := func() (int64, string) { _, gs := m.Status(); return gs[9].Active, gs[9].State }

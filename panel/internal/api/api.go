@@ -117,6 +117,7 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("PUT /api/groups/{id}", a.auth(a.updateGroup))
 	api.HandleFunc("DELETE /api/groups/{id}", a.auth(a.deleteGroup))
 	api.HandleFunc("POST /api/groups/{id}/switch", a.auth(a.switchGroup))
+	api.HandleFunc("POST /api/groups/{id}/rotate", a.auth(a.rotateGroup))
 	api.HandleFunc("GET /api/iplists", a.auth(a.listIPLists))
 	api.HandleFunc("POST /api/iplists", a.auth(a.createIPList))
 	api.HandleFunc("PUT /api/iplists/{id}", a.auth(a.updateIPList))

@@ -95,8 +95,12 @@ jobs:
         run: |
           go test -c -tags lab -o /tmp/enginelab ./internal/engine
           go test -c -tags lab -o /tmp/labtest ./internal/labtest
+          go test -c -tags lab -o /tmp/exitslab ./internal/exits
       - name: Labortests Engine (Unbound-Kill-Switch, nftables)
         run: sudo /tmp/enginelab -test.v -test.run 'Lab|KillSwitch'
       - name: Labortests Ausgänge
         if: ${{ !cancelled() }}
         run: sudo /tmp/labtest -test.v
+      - name: Labortests weicher Wechsel (Verbindungen bleiben auf ihrem Ausgang)
+        if: ${{ !cancelled() }}
+        run: sudo /tmp/exitslab -test.v -test.run Lab

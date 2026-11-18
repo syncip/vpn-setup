@@ -53,6 +53,7 @@ type groupRow struct {
 	Limits  *store.Limits               `json:"limits"`  // nil = keine
 	Limit   *engine.ExitLimitState      `json:"limit"`   // Verbrauch und Status im Zeitraum
 	Traffic map[string]store.ExitTotals `json:"traffic"` // day | month (über die Gruppe gelaufen)
+	Rotate  exits.Rotation              `json:"rotate"`  // Wechsel innerhalb der Gruppe
 }
 
 func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +75,7 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 		g := exits.GroupFrom(o)
 		row := &groupRow{ID: g.ID, Name: g.Name, Enabled: g.Enabled, Exits: g.Exits, OnFail: g.OnFail, MaxLoss: g.MaxLoss,
 			MaxRTT: g.MaxRTT, MinMbit: g.MinMbit, DNS: strings.Join(g.DNS, ", "), Users: []map[string]any{},
-			Limits: engine.ExitLimits(o), Traffic: map[string]store.ExitTotals{"day": gtDay[g.ID], "month": gtMonth[g.ID]}}
+			Limits: engine.ExitLimits(o), Traffic: map[string]store.ExitTotals{"day": gtDay[g.ID], "month": gtMonth[g.ID]}, Rotate: g.Rotate}
 		if st, ok := glim[g.ID]; ok {
 			row.Limit = &st
 		}
@@ -397,6 +398,7 @@ type groupInput struct {
 	MinMbit *float64        `json:"min_mbit"`
 	DNS     *string         `json:"dns"`
 	Limits  json.RawMessage `json:"limits"` // fehlt = unverändert, null = keine Limits
+	Rotate  *exits.Rotation `json:"rotate"` // fehlt = unverändert
 }
 
 func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, o *store.Object) {
@@ -474,6 +476,25 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, o *store.Object)
 		errJSON(w, http.StatusBadRequest, msg)
 		return
 	}
+	if in.Rotate != nil {
+		r := *in.Rotate
+		if r.Mode == "" {
+			r = exits.RotationFrom(nil) // aus – Vorgaben behalten
+			r.Mode = ""
+			if old := exits.RotationFrom(o.Data["rotate"]); old.MinMin > 0 || old.MinGB > 0 {
+				r = old // Werte für später behalten
+				r.Mode = ""
+			}
+		}
+		if msg := r.Check(); msg != "" {
+			errJSON(w, http.StatusBadRequest, msg)
+			return
+		}
+		b, _ := json.Marshal(r)
+		var mm map[string]any
+		_ = json.Unmarshal(b, &mm)
+		o.Data["rotate"] = mm
+	}
 	if o.ID == 0 {
 		slot, err := a.E.NewSlot("group")
 		if err != nil {
@@ -531,6 +552,15 @@ func (a *API) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	_ = a.St.SetSetting(fmt.Sprintf("state:exits:pin:%d", o.ID), "")
 	a.E.Log("warn", "Ausgangsgruppe „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// rotateGroup: Wechsel sofort auslösen (ganze Gruppe: nächster Ausgang, je Ziel: neu mischen).
+func (a *API) rotateGroup(w http.ResponseWriter, r *http.Request) {
+	if err := a.E.RotateGroup(pathID(r)); err != nil {
+		fail(w, err)
+		return
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

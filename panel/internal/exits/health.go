@@ -186,6 +186,7 @@ func (m *Manager) Check(env *Env, exits []*Exit, groups []*Group, speedEvery tim
 	for _, e := range exits {
 		byID[e.ID] = e
 	}
+	m.remember(exits, groups)
 	for _, g := range groups {
 		if g.Enabled && g.Slot > 0 {
 			m.active(env, g, byID)
@@ -262,6 +263,10 @@ func (m *Manager) Check(env *Env, exits []*Exit, groups []*Group, speedEvery tim
 			m.evaluate(env, g, byID)
 		}
 	}
+
+	// 4b. Wechsel innerhalb der Gruppen (Zeit/Datenmenge), auslaufende Ausgänge
+	m.rotate(env, groups, byID, probe)
+	m.syncPins(env) // stellt die Tabelle auch wieder her, falls sie fehlt
 
 	// 5. Nicht mehr benötigte Ausgänge in Bereitschaft wieder trennen
 	needed = m.neededSet()
@@ -416,9 +421,13 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 	for _, id := range order {
 		inGroup = inGroup || id == cur
 	}
+	rotating := g.Rotate.Mode == "group" // ganze Gruppe wechselt: keine feste Reihenfolge
 	if g.Blocked != "" {
 		next, reason = 0, g.Blocked
 	} else if cur != 0 && inGroup && ok[cur] {
+		if rotating {
+			order = nil // kein Zurück zum bevorzugten – der Wechsel bestimmt den Ausgang
+		}
 		// bevorzugter Ausgang wieder stabil? → zurück
 		for _, id := range order {
 			if id == cur {
@@ -431,10 +440,16 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 		}
 	} else {
 		next = 0
+		var healthy []int64
 		for _, id := range order {
 			if ok[id] {
-				next = id
-				break
+				healthy = append(healthy, id)
+			}
+		}
+		if len(healthy) > 0 {
+			next = healthy[0]
+			if rotating {
+				next = healthy[m.randn(len(healthy))] // bei Ausfall zufällig weiter
 			}
 		}
 		if cur != 0 {
@@ -469,12 +484,20 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 		if gs.Reason == "" {
 			gs.Reason = "kein Ausgang erreichbar"
 		}
+	case rotating || g.Rotate.Mode == "dest": // kein Vorrang – alle gesunden Ausgänge sind gleichwertig
+		gs.State = "ok"
 	case len(order) > 0 && next != order[0]:
 		gs.State = "failover"
 	default:
 		gs.State = "ok"
 	}
-	hooks := append([]func(int64){}, m.hooks...)
+	// weich: der bisherige Ausgang ist gesund (z. B. Rückkehr zum bevorzugten) – seine Verbindungen
+	// laufen weiter und er bleibt verbunden, bis sie enden
+	hard := cur != 0 && !ok[cur]
+	if changed && cur != 0 && next != cur && !hard {
+		m.startDrainLocked(g, cur, now)
+	}
+	hooks := append([]func(SwitchEvent){}, m.hooks...)
 	m.mu.Unlock()
 	if !changed {
 		return
@@ -490,6 +513,7 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 			return
 		}
 	}
+	m.syncPins(env) // neue Verbindungen über den neuen Ausgang – vor dem Ersetzen der Route
 	m.routeGroup(env, g, next)
 	env.Set(fmt.Sprintf("exits:active:%d", g.ID), strconv.FormatInt(next, 10))
 	to := "keiner (" + map[string]string{"block": "gesperrt", "direct": "direkt über den Server"}[g.OnFail] + ")"
@@ -501,7 +525,7 @@ func (m *Manager) evaluate(env *Env, g *Group, exits map[int64]*Exit) {
 	}
 	env.Log("warn", fmt.Sprintf("Gruppe „%s“: Ausgang jetzt %s – %s", g.Name, to, reason))
 	for _, f := range hooks {
-		f(g.ID)
+		f(SwitchEvent{Group: g.ID, Hard: hard})
 	}
 }
 
@@ -523,6 +547,12 @@ func (m *Manager) Switch(env *Env, g *Group, exitID int64, exits map[int64]*Exit
 	}
 	m.mu.Lock()
 	gs := m.groups[g.ID]
+	if gs.Active != 0 && gs.Active != exitID {
+		m.startDrainLocked(g, gs.Active, time.Now()) // laufende Verbindungen bleiben
+	}
+	if rs := m.rot[g.ID]; rs != nil {
+		m.schedule(rs, m.clock()) // Wechsel beginnt von vorn
+	}
 	gs.Active, gs.Since, gs.Reason = exitID, time.Now().Unix(), "von Hand umgeschaltet"
 	// Der gewählte Ausgang wird bevorzugt (fällt er aus, übernimmt der nächste; ist er wieder
 	// stabil, geht es zu ihm zurück). Wahl des ersten Ausgangs = wieder normale Reihenfolge.
@@ -531,8 +561,9 @@ func (m *Manager) Switch(env *Env, g *Group, exitID int64, exits map[int64]*Exit
 		gs.Pinned = 0
 	}
 	gs.State = "ok"
-	hooks := append([]func(int64){}, m.hooks...)
+	hooks := append([]func(SwitchEvent){}, m.hooks...)
 	m.mu.Unlock()
+	m.syncPins(env)
 	m.routeGroup(env, g, exitID)
 	env.Set(fmt.Sprintf("exits:active:%d", g.ID), strconv.FormatInt(exitID, 10))
 	pin := ""
@@ -540,9 +571,9 @@ func (m *Manager) Switch(env *Env, g *Group, exitID int64, exits map[int64]*Exit
 		pin = strconv.FormatInt(gs.Pinned, 10)
 	}
 	env.Set(fmt.Sprintf("exits:pin:%d", g.ID), pin)
-	env.Log("info", fmt.Sprintf("Gruppe „%s“: von Hand auf „%s“ umgeschaltet", g.Name, exits[exitID].Name))
+	env.Log("info", fmt.Sprintf("Gruppe „%s“: von Hand auf „%s“ umgeschaltet (laufende Verbindungen bleiben)", g.Name, exits[exitID].Name))
 	for _, f := range hooks {
-		f(g.ID)
+		f(SwitchEvent{Group: g.ID})
 	}
 	return nil
 }

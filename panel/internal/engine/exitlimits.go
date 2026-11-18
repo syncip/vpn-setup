@@ -267,12 +267,15 @@ func (e *Engine) limitRates() map[int64]savedExitLimit {
 		_, gs := e.Exits.Status()
 		for gid, s := range gl {
 			st, ok := gs[gid]
-			if !ok || st.Active == 0 || s.Status == "blocked" || (s.RateDown == 0 && s.RateUp == 0) {
+			if !ok || len(st.Uses) == 0 || s.Status == "blocked" || (s.RateDown == 0 && s.RateUp == 0) {
 				continue
 			}
-			r := out[st.Active]
-			r.RateDown, r.RateUp = minRate(r.RateDown, s.RateDown), minRate(r.RateUp, s.RateUp)
-			out[st.Active] = r
+			// alle Ausgänge, über die Verkehr der Gruppe läuft (aktiv, je Ziel verteilt, auslaufend)
+			for _, id := range st.Uses {
+				r := out[id]
+				r.RateDown, r.RateUp = minRate(r.RateDown, s.RateDown), minRate(r.RateUp, s.RateUp)
+				out[id] = r
+			}
 		}
 	}
 	return out

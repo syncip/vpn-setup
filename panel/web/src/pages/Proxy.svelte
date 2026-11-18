@@ -70,6 +70,7 @@
   function groupState(g) {
     if (!g.enabled) return ['muted', 'deaktiviert'];
     if (g.limit?.status === 'blocked' || g.status?.limit) return ['warn', 'Gesperrt – Datenlimit'];
+    if (g.rotate?.mode && g.status?.state === 'ok') return ['ok', g.rotate.mode === 'dest' ? 'Verteilt je Ziel' : 'Wechselt'];
     return STATE[g.status?.state || 'waiting'] || ['muted', 'wird geprüft'];
   }
 
@@ -241,11 +242,40 @@
   let grOpen = $state(false);
   let grCur = $state(null);
   let gr = $state({});
+  // Wechsel innerhalb der Gruppe: Formularwerte (Zeit/Datenmenge einzeln ein- und ausschaltbar)
+  function rotForm(r) {
+    r = r || {};
+    return {
+      mode: r.mode || '',
+      time: (r.min_min || 0) > 0,
+      min_min: r.min_min || 30,
+      max_min: r.max_min || 90,
+      gb: (r.min_gb || 0) > 0,
+      min_gb: r.min_gb || 2,
+      max_gb: r.max_gb || 5,
+      drain_min: r.drain_min || 30,
+      warm_sec: r.warm_sec ?? 90,
+      flush_dns: r.flush_dns ?? true,
+    };
+  }
+  function rotBody(f) {
+    return {
+      mode: f.mode,
+      min_min: f.time ? Number(f.min_min) || 0 : 0,
+      max_min: f.time ? Number(f.max_min) || 0 : 0,
+      min_gb: f.gb ? Number(f.min_gb) || 0 : 0,
+      max_gb: f.gb ? Number(f.max_gb) || 0 : 0,
+      drain_min: Number(f.drain_min) || 30,
+      warm_sec: Number(f.warm_sec) || 0,
+      flush_dns: !!f.flush_dns,
+    };
+  }
   function openGroup(g = null) {
     grCur = g;
     gr = g
       ? clone($state.snapshot({ name: g.name, enabled: g.enabled, exits: g.exits, on_fail: g.on_fail, max_loss: g.max_loss, max_rtt: g.max_rtt, min_mbit: g.min_mbit, dns: g.dns }))
       : { name: '', enabled: true, exits: d.exits.length === 1 ? [d.exits[0].id] : [], on_fail: 'block', max_loss: 20, max_rtt: 400, min_mbit: 0, dns: '1.1.1.1, 9.9.9.9' };
+    gr.rot = rotForm(g?.rotate);
     grOpen = true;
   }
   function toggleMember(id) {
@@ -260,6 +290,8 @@
   async function saveGroup() {
     const body = $state.snapshot(gr);
     for (const k of ['max_loss', 'max_rtt', 'min_mbit']) body[k] = Number(body[k]) || 0;
+    body.rotate = rotBody(body.rot);
+    delete body.rot;
     const r = grCur ? await run(() => put(`/groups/${grCur.id}`, body), 'Gruppe gespeichert') : await run(() => post('/groups', body), 'Gruppe angelegt');
     if (r) {
       grOpen = false;
@@ -270,6 +302,17 @@
     if (!(await confirmDialog({ title: `Gruppe ${g.name} löschen?`, text: 'Die Ausgänge selbst bleiben erhalten.', ok: 'Löschen', danger: true }))) return;
     if (await run(() => del(`/groups/${g.id}`), 'Gruppe gelöscht')) load();
   }
+  async function rotateNow(g) {
+    if (await run(() => post(`/groups/${g.id}/rotate`), g.rotate?.mode === 'dest' ? 'Verteilung wird neu gemischt' : 'Wechsel wird vorbereitet')) setTimeout(load, 2500);
+  }
+  // „in 23 Min.“ / „in 2 Std.“
+  function untilText(ts) {
+    const s = Math.max(0, ts - Date.now() / 1000);
+    if (s < 90) return 'gleich';
+    if (s < 5400) return `in ${Math.round(s / 60)} Min.`;
+    return `in ${fmtNum(Math.round(s / 360) / 10)} Std.`;
+  }
+  const ROT_MODE = { group: 'Ganze Gruppe wechselt', dest: 'Je Ziel verteilt' };
   async function switchTo(g, exitId) {
     if (!exitId || exitId === g.status?.active) return;
     if (await run(() => post(`/groups/${g.id}/switch`, { exit: exitId }), 'Umgeschaltet')) load();
@@ -428,7 +471,7 @@
 {/if}
 
 {#if tab === 'groups'}
-<div class="muted small" style="margin-bottom:12px">Mehrere Ausgänge in fester Reihenfolge – fällt einer aus, übernimmt der nächste automatisch.</div>
+<div class="muted small" style="margin-bottom:12px">Mehrere Ausgänge in fester Reihenfolge – fällt einer aus, übernimmt der nächste automatisch. Auf Wunsch wechselt die Gruppe zufällig nach Zeit oder Datenmenge bzw. verteilt je Ziel.</div>
 <div class="grid cols-2">
   {#each d.groups as g}
     {@const st = groupState(g)}
@@ -458,6 +501,22 @@
             {/if}
           </button>
         {/if}
+        {#if g.enabled && g.rotate?.mode}
+          {@const R = g.status || {}}
+          <div class="glim rot">
+            <span class="spread tiny">
+              <span class="strong"><Icon name="refresh" size={12} /> {ROT_MODE[g.rotate.mode]}</span>
+              <button class="btn sm ghost" onclick={() => rotateNow(g)} title={g.rotate.mode === 'dest' ? 'Neue Verbindungen sofort neu auf die Ausgänge verteilen' : 'Jetzt auf einen anderen Ausgang wechseln (laufende Verbindungen bleiben)'}>{g.rotate.mode === 'dest' ? 'Neu mischen' : 'Jetzt wechseln'}</button>
+            </span>
+            <span class="tiny muted">
+              {#if g.rotate.mode === 'dest'}{(R.pool || []).length} Ausgänge in der Verteilung{#if R.next_rotate || R.rotate_at}{' · '}{/if}{/if}
+              {#if R.next_rotate}{g.rotate.mode === 'dest' ? 'neu gemischt' : 'nächster Wechsel'} {untilText(R.next_rotate)}{/if}
+              {#if R.rotate_at}{R.next_rotate ? ' oder' : g.rotate.mode === 'dest' ? 'neu gemischt' : 'nächster Wechsel'} nach {bytes(R.rotate_at)} ({bytes(R.rotate_bytes || 0)} erreicht){/if}
+              {#if R.next}{' · '}als Nächstes: {exitById[R.next]?.name || '–'} (bereit){/if}
+              {#if R.rotated}{' · '}zuletzt {date(R.rotated, true)}{/if}
+            </span>
+          </div>
+        {/if}
         {#if g.enabled}
           <div class="active-row">
             <Icon name="route" size={16} />
@@ -475,7 +534,11 @@
               {@const est = exitState(e)}
               <li class:cur={g.status?.active === id}>
                 <StateBadge small tone={est.tone} label={est.label} icon={est.icon} title={est.detail} />
-                <span class="grow">{i + 1}. {e.name} {#if g.status?.pinned === id}<span class="badge accent" title="Von Hand gewählt – wird statt des ersten Ausgangs bevorzugt. Ausgang 1 wählen = normale Reihenfolge.">gewählt</span>{/if}</span>
+                <span class="grow">{i + 1}. {e.name} {#if g.status?.pinned === id}<span class="badge accent" title="Von Hand gewählt – wird statt des ersten Ausgangs bevorzugt. Ausgang 1 wählen = normale Reihenfolge.">gewählt</span>{/if}
+                  {#if g.rotate?.mode === 'dest' && g.status?.pool?.includes(id)}<span class="badge ok" title="Neue Verbindungen werden nach Ziel auch über diesen Ausgang geleitet">verteilt</span>{/if}
+                  {#if g.status?.next === id}<span class="badge accent" title="Ist verbunden und geprüft – übernimmt beim nächsten Wechsel">als Nächstes</span>{/if}
+                  {#if g.status?.active !== id && !g.status?.pool?.includes(id) && g.status?.uses?.includes(id) && !e.status?.draining}<span class="badge muted" title="Laufende Verbindungen der Gruppe enden noch über diesen Ausgang">läuft aus</span>{/if}
+                </span>
                 <span class="muted tiny">{e.status?.rtt ? `${fmtNum(Math.round(e.status.rtt))} ms` : ''}</span>
                 {#if g.enabled && e.enabled && g.status?.active !== id}
                   <button class="btn sm ghost" onclick={() => switchTo(g, id)} title="Von Hand auf diesen Ausgang umschalten">Umschalten</button>
@@ -755,11 +818,38 @@
         {#if grCur}<button type="button" class="btn sm" onclick={() => openLimit(grCur, 'group')}><Icon name="gauge" size={14} /> Limit einstellen</button>{:else}<span class="tiny muted">nach dem Anlegen einstellbar</span>{/if}
       </div>
     </div>
+    {#if gr.rot}
+      <div class="field rotbox">
+        <span class="label">Wechsel innerhalb der Gruppe <Info title="Wechsel" wide text="Damit der Verkehr nicht dauerhaft über dieselbe Adresse läuft. Ganze Gruppe: nach einer zufälligen Zeit bzw. Datenmenge wechselt die Gruppe auf einen zufällig gewählten anderen gesunden Ausgang. Je Ziel: neue Verbindungen werden nach Zieladresse auf alle gesunden Ausgänge verteilt – jede Website sieht eine andere Adresse; beim Wechsel wird neu gemischt. Immer weich: laufende Verbindungen (Downloads, Anrufe, Anmeldungen) bleiben auf ihrem Ausgang, bis sie enden. Ausgänge in Bereitschaft werden rechtzeitig vorher verbunden und geprüft. Hysteria2-Server, die die Gruppe nutzen, bauen beim Wechsel kurz neu auf." /></span>
+        <div class="segmented">
+          {#each [['', 'Aus'], ['group', 'Ganze Gruppe'], ['dest', 'Je Ziel']] as [v, l]}<button type="button" class:active={gr.rot.mode === v} onclick={() => (gr.rot.mode = v)}>{l}</button>{/each}
+        </div>
+        {#if gr.rot.mode}
+          <div class="stack" style="gap:8px;margin-top:8px">
+            <div class="row wrap rotline">
+              <label class="check"><input type="checkbox" bind:checked={gr.rot.time} /> {gr.rot.mode === 'dest' ? 'Neu mischen nach Zeit' : 'Wechsel nach Zeit'}</label>
+              {#if gr.rot.time}<span class="row small" style="gap:6px">zufällig <input class="input num" type="number" min="1" bind:value={gr.rot.min_min} /> bis <input class="input num" type="number" min="1" bind:value={gr.rot.max_min} /> Min.</span>{/if}
+            </div>
+            <div class="row wrap rotline">
+              <label class="check"><input type="checkbox" bind:checked={gr.rot.gb} /> {gr.rot.mode === 'dest' ? 'Neu mischen nach Datenmenge' : 'Wechsel nach Datenmenge'}</label>
+              {#if gr.rot.gb}<span class="row small" style="gap:6px">zufällig <input class="input num" type="number" min="0.01" step="0.1" bind:value={gr.rot.min_gb} /> bis <input class="input num" type="number" min="0.01" step="0.1" bind:value={gr.rot.max_gb} /> GB</span>{/if}
+            </div>
+            {#if gr.rot.mode === 'group' && !gr.rot.time && !gr.rot.gb}<div class="tiny" style="color:var(--warn)">Zeit oder Datenmenge wählen – sonst wechselt die Gruppe nie.</div>{/if}
+            {#if gr.rot.mode === 'dest'}<div class="tiny muted">Alle Ausgänge der Gruppe bleiben dafür verbunden (auch die in Bereitschaft). Ohne Zeit/Datenmenge bleibt die Verteilung fest.</div>{/if}
+            <div class="grid cols-2">
+              <div class="field"><label for="gr-drain">Alte Verbindungen halten (Min.) <Info title="Auslaufen" text="So lange bleibt der bisherige Ausgang höchstens verbunden, damit laufende Verbindungen zu Ende laufen können. Enden sie früher, wird er früher frei." /></label><input id="gr-drain" class="input" type="number" min="1" bind:value={gr.rot.drain_min} /></div>
+              <div class="field"><label for="gr-warm">Vorlauf (Sek.) <Info title="Vorlauf" text="So früh vor dem Wechsel wird der nächste Ausgang verbunden und geprüft, wenn er in Bereitschaft ist (mindestens 45 s). Beim Wechsel nach Datenmenge: ab 85 % der Menge." /></label><input id="gr-warm" class="input" type="number" min="0" bind:value={gr.rot.warm_sec} /></div>
+            </div>
+            <label class="check small"><input type="checkbox" bind:checked={gr.rot.flush_dns} /> DNS-Zwischenspeicher der Gruppe beim Wechsel leeren <Info title="DNS beim Wechsel" text="Der DNS-Server der Gruppe (Unbound über den Ausgang) startet kurz neu, damit Antworten zum Standort des neuen Ausgangs passen und alte Anfragen nicht verknüpft werden können." /></label>
+          </div>
+        {/if}
+      </div>
+    {/if}
     <label class="switch"><input type="checkbox" bind:checked={gr.enabled} /><span class="track"></span> Aktiv</label>
   </div>
   {#snippet footer()}
     <button class="btn" onclick={() => (grOpen = false)}>Abbrechen</button>
-    <button class="btn primary" onclick={saveGroup} disabled={!gr.name}>{grCur ? 'Speichern' : 'Anlegen'}</button>
+    <button class="btn primary" onclick={saveGroup} disabled={!gr.name || (gr.rot?.mode === 'group' && !gr.rot.time && !gr.rot.gb)}>{grCur ? 'Speichern' : 'Anlegen'}</button>
   {/snippet}
 </Modal>
 
@@ -781,6 +871,30 @@
     margin-top: 3px;
     max-width: 260px;
     color: var(--text-2);
+  }
+  .rot {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rotbox {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .rotline {
+    gap: 10px;
+    align-items: center;
+    min-height: 32px;
+  }
+  .input.num {
+    width: 80px;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
   }
   .glim {
     padding: 8px 10px;

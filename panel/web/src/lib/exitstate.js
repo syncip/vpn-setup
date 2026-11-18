@@ -16,6 +16,10 @@ export function exitState(e) {
   if (!s.up) return { tone: 'bad', label: 'Getrennt', icon: 'x', detail: s.error || 'Tunnel nicht verbunden' };
   if (s.error) return { tone: 'bad', label: 'Gestört', icon: 'alert', detail: s.error };
   if (s.loss >= 50) return { tone: 'bad', label: 'Gestört', icon: 'alert', detail: `${fmtNum(Math.round(s.loss))} % Verlust` };
+  if (s.draining) {
+    const until = new Date(s.draining * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    return { tone: 'idle', label: 'Läuft aus', icon: 'clock', detail: `Gruppe hat gewechselt – laufende Verbindungen enden hier, spätestens ${until}` };
+  }
   if (s.loss > 10 || s.rtt > 300) return { tone: 'warn', label: 'Instabil', icon: 'activity', detail: `${fmtNum(Math.round(s.loss))} % Verlust · ${fmtNum(Math.round(s.rtt))} ms` };
   return { tone: 'ok', label: 'Verbunden', icon: 'check', detail: standby ? 'Bereitschaft · gerade verbunden' : `${fmtNum(Math.round(s.rtt))} ms · ${fmtNum(Math.round(s.loss))} % Verlust` };
 }
