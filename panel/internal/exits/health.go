@@ -106,17 +106,28 @@ func (m *Manager) probe(env *Env, e *Exit, speed bool) (Sample, string, string, 
 	if _, err := env.Sys.Run("ip", "link", "show", "dev", n); err != nil {
 		return s, "", "", 0, errNoTunnel
 	}
-	mark := strconv.FormatUint(uint64(probeMark(e.Slot)), 10)
-	out, _ := env.Sys.Run("ping", "-n", "-q", "-c", "5", "-i", "0.3", "-W", "2", "-m", mark, "-I", n, pingTarget)
-	if r := lossRe.FindStringSubmatch(out); r != nil {
-		s.Loss, _ = strconv.ParseFloat(r[1], 64)
-	}
-	if r := rttRe.FindStringSubmatch(out); r != nil {
-		s.RTT, _ = strconv.ParseFloat(r[1], 64)
+	tor := e.Type == "tor"
+	if !tor { // Tor transportiert kein ICMP – dort zählt die Antwortzeit der HTTPS-Prüfung
+		mark := strconv.FormatUint(uint64(probeMark(e.Slot)), 10)
+		out, _ := env.Sys.Run("ping", "-n", "-q", "-c", "5", "-i", "0.3", "-W", "2", "-m", mark, "-I", n, pingTarget)
+		if r := lossRe.FindStringSubmatch(out); r != nil {
+			s.Loss, _ = strconv.ParseFloat(r[1], 64)
+		}
+		if r := rttRe.FindStringSubmatch(out); r != nil {
+			s.RTT, _ = strconv.ParseFloat(r[1], 64)
+		}
 	}
 	ip, loc := "", ""
 	var perr error
-	resp, err := httpClient(probeMark(e.Slot), 15*time.Second).Get(traceURL)
+	timeout := 15 * time.Second
+	if tor {
+		timeout = 40 * time.Second // neue Kreise brauchen etwas
+	}
+	t0 := time.Now()
+	resp, err := httpClient(probeMark(e.Slot), timeout).Get(traceURL)
+	if tor && err == nil {
+		s.Loss, s.RTT = 0, float64(time.Since(t0).Microseconds())/1000
+	}
 	if err == nil {
 		sc := bufio.NewScanner(io.LimitReader(resp.Body, 8192))
 		for sc.Scan() {
@@ -367,7 +378,7 @@ func (m *Manager) isHealthy(g *Group, e *Exit) (bool, string) {
 		return false, "kein Internet über den Tunnel"
 	case lossOf(last) > g.MaxLoss && again:
 		return false, fmt.Sprintf("Paketverlust %.0f %%", lossOf(last))
-	case g.MaxRTT > 0 && st.RTT > g.MaxRTT && last.RTT > g.MaxRTT:
+	case g.MaxRTT > 0 && e.Type != "tor" && st.RTT > g.MaxRTT && last.RTT > g.MaxRTT: // Tor ist immer langsamer
 		return false, fmt.Sprintf("Antwortzeit %.0f ms", st.RTT)
 	case g.MinMbit > 0 && st.Mbit > 0 && st.Mbit < g.MinMbit:
 		return false, fmt.Sprintf("nur %.1f Mbit/s", st.Mbit)

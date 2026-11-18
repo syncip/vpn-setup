@@ -37,6 +37,8 @@ type exitRow struct {
 	Limits   *store.Limits               `json:"limits"`    // nil = keine
 	Limit    *engine.ExitLimitState      `json:"limit"`     // Verbrauch und Status im Zeitraum
 	Via      int64                       `json:"via"`       // Kaskade: verbunden über diesen Ausgang (0 = direkt)
+	Tor      *exits.TorCfg               `json:"tor,omitempty"`
+	Bridges  int                         `json:"bridges,omitempty"` // Tor: Zahl der Brücken (Inhalt bleibt geheim)
 }
 
 type groupRow struct {
@@ -128,7 +130,16 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 		}
 		if x, err := exits.ExitFrom(o); err == nil {
 			row.Mode, row.CheckMin, row.Via = x.Mode, x.CheckMin, x.Via
-			if x.WG != nil {
+			if x.Tor != nil {
+				row.Tor, row.Bridges = x.Tor, len(x.Tor.Bridges)
+				row.Server = "Tor"
+				if len(x.Tor.ExitCountries) > 0 {
+					row.Server += " · Ausgang " + strings.ToUpper(strings.Join(x.Tor.ExitCountries, ", "))
+				}
+				if row.Bridges > 0 {
+					row.Server += " · Brücken"
+				}
+			} else if x.WG != nil {
 				row.Server, row.Address = x.WG.Endpoint, x.WG.Address.String()
 			} else if x.OVPN != nil {
 				row.Server, row.NeedAuth = x.OVPN.Remote, x.OVPN.NeedAuth
@@ -159,6 +170,9 @@ type exitInput struct {
 	CheckMin *int            `json:"check_min"` // Minuten (Bereitschaft)
 	Limits   json.RawMessage `json:"limits"`    // fehlt = unverändert, null = keine Limits
 	Via      *int64          `json:"via"`       // Kaskade: über diesen Ausgang verbinden (0 = direkt)
+	Type     string          `json:"type"`      // nur beim Anlegen: "tor" (ohne Konfigurationsdatei)
+	Tor      *exits.TorCfg   `json:"tor"`       // Tor-Einstellungen (fehlt = unverändert)
+	Bridges  *string         `json:"bridges"`   // Tor-Brücken, je Zeile eine (fehlt = unverändert)
 }
 
 // exitVias: Ausgang → Vorgänger (Kaskade) aller gespeicherten Ausgänge.
@@ -211,7 +225,42 @@ func (a *API) saveExit(w http.ResponseWriter, r *http.Request, o *store.Object) 
 		o.Enabled = *in.Enabled
 	}
 	var removed []string
-	if strings.TrimSpace(in.Config) != "" {
+	if in.Type == "tor" && o.ID == 0 {
+		o.Data["type"] = "tor"
+	}
+	isTor := o.Data["type"] == "tor"
+	if isTor {
+		if strings.TrimSpace(in.Config) != "" {
+			errJSON(w, http.StatusBadRequest, "Ein Tor-Ausgang hat keine Konfigurationsdatei")
+			return
+		}
+		cur := exits.TorFrom(o.Data["tor"], strOf(o.Secrets["bridges"]))
+		if in.Tor != nil {
+			br := cur.Bridges
+			cur = in.Tor
+			cur.ExitCountries, cur.EntryCountries, cur.ExcludeCountries = exits.NormCountries(cur.ExitCountries),
+				exits.NormCountries(cur.EntryCountries), exits.NormCountries(cur.ExcludeCountries)
+			cur.Bridges = br
+		}
+		if in.Bridges != nil {
+			if len(*in.Bridges) > 64*1024 {
+				errJSON(w, http.StatusBadRequest, "Brücken: zu lang")
+				return
+			}
+			cur.Bridges = exits.TorFrom(nil, *in.Bridges).Bridges
+		}
+		if msg := cur.Check(); msg != "" {
+			errJSON(w, http.StatusBadRequest, "Tor: "+msg)
+			return
+		}
+		o.Data["tor"] = cur
+		if len(cur.Bridges) > 0 {
+			o.Secrets["bridges"] = strings.Join(cur.Bridges, "\n")
+		} else {
+			delete(o.Secrets, "bridges")
+		}
+		o.Data["removed"] = []string{}
+	} else if strings.TrimSpace(in.Config) != "" {
 		if len(in.Config) > 256*1024 {
 			errJSON(w, http.StatusBadRequest, "Konfiguration zu groß")
 			return
@@ -278,6 +327,23 @@ func (a *API) saveExit(w http.ResponseWriter, r *http.Request, o *store.Object) 
 		if msg := exits.CheckVia(o.ID, *in.Via, exitVias(eo), func(id int64) bool { return ids[id] }); msg != "" {
 			errJSON(w, http.StatusBadRequest, msg)
 			return
+		}
+		// Über Tor geht nur TCP: kein WireGuard, OpenVPN nur mit „proto tcp“
+		for _, x := range eo {
+			if x.ID != *in.Via || x.Data["type"] != "tor" {
+				continue
+			}
+			switch o.Data["type"] {
+			case "wireguard":
+				errJSON(w, http.StatusBadRequest, "WireGuard kann nicht über Tor laufen (Tor überträgt nur TCP)")
+				return
+			case "openvpn":
+				cfg := strings.ToLower(strOf(o.Secrets["config"]))
+				if !strings.Contains(cfg, "proto tcp") {
+					errJSON(w, http.StatusBadRequest, "OpenVPN über Tor nur mit „proto tcp“ (Tor überträgt nur TCP)")
+					return
+				}
+			}
 		}
 		if *in.Via == 0 {
 			delete(o.Data, "via")
@@ -410,6 +476,15 @@ func (a *API) checkExits(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = readJSON(r, &in)
 	go a.E.CheckExits(in.Speed) // kann bei Geschwindigkeitstests eine Minute dauern
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// exitNewIdentity: Tor-Ausgang – neue Identität (neue Kreise für neue Verbindungen).
+func (a *API) exitNewIdentity(w http.ResponseWriter, r *http.Request) {
+	if err := a.E.ExitNewIdentity(pathID(r)); err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -922,3 +997,5 @@ func (a *API) exitTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"bucket": bucket, "series": series, "days": days})
 }
+
+func strOf(v any) string { s, _ := v.(string); return s }

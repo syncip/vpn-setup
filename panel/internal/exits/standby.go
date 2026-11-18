@@ -136,6 +136,8 @@ func (m *Manager) disconnect(env *Env, e *Exit) {
 		if _, err := sys.Run("systemctl", "is-active", "--quiet", "vpn-exit@"+n); err == nil || wasConn {
 			_, _ = sys.Run("systemctl", "disable", "--now", "vpn-exit@"+n)
 		}
+	case "tor":
+		stopTor(env, n)
 	default:
 		if _, err := sys.Run("ip", "link", "show", "dev", n); err == nil || (wasConn && !sys.DryRun()) {
 			_, _ = sys.Run("ip", "link", "del", "dev", n)

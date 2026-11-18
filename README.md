@@ -134,6 +134,21 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   mit verbunden (auch in Bereitschaft). Ist ein Vorgänger abgeschaltet oder weg, bleibt der Ausgang
   getrennt – nie direkt. Ein Ausgang, über den ein anderer läuft, lässt sich erst löschen, wenn dort
   „Verbunden über“ geändert ist.
+- **Tor-Ausgang** („Ausgang anlegen“ → *Tor*): eine eigene Tor-Instanz je Ausgang (Dienst
+  `vpn-tor@ex<ID>`, Benutzer `vpntor-ex<ID>`, SOCKS/DNS/Steuerung nur auf 127.0.0.1). Die Schnittstelle
+  `ex<ID>` ist ein TUN-Gerät; `vpnpanel tun2socks` (Dienst `vpn-t2s@ex<ID>`) gibt TCP an Tors SOCKS-Port
+  und DNS (UDP 53) an Tors DNSPort weiter. Anderes UDP (QUIC, Anrufe) und Ping werden verworfen – Apps
+  weichen meist auf TCP aus. Gruppen, Limits (Tempo und Datenvolumen), Prüfung, Block-Prüfung, Wechsel
+  und Kaskade gelten wie bei anderen Ausgängen; die Antwortzeit-Grenze der Gruppe gilt bei Tor nicht.
+  Einstellungen: **Ausgangsländer**, **Eingangsländer**, **nie benutzte Länder**, **Streng**
+  (StrictNodes), **neue Identität** nach 1 Minute bis täglich, **eigener Kreis je Ziel**
+  (IsolateDestAddr) und **Brücken** (obfs4/webtunnel brauchen das Paket `obfs4proxy`, snowflake
+  `snowflake-client` – beide installiert `vpn-setup.sh` nicht). Knopf ⟳ in der Liste: sofort neue
+  Identität. **Tor über einen anderen Ausgang** (z. B. *Server → WARP → Tor*): Eine Routing-Regel für
+  den Benutzer der Instanz führt Tors Verbindungen über den Vorgänger, dahinter sperrt eine Regel alles
+  andere (IPv4 und IPv6); ohne diese Sperre startet der Dienst nicht. **Über Tor** kann nur TCP laufen:
+  kein WireGuard, OpenVPN nur mit `proto tcp`. Hinweis: Unbound je Gruppe passt nicht zu Tor (DNSSEC
+  und rekursive Auflösung über den DNSPort) – für Tor-Gruppen „DNS-Server“ statt Unbound wählen.
 - **Ping und Speedtest von Hand:** Knöpfe je Ausgang; ein Ausgang in Bereitschaft wird dafür kurz verbunden.
 - **Verkehr je Ausgang:** gezählt an der Schnittstelle `ex<ID>` (stündlich gespeichert), in der Tabelle
   24 Stunden / 30 Tage, darunter ein Diagramm über 24 h bis 90 Tage, gesamt oder je Ausgang.

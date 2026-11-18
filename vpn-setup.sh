@@ -137,6 +137,10 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   wireguard-tools iptables iproute2 qrencode curl ca-certificates openssl unzip jq nginx openvpn   iputils-ping conntrack nftables
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnginx-mod-stream || true
+# Tor für Tor-Ausgänge: Das Panel startet je Ausgang eine eigene Instanz (vpn-tor@exN, eigener
+# Benutzer, nur 127.0.0.1). Debians Standard-Instanz (SOCKS auf 9050) wird nicht gebraucht.
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tor || true
+systemctl disable --now tor.service tor@default.service >/dev/null 2>&1 || true
 # Unbound: wahlweise Auflösung für den Panel-DNS (DNS → Einstellungen). Das Panel schreibt die
 # Konfiguration selbst (127.0.0.1:5335) und startet den Dienst nur, wenn Unbound gewählt ist.
 # dns-root-data liefert den DNSSEC-Vertrauensanker (ohne ihn startet Unbound nicht).

@@ -79,10 +79,11 @@ type Exit struct {
 	ID      int64
 	Name    string
 	Enabled bool
-	Type    string // wireguard | openvpn
+	Type    string // wireguard | openvpn | tor
 	Slot    int
 	WG      *WG
 	OVPN    *OVPN
+	Tor     *TorCfg
 	User    string
 	Pass    string
 	// Verbindung: always = ständig verbunden (alle 30 s geprüft); standby = nur verbunden, solange
@@ -145,6 +146,9 @@ func ExitFrom(o *store.Object) (*Exit, error) {
 		e.OVPN, err = ParseOVPN(cfg)
 		e.User, _ = o.Secrets["username"].(string)
 		e.Pass, _ = o.Secrets["password"].(string)
+	case "tor":
+		br, _ := o.Secrets["bridges"].(string)
+		e.Tor = TorFrom(o.Data["tor"], br)
 	default:
 		err = fmt.Errorf("Typ %q unbekannt", e.Type)
 	}
@@ -446,6 +450,8 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 			_, _ = sys.Run("systemctl", "disable", "--now", "vpn-exit@"+n)
 			_ = sys.Remove(confDir + "/" + n + ".ovpn")
 			_ = sys.Remove(confDir + "/" + n + ".auth")
+		} else if typ == "tor" {
+			removeTor(env, n)
 		} else {
 			_, _ = sys.Run("ip", "link", "del", "dev", n)
 			_ = sys.Remove(confDir + "/" + n + ".conf")
@@ -473,6 +479,9 @@ func (m *Manager) Apply(env *Env, exits []*Exit, groups []*Group) error {
 	}
 	if err := syncRules(env, rules); err != nil {
 		errs = append(errs, "Routing-Regeln: "+err.Error())
+	}
+	if err := m.syncTorRules(env); err != nil { // Tor-Kaskaden (auch: nicht mehr gebrauchte entfernen)
+		errs = append(errs, err.Error())
 	}
 	m.ensureRoutes(env, exits, groups)
 	if err := firewall(env, want); err != nil {
@@ -529,6 +538,8 @@ func (m *Manager) applyExit(env *Env, e *Exit) error {
 		m.ensureViaPath(env, e)
 	}
 	switch e.Type {
+	case "tor":
+		return m.applyTor(env, e)
 	case "wireguard":
 		ep, err := ResolveEndpoint(e.WG.Endpoint, net.LookupIP)
 		if err != nil {

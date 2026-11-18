@@ -119,7 +119,8 @@
   // ---------- Ausgänge ----------
   let exOpen = $state(false);
   let exCur = $state(null);
-  let ex = $state({ name: '', config: '', username: '', password: '', enabled: true, mode: 'always', check_min: 30, via: 0 });
+  const TOR0 = { exit: '', entry: '', exclude: '', strict: false, circuit_min: 10, isolate: false };
+  let ex = $state({ name: '', config: '', username: '', password: '', enabled: true, mode: 'always', check_min: 30, via: 0, kind: 'file', tor: { ...TOR0 }, bridges: '', clearBridges: false });
   const CHECKS = [
     [5, 'alle 5 Minuten'],
     [15, 'alle 15 Minuten'],
@@ -191,7 +192,14 @@
 
   function openExit(e = null) {
     exCur = e;
-    ex = { name: e?.name || '', config: '', username: e?.username || '', password: '', enabled: e ? e.enabled : true, mode: e?.mode || 'always', check_min: e?.check_min || 30, via: e?.via || 0 };
+    const t = e?.tor;
+    const up = (l) => (l || []).join(', ').toUpperCase();
+    ex = {
+      name: e?.name || '', config: '', username: e?.username || '', password: '', enabled: e ? e.enabled : true, mode: e?.mode || 'always', check_min: e?.check_min || 30, via: e?.via || 0,
+      kind: e?.type === 'tor' ? 'tor' : 'file',
+      tor: t ? { exit: up(t.exit_countries), entry: up(t.entry_countries), exclude: up(t.exclude_countries), strict: !!t.strict, circuit_min: t.circuit_min || 10, isolate: !!t.isolate } : { ...TOR0 },
+      bridges: '', clearBridges: false,
+    };
     exOpen = true;
   }
   async function readFile(ev) {
@@ -204,7 +212,13 @@
   async function saveExit() {
     exBusy = true;
     const body = { name: ex.name, enabled: ex.enabled, mode: ex.mode, check_min: Number(ex.check_min), via: Number(ex.via) || 0 };
-    if (ex.config.trim()) body.config = ex.config;
+    const cc = (s) => s.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+    if (ex.kind === 'tor') {
+      if (!exCur) body.type = 'tor';
+      body.tor = { exit_countries: cc(ex.tor.exit), entry_countries: cc(ex.tor.entry), exclude_countries: cc(ex.tor.exclude), strict: ex.tor.strict, circuit_min: Number(ex.tor.circuit_min) || 10, isolate: ex.tor.isolate };
+      if (ex.bridges.trim()) body.bridges = ex.bridges;
+      else if (ex.clearBridges) body.bridges = '';
+    } else if (ex.config.trim()) body.config = ex.config;
     if (exType === 'openvpn') {
       body.username = ex.username;
       if (ex.password) body.password = ex.password;
@@ -218,6 +232,9 @@
       ex.config = '';
       load();
     }
+  }
+  async function newIdentity(e) {
+    if (await run(() => post(`/exits/${e.id}/newnym`, {}), 'Neue Tor-Identität angefordert')) load();
   }
   async function toggleExit(e) {
     if (await run(() => put(`/exits/${e.id}`, { enabled: !e.enabled }), e.enabled ? 'Ausgang deaktiviert' : 'Ausgang aktiviert')) load();
@@ -474,7 +491,7 @@
     <button class="btn" onclick={() => check(false)} disabled={checking || !d.exits.length}><Icon name="refresh" size={16} /> Jetzt prüfen</button>
     <button class="btn" onclick={() => check(true)} disabled={checking || !d.exits.length} title="Lädt 5 MB über jeden Ausgang"><Icon name="gauge" size={16} /> Geschwindigkeit messen</button>
   {/if}
-  {#if tab === 'exits'}<button class="btn primary" onclick={() => openExit()}><Icon name="upload" size={16} /> Ausgang hochladen</button>{/if}
+  {#if tab === 'exits'}<button class="btn primary" onclick={() => openExit()}><Icon name="plus" size={16} /> Ausgang anlegen</button>{/if}
   {#if tab === 'groups'}<button class="btn primary" onclick={() => openGroup()} disabled={!d.exits.length}><Icon name="plus" size={16} /> Gruppe anlegen</button>{/if}
   {#if tab === 'proxy'}<button class="btn primary" onclick={() => openServer()}><Icon name="plus" size={16} /> Proxy anlegen</button>{/if}
 </PageHead>
@@ -766,12 +783,13 @@
               <td class="right nowrap">
                 <button class="btn sm icon ghost" title={e.enabled ? 'Deaktivieren' : 'Aktivieren'} onclick={() => toggleExit(e)}><Icon name="power" size={15} /></button>
                 <button class="btn sm icon ghost" title="Limit" onclick={() => openLimit(e)}><Icon name="gauge" size={15} /></button>
+                {#if e.type === 'tor'}<button class="btn sm icon ghost" title="Neue Tor-Identität: neue Verbindungen laufen über neue Kreise (andere Ausgangs-IP)" disabled={!e.enabled} onclick={() => newIdentity(e)}><Icon name="refresh" size={15} /></button>{/if}
                 <button class="btn sm icon ghost" title="Bearbeiten" onclick={() => openExit(e)}><Icon name="edit" size={15} /></button>
                 <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeExit(e)}><Icon name="trash" size={15} /></button>
               </td>
             </tr>
           {:else}
-            <tr><td colspan="8" class="empty small">Noch keine Ausgänge. Lade die WireGuard- oder OpenVPN-Konfiguration deines Anbieters hoch.</td></tr>
+            <tr><td colspan="8" class="empty small">Noch keine Ausgänge. Lade die WireGuard- oder OpenVPN-Konfiguration deines Anbieters hoch oder lege einen Tor-Ausgang an.</td></tr>
           {/each}
         </tbody>
       </table>
@@ -821,9 +839,49 @@
   />
 {/if}
 
-<Modal bind:open={exOpen} title={exCur ? `Ausgang ${exCur.name}` : 'Ausgang hochladen'} width={680}>
+<Modal bind:open={exOpen} title={exCur ? `Ausgang ${exCur.name}` : 'Ausgang anlegen'} width={680}>
   <div class="stack">
-    <div class="field"><label for="ex-name">Name</label><input id="ex-name" class="input" bind:value={ex.name} placeholder="z. B. Anbieter USA" /></div>
+    {#if !exCur}
+      <div class="segmented">
+        <button type="button" class:active={ex.kind === 'file'} onclick={() => (ex.kind = 'file')}><ProtoLogo id="wireguard" size={16} /> WireGuard / OpenVPN</button>
+        <button type="button" class:active={ex.kind === 'tor'} onclick={() => (ex.kind = 'tor')}><ProtoLogo id="tor" size={16} /> Tor</button>
+      </div>
+    {/if}
+    <div class="field"><label for="ex-name">Name</label><input id="ex-name" class="input" bind:value={ex.name} placeholder={ex.kind === 'tor' ? 'z. B. Tor Schweiz' : 'z. B. Anbieter USA'} /></div>
+    {#if ex.kind === 'tor'}
+      <div class="tor-note small muted">
+        Eigene Tor-Instanz auf dem Server. Über Tor laufen nur TCP und DNS – anderes UDP (z. B. QUIC, Anrufe) wird verworfen, Apps weichen dann meist auf TCP aus. Limits, Gruppen, Prüfung und Kaskade gelten wie bei anderen Ausgängen.
+      </div>
+      <div class="grid cols-2">
+        <div class="field">
+          <label for="tor-exit">Ausgangsländer <Info title="Ausgangsländer" text="Ländercodes mit zwei Buchstaben, z. B. CH, DE, NL. Leer = beliebig. Tor verlässt das Netz nur über Knoten in diesen Ländern – je weniger Länder, desto langsamer." /></label>
+          <input id="tor-exit" class="input" bind:value={ex.tor.exit} placeholder="z. B. CH, DE (leer = beliebig)" />
+        </div>
+        <div class="field">
+          <label for="tor-ex">Nie benutzen <Info title="Ausgeschlossene Länder" text="Knoten in diesen Ländern werden für keinen Teil der Verbindung benutzt – mit „Streng“ auch dann nicht, wenn Tor sonst nicht weiterkommt." /></label>
+          <input id="tor-ex" class="input" bind:value={ex.tor.exclude} placeholder="z. B. US, GB" />
+        </div>
+        <div class="field">
+          <label for="tor-entry">Eingangsländer <Info title="Eingangsländer" text="Länder des ersten Knotens (Guard). Leer = Tor wählt selbst (empfohlen). Mit Brücken ohne Wirkung." /></label>
+          <input id="tor-entry" class="input" bind:value={ex.tor.entry} placeholder="leer = Tor wählt" />
+        </div>
+        <div class="field">
+          <label for="tor-circ">Neue Identität <Info title="Neue Identität" text="Neue Verbindungen laufen nach dieser Zeit über einen neuen Kreis (meist andere Ausgangs-IP). Laufende Verbindungen bleiben. Sofort: Knopf ⟳ in der Liste." /></label>
+          <select id="tor-circ" class="input" bind:value={ex.tor.circuit_min}>
+            {#each [[1, 'jede Minute'], [5, 'alle 5 Minuten'], [10, 'alle 10 Minuten (Vorgabe)'], [30, 'alle 30 Minuten'], [60, 'stündlich'], [360, 'alle 6 Stunden'], [1440, 'täglich']] as [v, l]}<option value={v}>{l}</option>{/each}
+          </select>
+        </div>
+      </div>
+      <div class="row wrap" style="gap:18px">
+        <label class="switch"><input type="checkbox" bind:checked={ex.tor.strict} /><span class="track"></span> Streng <Info title="Streng (StrictNodes)" text="Ausgeschlossene Länder gelten ohne Ausnahme – auch wenn Tor dann keine Verbindung aufbauen kann." /></label>
+        <label class="switch"><input type="checkbox" bind:checked={ex.tor.isolate} /><span class="track"></span> Eigener Kreis je Ziel <Info title="Isolation je Ziel" text="Jede Zieladresse bekommt einen eigenen Kreis (eigene Ausgangs-IP). Seiten können Besuche schwerer miteinander verknüpfen; der Aufbau dauert etwas länger." /></label>
+      </div>
+      <div class="field">
+        <label for="tor-br">Brücken <Info title="Brücken (Bridges)" text="Nur nötig, wenn der Zugang zum Tor-Netz gesperrt ist. Je Zeile eine Brücke, z. B. „obfs4 1.2.3.4:443 FINGERPRINT cert=… iat-mode=0“. obfs4 und webtunnel brauchen das Paket obfs4proxy, snowflake das Paket snowflake-client." /></label>
+        <textarea id="tor-br" class="input mono" rows="3" bind:value={ex.bridges} placeholder={exCur?.bridges ? `${exCur.bridges} Brücke(n) gespeichert – leer lassen = unverändert` : 'leer = ohne Brücken (direkt ins Tor-Netz)'}></textarea>
+        {#if exCur?.bridges}<label class="small"><input type="checkbox" bind:checked={ex.clearBridges} /> gespeicherte Brücken entfernen</label>{/if}
+      </div>
+    {:else}
     <div class="field">
       <label for="ex-file">Konfiguration <Info title="Konfiguration" text="Eine .conf von WireGuard oder eine .ovpn von OpenVPN. Skripte (PostUp, up/down), Routen, DNS-Änderungen und Dateiverweise werden entfernt." />{#if exType}&nbsp;<span class="badge ok">erkannt: {exType === 'wireguard' ? 'WireGuard' : 'OpenVPN'}</span>{/if}</label>
       <input id="ex-file" type="file" accept=".conf,.ovpn,.txt" onchange={readFile} />
@@ -834,6 +892,7 @@
         <div class="field"><label for="ex-user">Benutzername <Info title="Zugangsdaten" text="Nur nötig, wenn die Konfiguration „auth-user-pass“ enthält (bei vielen Anbietern die OpenVPN-Zugangsdaten aus dem Kundenbereich, nicht das Login-Passwort)." /></label><input id="ex-user" class="input" bind:value={ex.username} autocomplete="off" /></div>
         <div class="field"><label for="ex-pw">Passwort</label><input id="ex-pw" class="input" type="password" bind:value={ex.password} autocomplete="new-password" placeholder={exCur?.has_auth ? 'gespeichert – leer = unverändert' : ''} /></div>
       </div>
+    {/if}
     {/if}
     <div class="field">
       <span class="label"
@@ -872,7 +931,7 @@
   </div>
   {#snippet footer()}
     <button class="btn" onclick={() => (exOpen = false)}>Abbrechen</button>
-    <button class="btn primary" onclick={saveExit} disabled={exBusy || !ex.name || (!exCur && !ex.config.trim())}>{exCur ? 'Speichern' : 'Hochladen'}</button>
+    <button class="btn primary" onclick={saveExit} disabled={exBusy || !ex.name || (!exCur && ex.kind === 'file' && !ex.config.trim())}>{exCur ? 'Speichern' : ex.kind === 'tor' ? 'Anlegen' : 'Hochladen'}</button>
   {/snippet}
 </Modal>
 
@@ -1172,6 +1231,11 @@
   }
   .exsrv {
     max-width: 220px;
+  }
+  .tor-note {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
   }
   .via-chain {
     color: var(--accent);

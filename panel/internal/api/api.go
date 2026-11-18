@@ -106,6 +106,7 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("GET /api/exits/traffic", a.auth(a.exitTraffic))
 	api.HandleFunc("GET /api/exits/live", a.auth(a.exitLive))
 	api.HandleFunc("POST /api/exits/{id}/check", a.auth(a.checkExit))
+	api.HandleFunc("POST /api/exits/{id}/newnym", a.auth(a.exitNewIdentity))
 	api.HandleFunc("POST /api/exits/{id}/reset-usage", a.auth(a.resetExitUsage))
 	api.HandleFunc("POST /api/groups/{id}/reset-usage", a.auth(a.resetGroupUsage))
 	api.HandleFunc("GET /api/alarms", a.auth(a.listAlarms))

@@ -33,11 +33,12 @@ import (
 	_ "vpnpanel/internal/proto/wireguard"
 	"vpnpanel/internal/store"
 	"vpnpanel/internal/system"
+	"vpnpanel/internal/tor2socks"
 	"vpnpanel/internal/webui"
 )
 
 // version: bei jedem Release anheben (build.sh kann sie mit VERSION=… überschreiben)
-var version = "0.24.0"
+var version = "0.25.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -103,6 +104,13 @@ func main() {
 	}
 	if len(args) > 0 && args[0] == "serve" {
 		serve(args[1:])
+		return
+	}
+	// Tor-Ausgang: Schnittstelle exN → Tor (Dienst vpn-t2s@exN, siehe internal/exits/tor.go)
+	if len(args) > 0 && args[0] == "tun2socks" {
+		if err := tor2socks.Main(args[1:]); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	cli(args)

@@ -337,6 +337,12 @@ func (e *Engine) CheckExit(id int64, speed bool) (exits.ExitStatus, error) {
 	return e.Exits.CheckOne(e.exitEnv(), exitMap(xs)[id], speed)
 }
 
+// ExitNewIdentity: Tor-Ausgang – neue Kreise für neue Verbindungen.
+func (e *Engine) ExitNewIdentity(id int64) error {
+	xs, _ := e.LoadExits()
+	return e.Exits.NewIdentity(e.exitEnv(), exitMap(xs)[id])
+}
+
 // ExitLive: aktueller Durchsatz je Ausgang und je Gruppe (Byte/s) für die Live-Anzeige. Eine Gruppe
 // zeigt den Durchsatz ihres aktiven Ausgangs. Im Testmodus Beispielwerte.
 func (e *Engine) ExitLive() (map[int64]ExitRate, map[int64]ExitRate, map[int64]int64) {
