@@ -5,7 +5,7 @@
   import Icon from './Icon.svelte';
   import ProtoLogo from './ProtoLogo.svelte';
   import { confirmDialog } from './Confirm.svelte';
-  import { get, post, run } from '../lib/api.js';
+  import { get, post, put, run } from '../lib/api.js';
   import { ago, speed, fmtNum, PROTO_LABEL } from '../lib/format.js';
   import { meta } from '../lib/state.svelte.js';
   import SearchInput from './SearchInput.svelte';
@@ -73,9 +73,24 @@
   const hitCount = $derived(toks.length ? topo.peers.filter((p) => userById[p.user_id] && peerShown(p, userById[p.user_id])).length : 0);
 
   // ---------- Anordnung ----------
-  const W = 1090;
-  const COL = { dev: 36, devW: 286, srv: 420, srvW: 176, out: 700, outW: 214, net: 1000 };
+  // Kaskade: Ausgänge, über die andere laufen („Vorgänger“), und Ausgänge ohne Gruppe stehen in einer
+  // eigenen Spalte zwischen den Gruppen und dem Internet (nur wenn es solche gibt).
+  const chainIds = $derived.by(() => {
+    const inGroup = new Set(ex.groups.flatMap((g) => g.exits));
+    const used = new Set(ex.exits.filter((e) => e.via && exitById[e.via]).map((e) => e.via));
+    return ex.exits.filter((e) => used.has(e.id) || !inGroup.has(e.id)).map((e) => e.id);
+  });
+  const hasChain = $derived(chainIds.length > 0);
+  const COL = $derived(
+    hasChain
+      ? { dev: 20, devW: 276, srv: 380, srvW: 176, out: 640, outW: 214, via: 916, viaW: 184, net: 1150 }
+      : { dev: 36, devW: 286, srv: 420, srvW: 176, out: 700, outW: 214, net: 1000 },
+  );
+  const W = $derived(hasChain ? 1230 : 1090);
   const ROW = 28;
+  const VH = 50; // Höhe eines Ausgangs in der Kaskaden-Spalte
+  // Mitte der Zeile i eines Ausgangs in einer Gruppe (im Browser gemessen; je Ausgang 24 px)
+  const exitRowY = (o, i) => o.y + 61 + i * 24;
 
   // Viele Nutzer: kompakt – eine Zeile je Nutzer (aufklappbar), Linien je Nutzer und Server gebündelt,
   // nur die ersten „limit“ Nutzer (aktive zuerst), Rest über „weitere anzeigen“ bzw. die Suche.
@@ -158,7 +173,24 @@
       outY[o.id] = oy + (o.type === 'group' ? 23 : o.h / 2);
       oy += o.h + 16;
     }
-    return { rows, bundles, peerY, userY, srvY, outs, outY, H, SH };
+    // Kaskaden-Spalte: jeder Ausgang auf Höhe der Zeilen, die über ihn laufen, ohne Überlappung
+    const rowYs = {}; // Ausgang → y seiner Zeilen in den Gruppen
+    for (const o of outs) if (o.type === 'group') o.g.exits.forEach((id, i) => (rowYs[id] ||= []).push(exitRowY(o, i)));
+    const wantV = chainIds.map((id) => {
+      const ys = ex.exits.filter((e) => e.via === id).flatMap((e) => rowYs[e.id] || []);
+      return { id, y: ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length - VH / 2 : Infinity };
+    });
+    wantV.sort((a, b) => a.y - b.y || a.id - b.id);
+    const viaTotal = chainIds.length * (VH + 14);
+    let vy = Math.max(8, (H - viaTotal) / 2);
+    if (wantV.length && wantV[0].y !== Infinity) vy = Math.max(8, Math.min(vy, wantV[0].y));
+    const viaY = {};
+    for (const w of wantV) {
+      const yy = Math.max(vy, w.y === Infinity ? vy : w.y);
+      viaY[w.id] = yy + VH / 2;
+      vy = yy + VH + 14;
+    }
+    return { rows, bundles, peerY, userY, srvY, outs, outY, viaY, H: Math.max(H, vy + 8), SH };
   });
 
   // ---------- Verkehr je Weg ----------
@@ -209,9 +241,45 @@
     if (!e.enabled) return 'muted';
     if (!s || !s.checked) return 'muted';
     if (!s.up || s.error) return 'bad';
-    if (s.loss > 10 || s.rtt > 300) return 'warn';
+    if (s.loss > 10 || (s.rtt > 300 && e.type !== 'tor')) return 'warn'; // Tor ist immer langsamer
     return 'ok';
   }
+
+  // ---------- Kaskade ----------
+  // Vorgänger-Kette (nächster zuerst)
+  function chainOf(e) {
+    const out = [];
+    const seen = new Set([e.id]);
+    for (let cur = e; cur?.via && out.length < 3; ) {
+      const v = exitById[cur.via];
+      if (!v || seen.has(v.id)) break;
+      seen.add(v.id);
+      out.push(v);
+      cur = v;
+    }
+    return out;
+  }
+  // Verkehr, der über einen Ausgang der Kaskaden-Spalte läuft (eigener und der seiner Nachfolger)
+  const viaRate = $derived.by(() => {
+    const r = {};
+    const own = (id) => {
+      const real = live.exits?.[id];
+      if (real) return real.up + real.down;
+      return ex.groups.filter((g) => g.status?.active === id).reduce((a, g) => a + (outRate[g.id] || 0), 0);
+    };
+    for (const e of ex.exits) {
+      const rt = own(e.id);
+      if (!rt) continue;
+      for (const v of [e, ...chainOf(e)]) r[v.id] = Math.max(r[v.id] || 0, rt);
+    }
+    return r;
+  });
+  // Weg einer Gruppe zum Internet über die Kaskaden-Spalte? (aktiver Ausgang mit Vorgänger)
+  const groupViaActive = (g) => {
+    const a = exitById[g.status?.active];
+    return a?.via && layout.viaY[a.via] != null ? a : null;
+  };
+  const exitUp = (e) => e?.enabled && e.status?.up && !e.status?.error;
 
   // ---------- Linien ----------
   const curve = (x1, y1, x2, y2) => {
@@ -233,6 +301,7 @@
     if (sel.kind === 'user') return sel.id === p.user_id;
     if (sel.kind === 'server') return sel.id === p.server_id;
     if (sel.kind === 'group') return p.via.all === sel.id || p.via.partial.includes(sel.id);
+    if (sel.kind === 'exit') return false;
     if (sel.kind === 'direct') return !p.via.all;
     return true;
   }
@@ -247,8 +316,17 @@
     if (sel.kind === 'server') return sel.id === f.sid;
     if (sel.kind === 'group') return sel.id === f.gid;
     if (sel.kind === 'direct') return f.gid === 0;
+    if (sel.kind === 'exit') return false;
     return true;
   }
+  // gewählter Ausgang: er selbst, seine Vorgänger und alle, die über ihn laufen
+  const selChain = $derived.by(() => {
+    if (sel?.kind !== 'exit' || !exitById[sel.id]) return null;
+    const s = new Set([sel.id, ...chainOf(exitById[sel.id]).map((v) => v.id)]);
+    for (const e of ex.exits) if (chainOf(e).some((v) => v.id === sel.id)) s.add(e.id);
+    return s;
+  });
+  const exitHot = (id) => !selChain || selChain.has(id);
   const selPeer = $derived(sel?.kind === 'peer' ? peerById[sel.id] : null);
   const selReach = $derived(new Set(selPeer?.reach || []));
 
@@ -284,8 +362,10 @@
     drag.y = p.y;
     if (!drag.moved && Math.hypot(p.x - drag.sx, p.y - drag.sy) > 7) drag.moved = true;
     if (drag.moved) {
-      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-drop]');
-      const [kind, id] = (el?.dataset.drop || '').split(':');
+      // Ausgänge (Kaskade) haben eigene Ziele: andere Ausgänge bzw. „Direkt“
+      const attr = drag.kind === 'exit' ? 'xdrop' : 'drop';
+      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.(`[data-${attr}]`);
+      const [kind, id] = (el?.dataset[attr] || '').split(':');
       over = kind ? { kind, id: Number(id) } : null;
     }
   }
@@ -298,11 +378,24 @@
     if (!d) return;
     if (!d.moved) return pick(d.kind, d.id);
     if (!t || !canDrop(d, t)) return;
-    if (t.kind === 'group' || t.kind === 'direct') await assign(d, t);
+    if (d.kind === 'exit') await setVia(d.id, t.kind === 'exit' ? t.id : 0);
+    else if (t.kind === 'group' || t.kind === 'direct') await assign(d, t);
     else if (t.kind === 'peer') await reach(d.id, t.id);
   }
   function canDrop(d, t) {
     if (!d?.moved || !t) return false;
+    if (d.kind === 'exit') {
+      const a = exitById[d.id];
+      if (!a) return false;
+      if (t.kind === 'direct') return !!a.via;
+      const b = exitById[t.id];
+      if (t.kind !== 'exit' || !b || b.id === a.id || a.via === b.id) return false;
+      if (chainOf(b).some((v) => v.id === a.id)) return false; // Kreis
+      if (b.type === 'tor' && a.type === 'wireguard') return false; // Tor überträgt nur TCP
+      // höchstens 3 Ausgänge hintereinander (Vorgänger von b + a + längste Kette hinter a)
+      const after = (id, n = 0) => (n > 3 ? n : Math.max(n, ...ex.exits.filter((x) => x.via === id).map((x) => after(x.id, n + 1))));
+      return chainOf(b).length + 2 + after(a.id) <= 3;
+    }
     if (t.kind === 'group' || t.kind === 'direct') return true;
     if (t.kind === 'peer' && d.kind === 'peer' && d.id !== t.id) {
       const a = peerById[d.id];
@@ -332,6 +425,22 @@
     });
     if (!ok) return;
     if (await run(() => post('/routes/assign', { scope: d.kind, scope_id: d.id, group: g ? g.id : 0 }), 'Ausgang zugewiesen')) setTimeout(load, 600);
+  }
+  async function setVia(id, via) {
+    const a = exitById[id];
+    const b = via ? exitById[via] : null;
+    const ok = await confirmDialog({
+      title: b ? `„${a.name}“ über „${b.name}“ verbinden?` : `„${a.name}“ direkt verbinden?`,
+      text: b
+        ? `Der Tunnel von „${a.name}“ läuft danach über „${b.name}“ (Kaskade): Der Anbieter von „${a.name}“ sieht nur die Adresse von „${b.name}“. Fällt „${b.name}“ aus, bleibt „${a.name}“ getrennt – nie direkt. „${a.name}“ wird dafür neu verbunden.`
+        : `„${a.name}“ verbindet sich danach direkt über den Server statt über „${exitById[a.via]?.name || '?'}“. Der Ausgang wird dafür neu verbunden.`,
+      ok: b ? 'Verbinden' : 'Direkt verbinden',
+    });
+    if (!ok) return;
+    if (await run(() => put(`/exits/${id}`, { via }), b ? 'Kaskade eingerichtet' : 'Kaskade aufgehoben')) {
+      sel = { kind: 'exit', id };
+      setTimeout(load, 600);
+    }
   }
   async function reach(from, to) {
     const a = peerById[from];
@@ -407,6 +516,7 @@
           <li>Anklicken zeigt den Weg vom Gerät über den Server zum Ausgang.</li>
           <li>Gerät, Nutzer oder Server auf eine Gruppe ziehen = Ausgang zuweisen (legt eine Ziel-Regel an).</li>
           <li>WireGuard-Gerät auf ein anderes desselben Servers ziehen = Zugriff erlauben oder entziehen.</li>
+          <li>Ausgang (in einer Gruppe oder rechts) auf einen anderen Ausgang ziehen = darüber verbinden (Kaskade); auf „Direkt“ ziehen = wieder ohne Vorgänger.</li>
         </ul>
       </Info></h2>
     </div>
@@ -473,7 +583,26 @@
         {#each layout.outs as o (o.id)}
           {@const rt = outRate[o.id] || 0}
           {@const blocked = o.type === 'group' && (o.g.status?.state === 'blocked' || !o.g.enabled)}
-          <path
+          {#if o.type === 'group'}
+            <!-- Kaskade: Ausgang in der Gruppe → sein Vorgänger -->
+            {#each o.g.exits as id, i (id)}
+              {@const e = exitById[id]}
+              {#if e?.via && layout.viaY[e.via] != null}
+                {@const act = o.g.status?.active === id && !blocked}
+                <path
+                  d={curve(COL.out + COL.outW - 6, exitRowY(o, i), COL.via, layout.viaY[e.via])}
+                  class="edge out chain"
+                  class:on={act}
+                  class:idle={!act}
+                  class:flow={act && moving(rt)}
+                  class:bad={act && !exitUp(exitById[e.via])}
+                  class:dim={sel && !(sel.kind === 'group' ? sel.id === o.id : exitHot(id) && exitHot(e.via))}
+                  style="stroke-width:{act ? width(rt) : 1.3}"
+                />
+              {/if}
+            {/each}
+          {/if}
+          {#if !(o.type === 'group' && groupViaActive(o.g) && !blocked)}<path
             d={curve(COL.out + COL.outW, layout.outY[o.id], COL.net, layout.H / 2)}
             class="edge out"
             class:on={!blocked}
@@ -481,7 +610,35 @@
             class:flow={moving(rt) && !blocked}
             class:dim={sel && !((sel.kind === 'group' && sel.id === o.id) || (sel.kind === 'direct' && o.id === 0) || flows.some((f) => f.gid === o.id && !f.partial && flowHot(f)))}
             style="stroke-width:{width(rt)}"
-          />
+          />{/if}
+        {/each}
+        <!-- Kaskaden-Spalte: Ausgang → Vorgänger (Bogen rechts) bzw. → Internet -->
+        {#each chainIds as id (id)}
+          {@const e = exitById[id]}
+          {@const y = layout.viaY[id]}
+          {@const rt = viaRate[id] || 0}
+          {#if e && y != null}
+            {#if e.via && layout.viaY[e.via] != null}
+              {@const y2 = layout.viaY[e.via]}
+              <path
+                d="M{COL.via + COL.viaW},{y} C{COL.via + COL.viaW + 44},{y} {COL.via + COL.viaW + 44},{y2} {COL.via + COL.viaW},{y2}"
+                class="edge out chain"
+                class:on={exitUp(e)}
+                class:flow={moving(rt)}
+                class:dim={sel && !exitHot(id)}
+                style="stroke-width:{width(rt)}"
+              />
+            {:else}
+              <path
+                d={curve(COL.via + COL.viaW, y, COL.net, layout.H / 2)}
+                class="edge out"
+                class:on={exitUp(e)}
+                class:flow={moving(rt) && exitUp(e)}
+                class:dim={sel && !(sel.kind === 'exit' ? exitHot(id) : sel.kind === 'group' && groupById[sel.id]?.exits.some((x) => x === id || chainOf(exitById[x] || {}).some((v) => v.id === id)))}
+                style="stroke-width:{width(rt)}"
+              />
+            {/if}
+          {/if}
         {/each}
         <!-- Zugriff des gewählten WireGuard-Geräts -->
         {#if selPeer}
@@ -597,6 +754,7 @@
             style="left:{COL.out}px;top:{o.y}px;width:{COL.outW}px;height:{o.h}px"
             onclick={() => pick('direct', 0)}
             data-drop="direct:0"
+            data-xdrop="direct:0"
             role="button"
             tabindex="0"
             onkeydown={(e) => e.key === 'Enter' && pick('direct', 0)}
@@ -636,13 +794,66 @@
             {#each g.exits as id, i}
               {@const e = exitById[id]}
               {#if e}
-                <div class="exit" class:act={g.status?.active === id} title={e.status?.error || ''}>
+                <div
+                  class="exit"
+                  class:act={g.status?.active === id}
+                  class:sel={isSel('exit', id)}
+                  class:xdim={!exitHot(id)}
+                  class:drop={dropOk('exit', id)}
+                  class:over={over?.kind === 'exit' && over.id === id && dropOk('exit', id)}
+                  title={e.status?.error || (e.via ? `über ${chainOf(e).map((v) => v.name).join(' → ')}` : 'Ziehen auf einen anderen Ausgang = über diesen verbinden (Kaskade)')}
+                  data-xdrop="exit:{id}"
+                  onpointerdown={(ev) => {
+                    ev.stopPropagation();
+                    startDrag(ev, 'exit', id, COL.out + COL.outW - 6, exitRowY(o, i));
+                  }}
+                  onclick={(ev) => ev.stopPropagation()}
+                  role="button"
+                  tabindex="0"
+                  onkeydown={(ev) => ev.key === 'Enter' && (ev.stopPropagation(), pick('exit', id))}
+                >
                   <span class="dot {exitHealth(e)}"></span>
                   <span class="grow name">{i + 1}. {e.name}</span>
+                  {#if e.via}<span class="viatag" title="über {chainOf(e).map((v) => v.name).join(' → ')}"><Icon name="link" size={11} /></span>{/if}
                   {#if exitRate(g, id) > 0}<span class="rate">{speed(exitRate(g, id))}</span>{:else if e.status?.up}<span class="tiny muted">{fmtNum(Math.round(e.status.rtt))} ms{e.status.loc ? ' · ' + e.status.loc : ''}</span>{/if}
                 </div>
               {/if}
             {/each}
+          </div>
+        {/if}
+      {/each}
+
+      <!-- Kaskaden-Spalte: Vorgänger und Ausgänge ohne Gruppe -->
+      {#each chainIds as id (id)}
+        {@const e = exitById[id]}
+        {#if e && layout.viaY[id] != null}
+          {@const n = ex.exits.filter((x) => x.via === id).length}
+          {@const rt = viaRate[id] || 0}
+          <div
+            class="node vian"
+            class:sel={isSel('exit', id)}
+            class:bad={e.enabled && e.status?.checked && exitHealth(e) === 'bad'}
+            class:offn={!e.enabled}
+            class:xdim={!exitHot(id)}
+            class:drop={dropOk('exit', id)}
+            class:over={over?.kind === 'exit' && over.id === id && dropOk('exit', id)}
+            style="left:{COL.via}px;top:{layout.viaY[id] - VH / 2}px;width:{COL.viaW}px;height:{VH}px"
+            onpointerdown={(ev) => startDrag(ev, 'exit', id, COL.via, layout.viaY[id])}
+            data-xdrop="exit:{id}"
+            role="button"
+            tabindex="0"
+            onkeydown={(ev) => ev.key === 'Enter' && pick('exit', id)}
+            title={e.status?.error || (n ? `Vorgänger von ${n} ${n === 1 ? 'Ausgang' : 'Ausgängen'}` : 'Ausgang ohne Gruppe')}
+          >
+            <ProtoLogo id={e.type} size={20} />
+            <div class="grow">
+              <div class="strong name small">{e.name}</div>
+              <div class="tiny muted name">
+                {#if rt > 0}<span class="rate">{speed(rt)}</span>{:else if e.status?.up}{fmtNum(Math.round(e.status.rtt))} ms{e.status.loc ? ' · ' + e.status.loc : ''}{:else if !e.enabled}deaktiviert{:else if e.mode === 'standby'}Bereitschaft{:else}getrennt{/if}
+                {#if n} · für {n}{/if}
+              </div>
+            </div>
+            <span class="dot {exitHealth(e)}"></span>
           </div>
         {/if}
       {/each}
@@ -663,7 +874,7 @@
   <div class="legend tiny muted">
     <span><i class="ln on"></i> verbunden</span><span><i class="ln flowl"></i> Verkehr fließt (Dicke = Menge)</span><span><i class="ln part"></i> nur bestimmte Ziele</span><span
       ><i class="ln badl"></i> gesperrt / gestört</span
-    ><span><i class="ln rch"></i> darf erreichen</span>
+    ><span><i class="ln rch"></i> darf erreichen</span>{#if hasChain}<span><i class="ln chn"></i> Kaskade (Ausgang über Vorgänger)</span>{/if}
   </div>
 </div>
 
@@ -747,6 +958,27 @@
       <div class="facts2">
         <div><span class="muted">Verkehr gerade</span><b>{speed(outRate[g.id])}</b></div>
         <div><span class="muted">Genutzt von</span><b>{ps.length ? short(ps.map((p) => `${userById[p.user_id]?.name} · ${p.name}`)) : 'niemandem'}</b></div>
+      </div>
+    {:else if sel.kind === 'exit' && exitById[sel.id]}
+      {@const e = exitById[sel.id]}
+      {@const ch = chainOf(e)}
+      {@const after = ex.exits.filter((x) => x.via === e.id)}
+      {@const gs = ex.groups.filter((g) => g.exits.includes(e.id))}
+      <div class="row">
+        <ProtoLogo id={e.type} size={28} />
+        <div class="grow">
+          <div class="strong">Ausgang {e.name}</div>
+          <div class="muted tiny">{e.status?.error || (e.status?.up ? `${fmtNum(Math.round(e.status.rtt))} ms${e.status.loc ? ' · ' + e.status.loc : ''}${e.status.ip ? ' · ' + e.status.ip : ''}` : e.enabled ? 'nicht verbunden' : 'deaktiviert')}</div>
+        </div>
+        {#if e.via}<button class="btn sm" onclick={() => setVia(e.id, 0)}><Icon name="x" size={14} /> Direkt verbinden</button>{/if}
+        <a class="btn sm" href="#/proxy/exits"><Icon name="edit" size={14} /> Ausgänge</a>
+        <button class="btn sm ghost" onclick={() => (sel = null)}>Schließen</button>
+      </div>
+      <div class="facts2">
+        <div><span class="muted">Weg</span><b>Server → {[...ch].reverse().map((v) => v.name).concat(e.name).join(' → ')} → Internet</b></div>
+        <div><span class="muted">Darüber verbunden</span><b>{after.length ? short(after.map((x) => x.name)) : 'kein anderer Ausgang'}</b></div>
+        <div><span class="muted">In Gruppen</span><b>{gs.length ? short(gs.map((g) => g.name)) : 'keiner'}</b></div>
+        <div><span class="muted">Kaskade ändern</span><b>Ausgang auf einen anderen ziehen = darüber verbinden; auf „Direkt“ ziehen = ohne Vorgänger</b></div>
       </div>
     {:else if sel.kind === 'direct'}
       <div class="row">
@@ -1044,6 +1276,39 @@
     background: var(--accent-soft);
     color: var(--text);
     font-weight: 600;
+  }
+  .exit {
+    cursor: grab;
+    border: 1px solid transparent;
+  }
+  .exit:hover {
+    border-color: var(--border-strong);
+  }
+  .exit.sel {
+    border-color: var(--accent);
+  }
+  .xdim {
+    opacity: 0.35;
+  }
+  .vian {
+    padding: 6px 10px;
+    gap: 8px;
+    border-radius: 10px;
+  }
+  .vian .small {
+    font-size: 13px;
+  }
+  .edge.chain.idle {
+    stroke: var(--border-strong);
+    stroke-dasharray: 3 4;
+    opacity: 0.7;
+  }
+  .edge.chain.on:not(.flow) {
+    stroke: var(--accent);
+    opacity: 0.6;
+  }
+  .ln.chn {
+    border-top: 2px dashed var(--border-strong);
   }
   .ic {
     width: 30px;

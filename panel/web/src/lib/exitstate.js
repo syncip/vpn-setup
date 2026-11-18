@@ -20,7 +20,7 @@ export function exitState(e) {
     const until = new Date(s.draining * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     return { tone: 'idle', label: 'Läuft aus', icon: 'clock', detail: `Gruppe hat gewechselt – laufende Verbindungen enden hier, spätestens ${until}` };
   }
-  if (s.loss > 10 || s.rtt > 300) return { tone: 'warn', label: 'Instabil', icon: 'activity', detail: `${fmtNum(Math.round(s.loss))} % Verlust · ${fmtNum(Math.round(s.rtt))} ms` };
+  if (s.loss > 10 || (s.rtt > 300 && e.type !== 'tor')) return { tone: 'warn', label: 'Instabil', icon: 'activity', detail: `${fmtNum(Math.round(s.loss))} % Verlust · ${fmtNum(Math.round(s.rtt))} ms` };
   return { tone: 'ok', label: 'Verbunden', icon: 'check', detail: standby ? 'Bereitschaft · gerade verbunden' : `${fmtNum(Math.round(s.rtt))} ms · ${fmtNum(Math.round(s.loss))} % Verlust` };
 }
 

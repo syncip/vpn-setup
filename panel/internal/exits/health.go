@@ -141,6 +141,9 @@ func (m *Manager) probe(env *Env, e *Exit, speed bool) (Sample, string, string, 
 		}
 		resp.Body.Close()
 		s.OK = resp.StatusCode == 200 && net.ParseIP(ip) != nil
+		if tor && s.OK && (loc == "T1" || loc == "XX" || loc == "") { // Cloudflare: „T1“ = Tor-Netz
+			loc = torCountry(env, e, ip)
+		}
 	} else {
 		perr = fmt.Errorf("kein Internet über den Tunnel")
 		if tor {

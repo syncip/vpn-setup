@@ -133,7 +133,9 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   Ausgänge hintereinander, keine Kreise; die MTU wird je Stufe um 80 verkleinert. Vorgänger werden
   mit verbunden (auch in Bereitschaft). Ist ein Vorgänger abgeschaltet oder weg, bleibt der Ausgang
   getrennt – nie direkt. Ein Ausgang, über den ein anderer läuft, lässt sich erst löschen, wenn dort
-  „Verbunden über“ geändert ist.
+  „Verbunden über“ geändert ist. **Netzwerk → Karte:** Vorgänger (und Ausgänge ohne Gruppe) stehen
+  in einer eigenen Spalte zwischen den Gruppen und dem Internet; einen Ausgang auf einen anderen
+  ziehen = darüber verbinden, auf „Direkt“ ziehen = ohne Vorgänger.
 - **Tor-Ausgang** („Ausgang anlegen“ → *Tor*): eine eigene Tor-Instanz je Ausgang (Dienst
   `vpn-tor@ex<ID>`, Benutzer `vpntor-ex<ID>`, SOCKS/DNS/Steuerung nur auf 127.0.0.1). Die Schnittstelle
   `ex<ID>` ist ein TUN-Gerät; `vpnpanel tun2socks` (Dienst `vpn-t2s@ex<ID>`) gibt TCP an Tors SOCKS-Port

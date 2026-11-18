@@ -1,6 +1,9 @@
 package exits
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,5 +169,60 @@ func TestTorLastMsg(t *testing.T) {
 	}
 	if got := lastMsg("", ""); got != "" {
 		t.Fatalf("leer: %q", got)
+	}
+}
+
+func TestTorControlCountry(t *testing.T) {
+	env, _, _ := testEnv(t)
+	e := torExit(97)
+	dry := env.Sys.(*system.Dry)
+	dir := filepath.Join(dry.Root, torStateDir, "ex97")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "control_auth_cookie"), []byte{1, 2, 0xab}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", torCtlBase+e.Slot))
+	if err != nil {
+		t.Skip("Port belegt:", err)
+	}
+	defer ln.Close()
+	got := make(chan string, 4)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		r := bufio.NewReader(c)
+		for {
+			l, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			l = strings.TrimSpace(l)
+			got <- l
+			switch {
+			case l == "AUTHENTICATE 0102ab":
+				fmt.Fprint(c, "250 OK\r\n")
+			case l == "GETINFO ip-to-country/192.0.2.9":
+				fmt.Fprint(c, "250-ip-to-country/192.0.2.9=ch\r\n250 OK\r\n")
+			case l == "QUIT":
+				fmt.Fprint(c, "250 closing connection\r\n")
+				return
+			default:
+				fmt.Fprint(c, "515 Authentication failed\r\n")
+			}
+		}
+	}()
+	if cc := torCountry(env, e, "192.0.2.9"); cc != "CH" {
+		t.Fatalf("Land %q", cc)
+	}
+	if l := <-got; l != "AUTHENTICATE 0102ab" {
+		t.Fatalf("Anmeldung %q", l)
+	}
+	if torCountry(env, e, "kein; GETINFO x") != "" {
+		t.Fatal("ungültige Adresse an Tor geschickt")
 	}
 }

@@ -515,6 +515,55 @@ func (m *Manager) syncTorRules(env *Env) error {
 	return nil
 }
 
+// torControl meldet sich an der Steuerung der Instanz an (Cookie) und schickt die Befehle der Reihe
+// nach. Ergebnis: die Datenzeilen aller Antworten („250-…“ bzw. „250 …“ ohne „OK“).
+func torControl(env *Env, e *Exit, cmds ...string) ([]string, error) {
+	n := IfName(e.ID)
+	cookie, err := env.Sys.ReadFile(torStateDir + "/" + n + "/control_auth_cookie")
+	if err != nil {
+		return nil, fmt.Errorf("Tor läuft nicht (Cookie fehlt)")
+	}
+	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", torCtlBase+e.Slot), 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("Tor-Steuerung nicht erreichbar")
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	r := bufio.NewReader(c)
+	var data []string
+	send := func(s string, keep bool) error {
+		if _, err := fmt.Fprintf(c, "%s\r\n", s); err != nil {
+			return err
+		}
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return err
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if !strings.HasPrefix(line, "250") || len(line) < 4 {
+				return fmt.Errorf("Tor: %s", line)
+			}
+			if body := line[4:]; keep && body != "OK" {
+				data = append(data, body)
+			}
+			if line[3] == ' ' { // letzte Zeile der Antwort
+				return nil
+			}
+		}
+	}
+	if err := send("AUTHENTICATE "+hex.EncodeToString(cookie), false); err != nil {
+		return nil, err
+	}
+	for _, cmd := range cmds {
+		if err := send(cmd, true); err != nil {
+			return data, err
+		}
+	}
+	_, _ = fmt.Fprintf(c, "QUIT\r\n")
+	return data, nil
+}
+
 // NewIdentity: Tor-Ausgang wechselt für neue Verbindungen auf neue Kreise (SIGNAL NEWNYM).
 func (m *Manager) NewIdentity(env *Env, e *Exit) error {
 	if e == nil || e.Type != "tor" {
@@ -524,40 +573,29 @@ func (m *Manager) NewIdentity(env *Env, e *Exit) error {
 		env.Log("info", "Ausgang „"+e.Name+"“: neue Tor-Identität (Testmodus)")
 		return nil
 	}
-	n := IfName(e.ID)
-	cookie, err := env.Sys.ReadFile(torStateDir + "/" + n + "/control_auth_cookie")
-	if err != nil {
-		return fmt.Errorf("Tor läuft nicht (Cookie fehlt)")
-	}
-	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", torCtlBase+e.Slot), 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("Tor-Steuerung nicht erreichbar")
-	}
-	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
-	r := bufio.NewReader(c)
-	cmd := func(s string) error {
-		if _, err := fmt.Fprintf(c, "%s\r\n", s); err != nil {
-			return err
-		}
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return err
-		}
-		if !strings.HasPrefix(line, "250") {
-			return fmt.Errorf("Tor: %s", strings.TrimSpace(line))
-		}
-		return nil
-	}
-	if err := cmd("AUTHENTICATE " + hex.EncodeToString(cookie)); err != nil {
+	if _, err := torControl(env, e, "SIGNAL NEWNYM"); err != nil {
 		return err
 	}
-	if err := cmd("SIGNAL NEWNYM"); err != nil {
-		return err
-	}
-	_ = cmd("QUIT")
 	env.Log("info", "Ausgang „"+e.Name+"“: neue Tor-Identität")
 	return nil
+}
+
+// torCountry: Land einer Adresse laut Tors eigener GeoIP-Liste (Cloudflare meldet für
+// Tor-Ausgänge nur „T1“). "" = unbekannt.
+func torCountry(env *Env, e *Exit, ip string) string {
+	if net.ParseIP(ip) == nil {
+		return ""
+	}
+	data, err := torControl(env, e, "GETINFO ip-to-country/"+ip)
+	if err != nil {
+		return ""
+	}
+	for _, l := range data {
+		if _, cc, ok := strings.Cut(l, "="); ok && len(cc) == 2 && cc != "??" {
+			return strings.ToUpper(cc)
+		}
+	}
+	return ""
 }
 
 // torDiag beschreibt, woran ein Tor-Ausgang hängt (Dienst aus, letzte Meldung, Bootstrap-Stand).
