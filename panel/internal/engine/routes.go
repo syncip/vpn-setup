@@ -34,7 +34,8 @@ type Route struct {
 	Nets    []string
 	Domains []string
 	Lists   []int64
-	Group   int64 // 0 = direkt über den Server
+	Group   int64   // 0 = direkt über den Server
+	Chain   []int64 // Kaskade: Ausgänge vor der Gruppe (nil = Regel bestimmt keinen Weg)
 }
 
 func ids(v any) []int64 {
@@ -78,6 +79,9 @@ func RouteFrom(o *store.Object) *Route {
 	r.Nets, r.Domains, r.Lists = strs(o.Data["nets"]), strs(o.Data["domains"]), ids(o.Data["lists"])
 	if f, ok := o.Data["group"].(float64); ok {
 		r.Group = int64(f)
+	}
+	if o.Data["chain"] != nil {
+		r.Chain = append([]int64{}, ids(o.Data["chain"])...)
 	}
 	return r
 }

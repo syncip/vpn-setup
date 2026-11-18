@@ -126,6 +126,15 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   wenn der Anbieter viele dauerhafte Verbindungen ungern sieht. Fällt der aktive Ausgang einer Gruppe aus,
   werden Ausgänge in Bereitschaft der Reihe nach verbunden und geprüft, bevor umgeschaltet wird (dauert
   einige Sekunden länger).
+- **Kaskade in Ziel-Regeln (Stufen):** Bei „Über“ bis zu drei Stufen, z. B. *1. Cloudflare WARP,
+  2. Tor* oder *1. WARP, 2. Gruppe Schweiz* – für Alle, Server, Nutzer oder Gerät; ohne Stufe =
+  direkt. Daraus setzt das Panel „Verbunden über“ der beteiligten Ausgänge (Stufe 1 direkt, jede
+  weitere über die vorige; eine Gruppe nur als letzte Stufe, alle ihre Ausgänge laufen über die
+  Stufe davor). Ein Ausgang ist ein Tunnel und hat nur einen Weg: Verlangen zwei Regeln für ihn
+  Verschiedenes, wird die zweite nicht gespeichert (dann einen zweiten Ausgang anlegen). Endet eine
+  Kette mit einem einzelnen Ausgang, legt das Panel dafür eine Gruppe an („automatisch“), die wieder
+  verschwindet, wenn keine Regel sie braucht. Von einer Regel bestimmte Wege lassen sich am Ausgang
+  nicht von Hand ändern; Regeln ohne Stufen (ältere, per Karte angelegte) bestimmen keinen Weg.
 - **Kaskade („Verbunden über“):** Ein Ausgang kann durch einen anderen laufen, z. B. *Server →
   Cloudflare WARP → Windscribe*. Die Tunnelpakete bekommen die Markierung des Vorgängers (WireGuard
   `FwMark`, OpenVPN `mark`) und gehen über dessen Tabelle samt Sperr-Route hinaus. Der letzte Anbieter

@@ -610,7 +610,7 @@
     <div class="card group">
       <div class="card-head">
         <div>
-          <h3>{g.name}</h3>
+          <h3>{g.name}{#if g.auto}&nbsp;<span class="badge" title="Vom Panel angelegt für eine Ziel-Regel, deren Kette mit diesem Ausgang endet. Verschwindet, wenn keine Regel sie mehr braucht.">automatisch</span>{/if}</h3>
           <div class="muted tiny">
             Bei Ausfall aller: {g.on_fail === 'direct' ? 'direkt über den Server' : 'sperren'} · Grenzen {fmtNum(g.max_loss)} % Verlust, {fmtNum(g.max_rtt)} ms{g.min_mbit ? `, ${fmtNum(g.min_mbit)} Mbit/s` : ''}
           </div>
@@ -728,7 +728,7 @@
                   <ProtoLogo id={e.type} size={22} />
                   <div style="min-width:0">
                     <div class="strong">{e.name}</div>
-                    {#if e.via}<div class="tiny via-chain" title="Kaskade: Der Tunnel dieses Ausgangs läuft über den Vorgänger – der Anbieter sieht nur dessen Adresse."><Icon name="link" size={11} /> über {viaChain(e).join(' → ')}</div>{/if}
+                    {#if e.via}<div class="tiny via-chain" title="Kaskade: Der Tunnel dieses Ausgangs läuft über den Vorgänger – der Anbieter sieht nur dessen Adresse."><Icon name="link" size={11} /> über {viaChain(e).join(' → ')}{e.via_rule ? ` · Regel „${e.via_rule}“` : ''}</div>{/if}
                     <div class="muted tiny mono ellipsis exsrv" title={e.server}>{e.server}{#if e.removed.length}&nbsp;<span class="badge muted" title={'Beim Hochladen entfernt: ' + e.removed.join(', ')}><Icon name="filter" size={11} /> {e.removed.length}</span>{/if}</div>
                   </div>
                 </div>
@@ -922,10 +922,11 @@
           <p>Höchstens drei Ausgänge hintereinander. Jede Stufe kostet etwas Tempo und MTU (wird automatisch angepasst).</p>
         </Info></label
       >
-      <select id="ex-via" class="input" bind:value={ex.via}>
+      <select id="ex-via" class="input" bind:value={ex.via} disabled={!!exCur?.via_rule}>
         <option value={0}>Direkt (über den Server)</option>
         {#each viaOptions as o}<option value={o.id}>{o.name}{o.via ? ` (über ${viaChain(o).join(' → ')})` : ''}</option>{/each}
       </select>
+      {#if exCur?.via_rule}<div class="help">Bestimmt von der Ziel-Regel „{exCur.via_rule}“ (Stufen) – dort ändern.</div>{/if}
     </div>
     <label class="switch"><input type="checkbox" bind:checked={ex.enabled} /><span class="track"></span> Aktiv</label>
   </div>

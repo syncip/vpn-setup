@@ -13,7 +13,7 @@
   // reload: Zähler der Elternseite – ändert er sich (z. B. neue Gruppe), wird neu geladen
   let { reload = 0 } = $props();
 
-  let d = $state({ routes: [], servers: [], users: [], peers: [], groups: [], lists: [], error: '', dns: null });
+  let d = $state({ routes: [], servers: [], users: [], peers: [], groups: [], exits: [], lists: [], error: '', dns: null });
   const when = (ts) => (ago(ts) === 'online' ? 'gerade eben' : ago(ts));
   let loaded = $state(false);
 
@@ -40,6 +40,21 @@
   const peerById = $derived(by(d.peers));
   const groupById = $derived(by(d.groups));
   const listById = $derived(by(d.lists));
+  const exitById = $derived(by(d.exits || []));
+
+  // Kaskade: Stufen einer Regel (Stufe 1 zuerst). Eine automatische Gruppe steht für ihren Ausgang.
+  function stagesOf(r) {
+    const chain = (r.chain || []).map((id) => ({ kind: 'exit', id }));
+    if (r.group === 0) return chain;
+    const g = groupById[r.group];
+    return [...chain, g?.auto ? { kind: 'exit', id: g.auto } : { kind: 'group', id: r.group }];
+  }
+  const stageName = (s) => (s.kind === 'exit' ? exitById[s.id]?.name || 'Ausgang ?' : `Gruppe ${groupById[s.id]?.name || '?'}`);
+  const isDirect = (r) => r.group === 0 && !(r.chain || []).length;
+  const viaText = (r) => (isDirect(r) ? 'direkt' : stagesOf(r).map(stageName).join(' → '));
+  // Stufen im Formular als „e:ID“ (Ausgang) bzw. „g:ID“ (Gruppe)
+  const key = (s) => (s.kind === 'exit' ? 'e:' : 'g:') + s.id;
+  const unkey = (k) => ({ kind: k[0] === 'e' ? 'exit' : 'group', id: Number(k.slice(2)) });
 
   const SCOPE = { global: 'Alle', server: 'Server', user: 'Nutzer', peer: 'Gerät' };
   const ORDER = { peer: 0, user: 1, server: 2, global: 3 };
@@ -73,7 +88,7 @@
     if (!t.length) return sorted;
     return sorted.filter((r) =>
       matches(
-        [SCOPE[r.scope], scopeText(r), r.scope === 'peer' ? peerPicks[r.scope_id]?.search : '', targetText(r), r.group ? groupById[r.group]?.name : 'direkt', r.name].join(' '),
+        [SCOPE[r.scope], scopeText(r), r.scope === 'peer' ? peerPicks[r.scope_id]?.search : '', targetText(r), viaText(r), r.name].join(' '),
         t,
       ),
     );
@@ -85,9 +100,10 @@
 
   function openRule(r = null) {
     cur = r;
+    const g0 = d.groups.find((g) => g.enabled && !g.auto);
     f = r
-      ? { name: r.name, enabled: r.enabled, scope: r.scope, scope_id: r.scope_id, match: r.match, nets: r.nets.join('\n'), domains: r.domains.join('\n'), lists: [...r.lists], group: r.group }
-      : { name: '', enabled: true, scope: 'global', scope_id: 0, match: 'all', nets: '', domains: '', lists: [], group: d.groups.find((g) => g.enabled)?.id ?? 0 };
+      ? { name: r.name, enabled: r.enabled, scope: r.scope, scope_id: r.scope_id, match: r.match, nets: r.nets.join('\n'), domains: r.domains.join('\n'), lists: [...r.lists], stages: stagesOf(r).map(key) }
+      : { name: '', enabled: true, scope: 'global', scope_id: 0, match: 'all', nets: '', domains: '', lists: [], stages: g0 ? ['g:' + g0.id] : [] };
     open = true;
   }
   function setScope(s) {
@@ -99,10 +115,17 @@
   function toggleList(id) {
     f.lists = f.lists.includes(id) ? f.lists.filter((x) => x !== id) : [...f.lists, id];
   }
+  // neue Stufe vorn: die bisherigen laufen dann über sie (eine Gruppe bleibt die letzte)
+  function addStage() {
+    const used = new Set(f.stages);
+    const e = d.exits.find((x) => x.enabled && !used.has('e:' + x.id)) || d.exits[0];
+    if (e) f.stages = ['e:' + e.id, ...f.stages];
+  }
+  const stageBad = $derived((f.stages || []).some((k, i) => k[0] === 'g' && i < f.stages.length - 1));
   async function save() {
     const body = $state.snapshot(f);
     body.scope_id = Number(body.scope_id) || 0;
-    body.group = Number(body.group) || 0;
+    body.stages = body.stages.map(unkey);
     const r = cur ? await run(() => put(`/routes/${cur.id}`, body), 'Regel gespeichert') : await run(() => post('/routes', body), 'Regel angelegt');
     if (r) {
       open = false;
@@ -131,7 +154,7 @@
 <div class="section-head">
   <div>
     <h2>Ziel-Regeln</h2>
-    <div class="muted small">Welcher Verkehr über welche Ausgangsgruppe läuft – für WireGuard, OpenVPN, VLESS, Hysteria2 und Proxy</div>
+    <div class="muted small">Welcher Verkehr über welche Ausgänge läuft (auch hintereinander) – für WireGuard, OpenVPN, VLESS, Hysteria2 und Proxy</div>
   </div>
   <div class="row" style="gap:8px">
     {#if d.routes.length > 5}<SearchInput bind:value={rq} placeholder="Regeln durchsuchen …" width="230px" />{/if}
@@ -151,7 +174,9 @@
             <span class="muted">·</span>
             <span class="what">{targetText(r)}</span>
             <Icon name="arrow-right" size={14} />
-            {#if r.group === 0}<span class="via direct">direkt über den Server</span>{:else}<span class="via">{g?.name || 'Gruppe ?'}</span>{/if}
+            {#if isDirect(r)}<span class="via direct">direkt über den Server</span>{:else}<span class="via"
+                >{#each stagesOf(r) as s, i}{#if i}<span class="chev">→</span>{/if}{s.kind === 'group' ? g?.name || 'Gruppe ?' : exitById[s.id]?.name || 'Ausgang ?'}{/each}</span
+              >{/if}
           </div>
           {#if r.name || r.note}
             <div class="tiny">
@@ -253,11 +278,49 @@
     {/if}
 
     <div class="field">
-      <label for="rt-via">Über <Info title="Über" text="Ausgangsgruppe oder direkt über den Server. „Direkt“ ist nützlich als Ausnahme, z. B. „Alles über Mullvad, nur die Bank direkt“. Ausgänge können nur IPv4 – bei „Alles“ wird IPv6 ins Internet für diese Geräte gesperrt, damit nichts am Ausgang vorbeigeht." /></label>
-      <select id="rt-via" class="input" bind:value={f.group}>
-        {#each d.groups as g}<option value={g.id}>Ausgangsgruppe {g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
-        <option value={0}>Direkt über den Server (Ausnahme)</option>
-      </select>
+      <span class="label">Über <Info title="Über">
+          <p>Bis zu drei Stufen hintereinander (Kaskade), z. B. <b>Cloudflare WARP → Windscribe</b> oder <b>WARP → Tor</b>. Stufe 1 verbindet sich direkt, jede weitere durch die vorige.</p>
+          <p>Die letzte Stufe kann auch eine Ausgangsgruppe sein: Sie wechselt bei Ausfall wie gewohnt, alle ihre Ausgänge laufen dann über die Stufe davor.</p>
+          <p>Ein Ausgang ist ein Tunnel und hat nur einen Weg. Braucht eine andere Regel denselben Ausgang anders (z. B. direkt statt über WARP), lässt sich die Regel nicht speichern – dafür einen zweiten Ausgang anlegen.</p>
+          <p>„Direkt“ ist nützlich als Ausnahme, z. B. „Alles über Mullvad, nur die Bank direkt“. Ausgänge können nur IPv4 – bei „Alles“ wird IPv6 ins Internet für diese Geräte gesperrt.</p>
+        </Info></span
+      >
+      {#if !f.stages.length}
+        <div class="stage direct"><Icon name="server" size={15} /> <span class="grow">Direkt über den Server (Ausnahme)</span></div>
+      {/if}
+      {#each f.stages as k, i (i)}
+        {@const last = i === f.stages.length - 1}
+        <div class="stage">
+          <span class="num">{i + 1}.</span>
+          <select class="input" bind:value={f.stages[i]} aria-label="Stufe {i + 1}">
+            <optgroup label="Ausgänge">
+              {#each d.exits as x}<option value={'e:' + x.id}>{x.name}{x.type === 'tor' ? ' (Tor)' : ''}{x.enabled ? '' : ' (deaktiviert)'}</option>{/each}
+            </optgroup>
+            {#if last || k[0] === 'g'}
+              <optgroup label="Ausgangsgruppen (Wechsel bei Ausfall)">
+                {#each d.groups.filter((g) => !g.auto) as g}<option value={'g:' + g.id}>Gruppe {g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
+              </optgroup>
+            {/if}
+          </select>
+          <button class="btn sm icon ghost" title="Stufe entfernen" onclick={() => (f.stages = f.stages.filter((_, j) => j !== i))}><Icon name="x" size={15} /></button>
+        </div>
+      {/each}
+      <div class="row wrap" style="gap:8px">
+        {#if f.stages.length < 3 && d.exits.length}
+          <button class="btn sm" onclick={addStage}><Icon name="plus" size={14} /> {f.stages.length ? 'Stufe davor' : 'Ausgang wählen'}</button>
+        {/if}
+        {#if !f.stages.length && d.groups.some((g) => !g.auto)}
+          <button class="btn sm" onclick={() => (f.stages = ['g:' + d.groups.find((g) => !g.auto).id])}><Icon name="plus" size={14} /> Gruppe wählen</button>
+        {/if}
+        {#if f.stages.length}<button class="btn sm ghost" onclick={() => (f.stages = [])}>Direkt</button>{/if}
+      </div>
+      {#if stageBad}<div class="help warn-text">Eine Gruppe kann nur die letzte Stufe sein – davor einzelne Ausgänge.</div>{/if}
+      {#if f.stages.length}
+        <div class="help">
+          Weg: Gerät → Server → {f.stages.map((k) => stageName(unkey(k))).join(' → ')} → Internet.
+          {#if f.stages.length > 1}Der letzte Anbieter sieht nur die Adresse des vorigen. Fällt eine Stufe aus, bleibt der Weg gesperrt – nie direkt.{/if}
+        </div>
+      {/if}
     </div>
 
     <div class="field"><label for="rt-name">Notiz (optional)</label><input id="rt-name" class="input" bind:value={f.name} placeholder="z. B. Streaming über USA" maxlength="60" /></div>
@@ -265,7 +328,7 @@
   </div>
   {#snippet footer()}
     <button class="btn" onclick={() => (open = false)}>Abbrechen</button>
-    <button class="btn primary" onclick={save} disabled={!valid}>{cur ? 'Speichern' : 'Anlegen'}</button>
+    <button class="btn primary" onclick={save} disabled={!valid || stageBad}>{cur ? 'Speichern' : 'Anlegen'}</button>
   {/snippet}
 </Modal>
 
@@ -303,6 +366,27 @@
   }
   .via {
     color: var(--accent);
+  }
+  .chev {
+    color: var(--muted);
+    margin: 0 4px;
+  }
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .stage .num {
+    width: 20px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .stage.direct {
+    padding: 9px 12px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 8px;
+    color: var(--text-2);
   }
   .via.direct {
     color: var(--muted);

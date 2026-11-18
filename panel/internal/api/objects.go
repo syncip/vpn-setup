@@ -31,12 +31,13 @@ type exitRow struct {
 	Groups   []int64                     `json:"groups"`
 	Status   *exits.ExitStatus           `json:"status"`
 	Error    string                      `json:"error,omitempty"`
-	Mode     string                      `json:"mode"`      // always | standby
-	CheckMin int                         `json:"check_min"` // Prüfabstand in Bereitschaft
-	Traffic  map[string]store.ExitTotals `json:"traffic"`   // day | week | month | all
-	Limits   *store.Limits               `json:"limits"`    // nil = keine
-	Limit    *engine.ExitLimitState      `json:"limit"`     // Verbrauch und Status im Zeitraum
-	Via      int64                       `json:"via"`       // Kaskade: verbunden über diesen Ausgang (0 = direkt)
+	Mode     string                      `json:"mode"`               // always | standby
+	CheckMin int                         `json:"check_min"`          // Prüfabstand in Bereitschaft
+	Traffic  map[string]store.ExitTotals `json:"traffic"`            // day | week | month | all
+	Limits   *store.Limits               `json:"limits"`             // nil = keine
+	Limit    *engine.ExitLimitState      `json:"limit"`              // Verbrauch und Status im Zeitraum
+	Via      int64                       `json:"via"`                // Kaskade: verbunden über diesen Ausgang (0 = direkt)
+	ViaRule  string                      `json:"via_rule,omitempty"` // Weg bestimmt von dieser Ziel-Regel
 	Tor      *exits.TorCfg               `json:"tor,omitempty"`
 	Bridges  int                         `json:"bridges,omitempty"` // Tor: Zahl der Brücken (Inhalt bleibt geheim)
 }
@@ -53,12 +54,13 @@ type groupRow struct {
 	DNS     string                      `json:"dns"`
 	Status  *exits.GroupStatus          `json:"status"`
 	Users   []map[string]any            `json:"users"`
-	Limits  *store.Limits               `json:"limits"`  // nil = keine
-	Limit   *engine.ExitLimitState      `json:"limit"`   // Verbrauch und Status im Zeitraum
-	Traffic map[string]store.ExitTotals `json:"traffic"` // day | month (über die Gruppe gelaufen)
-	Rotate  exits.Rotation              `json:"rotate"`  // Wechsel innerhalb der Gruppe
-	Block   exits.BlockCheck            `json:"block"`   // Block-Prüfung
-	Avoid   int                         `json:"avoid"`   // Ziele mit Ausnahme (laufen über einen anderen Ausgang)
+	Limits  *store.Limits               `json:"limits"`         // nil = keine
+	Limit   *engine.ExitLimitState      `json:"limit"`          // Verbrauch und Status im Zeitraum
+	Traffic map[string]store.ExitTotals `json:"traffic"`        // day | month (über die Gruppe gelaufen)
+	Auto    int64                       `json:"auto,omitempty"` // automatisch für diesen Ausgang (Ende einer Kette in einer Ziel-Regel)
+	Rotate  exits.Rotation              `json:"rotate"`         // Wechsel innerhalb der Gruppe
+	Block   exits.BlockCheck            `json:"block"`          // Block-Prüfung
+	Avoid   int                         `json:"avoid"`          // Ziele mit Ausnahme (laufen über einen anderen Ausgang)
 }
 
 func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +84,7 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 		row := &groupRow{ID: g.ID, Name: g.Name, Enabled: g.Enabled, Exits: g.Exits, OnFail: g.OnFail, MaxLoss: g.MaxLoss,
 			MaxRTT: g.MaxRTT, MinMbit: g.MinMbit, DNS: strings.Join(g.DNS, ", "), Users: []map[string]any{},
 			Limits: engine.ExitLimits(o), Traffic: map[string]store.ExitTotals{"day": gtDay[g.ID], "month": gtMonth[g.ID]}, Rotate: g.Rotate,
-			Block: g.Block, Avoid: len(ov[g.ID])}
+			Block: g.Block, Avoid: len(ov[g.ID]), Auto: numOf(o.Data["auto"])}
 		if st, ok := glim[g.ID]; ok {
 			row.Limit = &st
 		}
@@ -107,6 +109,10 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 		tr[k], _ = a.St.ExitTraffic(since)
 	}
 	lim := a.E.ExitLimitStates()
+	var chainOwner map[int64]string
+	if cw, err := a.loadChainWorld(); err == nil {
+		_, chainOwner, _ = cw.plan()
+	}
 	rows := []*exitRow{}
 	for _, o := range eo {
 		row := &exitRow{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Removed: []string{}, Groups: inGroups[o.ID], Traffic: map[string]store.ExitTotals{}}
@@ -130,6 +136,7 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 		}
 		if x, err := exits.ExitFrom(o); err == nil {
 			row.Mode, row.CheckMin, row.Via = x.Mode, x.CheckMin, x.Via
+			row.ViaRule = chainOwner[o.ID]
 			if x.Tor != nil {
 				row.Tor, row.Bridges = x.Tor, len(x.Tor.Bridges)
 				row.Server = "Tor"
@@ -314,6 +321,12 @@ func (a *API) saveExit(w http.ResponseWriter, r *http.Request, o *store.Object) 
 		}
 		o.Data["check_min"] = *in.CheckMin
 	}
+	if in.Via != nil && *in.Via != numOf(o.Data["via"]) && o.ID != 0 {
+		if rule := a.chainRuleFor(o.ID); rule != "" {
+			errJSON(w, http.StatusBadRequest, "Der Weg von „"+o.Name+"“ wird von der Ziel-Regel „"+rule+"“ bestimmt – dort die Stufen ändern")
+			return
+		}
+	}
 	if in.Via != nil {
 		eo, err := a.St.Objects("exit")
 		if err != nil {
@@ -399,6 +412,20 @@ func (a *API) deleteExit(w http.ResponseWriter, r *http.Request) {
 		for _, x := range eo {
 			if v, _ := x.Data["via"].(float64); int64(v) == o.ID && x.ID != o.ID {
 				errJSON(w, http.StatusConflict, "Ausgang „"+x.Name+"“ läuft über diesen Ausgang – dort zuerst „Verbunden über“ ändern")
+				return
+			}
+		}
+	}
+	// Stufe einer Ziel-Regel (Kaskade) bzw. Ende einer Kette (automatische Gruppe)
+	if cw, err := a.loadChainWorld(); err == nil {
+		auto := cw.autoGroup(o.ID)
+		for _, r := range cw.routes {
+			inChain := false
+			for _, id := range idsOf(r.Data["chain"]) {
+				inChain = inChain || id == o.ID
+			}
+			if inChain || (auto != nil && numOf(r.Data["group"]) == auto.ID) {
+				errJSON(w, http.StatusConflict, "Ausgang ist Stufe der Ziel-Regel „"+a.routeLabel(r)+"“ – dort zuerst die Stufen ändern")
 				return
 			}
 		}
@@ -642,6 +669,13 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, o *store.Object)
 		}
 		o.Data["block"] = b.Map()
 		defer a.E.BlockKick()
+	}
+	if o.ID != 0 {
+		if msg := a.checkChains(func(cw *chainWorld) { cw.groups[o.ID] = o }); msg != "" {
+			errJSON(w, http.StatusBadRequest, msg)
+			return
+		}
+		defer a.syncChains()
 	}
 	if o.ID == 0 {
 		slot, err := a.E.NewSlot("group")

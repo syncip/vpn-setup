@@ -24,7 +24,9 @@ type routeRow struct {
 	Domains []string `json:"domains"`
 	Lists   []int64  `json:"lists"`
 	Group   int64    `json:"group"`
-	Note    string   `json:"note,omitempty"` // warum die Regel gerade nicht wirkt
+	// Kaskade: Ausgänge vor der Zielgruppe (Stufe 1 zuerst); nil = Regel bestimmt keinen Weg
+	Chain []int64 `json:"chain"`
+	Note  string  `json:"note,omitempty"` // warum die Regel gerade nicht wirkt
 	// DNS: Stand der Domain-Erkennung für WireGuard-/OpenVPN-Geräte (nur bei Regeln mit Domains)
 	DNS *engine.RuleDNS `json:"dns,omitempty"`
 }
@@ -35,7 +37,7 @@ func routeRowOf(r *engine.Route, note string) *routeRow {
 		m = "all"
 	}
 	return &routeRow{ID: r.ID, Name: r.Name, Enabled: r.Enabled, Scope: r.Scope, ScopeID: r.ScopeID, Match: m,
-		Nets: orStrings(r.Nets), Domains: orStrings(r.Domains), Lists: orInts(r.Lists), Group: r.Group, Note: note}
+		Nets: orStrings(r.Nets), Domains: orStrings(r.Domains), Lists: orInts(r.Lists), Group: r.Group, Chain: r.Chain, Note: note}
 }
 
 func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +65,9 @@ func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 		UserID   int64  `json:"user_id,omitempty"`
 		ServerID int64  `json:"server_id,omitempty"`
 		Enabled  bool   `json:"enabled"`
+		Type     string `json:"type,omitempty"` // Ausgang: wireguard | openvpn | tor
+		Via      int64  `json:"via,omitempty"`  // Ausgang: verbunden über
+		Auto     int64  `json:"auto,omitempty"` // Gruppe: automatisch für diesen Ausgang (Ende einer Kette)
 	}
 	servers, _ := a.St.Servers()
 	users, _ := a.St.Users()
@@ -81,7 +86,14 @@ func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if gs, err := a.St.Objects("group"); err == nil {
 		for _, o := range gs {
-			gOpts = append(gOpts, opt{ID: o.ID, Name: o.Name, Enabled: o.Enabled})
+			gOpts = append(gOpts, opt{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Auto: numOf(o.Data["auto"])})
+		}
+	}
+	eOpts := []opt{}
+	if es, err := a.St.Objects("exit"); err == nil {
+		for _, o := range es {
+			t, _ := o.Data["type"].(string)
+			eOpts = append(eOpts, opt{ID: o.ID, Name: o.Name, Enabled: o.Enabled, Type: t, Via: numOf(o.Data["via"])})
 		}
 	}
 	if ls, err := a.St.Objects("iplist"); err == nil {
@@ -93,7 +105,7 @@ func (a *API) listRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	errs := a.E.Errors()
 	dns.Rules = nil
-	writeJSON(w, map[string]any{"dns": dns, "routes": rows, "servers": sOpts, "users": uOpts, "peers": pOpts, "groups": gOpts, "lists": lOpts,
+	writeJSON(w, map[string]any{"dns": dns, "routes": rows, "servers": sOpts, "users": uOpts, "peers": pOpts, "groups": gOpts, "exits": eOpts, "lists": lOpts,
 		"error": strings.TrimSpace(errs["acl"] + " " + errs["dns"])})
 }
 
@@ -108,6 +120,8 @@ func (a *API) saveRoute(w http.ResponseWriter, r *http.Request, o *store.Object)
 		Domains *string `json:"domains"` // eine Domain pro Zeile
 		Lists   []int64 `json:"lists"`
 		Group   *int64  `json:"group"`
+		// Kaskade: Stufen (Ausgang …, letzte auch Gruppe); leer = direkt. Ersetzt „group“.
+		Stages *[]stageIn `json:"stages"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -205,6 +219,30 @@ func (a *API) saveRoute(w http.ResponseWriter, r *http.Request, o *store.Object)
 		}
 		o.Data["group"] = *in.Group
 	}
+	var cw *chainWorld
+	var want map[int64]int64
+	var newAuto int64
+	if in.Stages != nil || o.Data["chain"] != nil {
+		var err error
+		if cw, err = a.loadChainWorld(); err != nil {
+			fail(w, err)
+			return
+		}
+		if in.Stages != nil {
+			var msg string
+			if newAuto, msg = cw.routeStages(o, *in.Stages); msg != "" {
+				errJSON(w, http.StatusBadRequest, msg)
+				return
+			}
+		}
+		cw.withRoute(o, false)
+		cw.label[o.ID] = a.routeLabel(o)
+		var msg string
+		if want, _, msg = cw.plan(); msg != "" {
+			errJSON(w, http.StatusBadRequest, msg)
+			return
+		}
+	}
 	if o.Data["match"] == nil {
 		o.Data["match"] = "all"
 	}
@@ -229,9 +267,21 @@ func (a *API) saveRoute(w http.ResponseWriter, r *http.Request, o *store.Object)
 			return
 		}
 	}
+	if newAuto != 0 {
+		g, err := a.newAutoGroup(cw, newAuto)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		delete(cw.groups, -1)
+		o.Data["group"] = g.ID
+	}
 	if err := a.St.SaveObject(o); err != nil {
 		fail(w, err)
 		return
+	}
+	if cw != nil {
+		a.applyChains(cw, want)
 	}
 	a.E.Log("info", "Ziel-Regel gespeichert")
 	a.E.RequestApply()
@@ -261,6 +311,7 @@ func (a *API) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	a.syncChains() // Wege der Kette freigeben, automatische Gruppe entfernen
 	a.E.Log("info", "Ziel-Regel gelöscht")
 	a.E.RequestApply()
 	writeJSON(w, map[string]bool{"ok": true})
