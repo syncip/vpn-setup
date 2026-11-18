@@ -136,3 +136,35 @@ func TestTorHealthIgnoresRTT(t *testing.T) {
 		t.Fatal("WireGuard mit 1500 ms gilt als gesund")
 	}
 }
+
+func TestTorUnitPaths(t *testing.T) {
+	for _, u := range []string{torUnitFile, t2sUnitFile} {
+		if strings.Contains(u, "/etc/vpn/") {
+			t.Fatalf("Unit liest aus /etc/vpn (0700, für die Tor-Benutzer unlesbar):\n%s", u)
+		}
+		if !strings.Contains(u, torDir+"/%i.") {
+			t.Fatalf("Unit ohne %s:\n%s", torDir, u)
+		}
+	}
+	if !strings.Contains(torUnitFile, "ExecStartPre=+/bin/sh") {
+		t.Fatal("Sperrprüfung der Kaskade läuft nicht als root")
+	}
+	if strings.Contains(t2sUnitFile, "PrivateDevices") {
+		t.Fatal("PrivateDevices verbirgt /dev/net/tun")
+	}
+}
+
+func TestTorLastMsg(t *testing.T) {
+	j := "Nov 18 10:00:00.000 [notice] Bootstrapped 10% (conn_done): Connected to a relay\n" +
+		"Nov 18 10:00:05.000 [notice] Bootstrapped 45% (requesting_descriptors): Asking for relay descriptors\n" +
+		"Nov 18 10:00:06.000 [warn] Problem bootstrapping.\n"
+	if got := lastMsg(j, "Bootstrapped "); got != ": Bootstrapped 45% (requesting_descriptors): Asking for relay descriptors" {
+		t.Fatalf("Bootstrap: %q", got)
+	}
+	if got := lastMsg(j, ""); got != ": Problem bootstrapping." {
+		t.Fatalf("letzte Zeile: %q", got)
+	}
+	if got := lastMsg("", ""); got != "" {
+		t.Fatalf("leer: %q", got)
+	}
+}

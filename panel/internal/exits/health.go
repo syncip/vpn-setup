@@ -143,6 +143,11 @@ func (m *Manager) probe(env *Env, e *Exit, speed bool) (Sample, string, string, 
 		s.OK = resp.StatusCode == 200 && net.ParseIP(ip) != nil
 	} else {
 		perr = fmt.Errorf("kein Internet über den Tunnel")
+		if tor {
+			if d := torDiag(env, n); d != "" {
+				perr = fmt.Errorf("kein Internet über den Tunnel – %s", d)
+			}
+		}
 	}
 	mb := 0.0
 	if speed && s.OK {
@@ -375,6 +380,9 @@ func (m *Manager) isHealthy(g *Group, e *Exit) (bool, string) {
 	case !st.Up:
 		return false, "Tunnel nicht verbunden"
 	case !last.OK && again:
+		if strings.HasPrefix(st.Error, "kein Internet über den Tunnel – ") { // mit Ursache (Tor)
+			return false, st.Error
+		}
 		return false, "kein Internet über den Tunnel"
 	case lossOf(last) > g.MaxLoss && again:
 		return false, fmt.Sprintf("Paketverlust %.0f %%", lossOf(last))

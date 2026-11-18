@@ -25,7 +25,8 @@ import (
 
 const (
 	torBin       = "/usr/bin/tor"
-	torDir       = "/etc/vpn/tor"
+	torDir       = "/etc/vpn-tor" // außerhalb von /etc/vpn (0700): die Tor-Benutzer müssen ihre torrc lesen
+	torOldDir    = "/etc/vpn/tor" // bis 0.25.0
 	torStateDir  = "/var/lib/vpn-tor"
 	torUnitPath  = "/etc/systemd/system/vpn-tor@.service"
 	t2sUnitPath  = "/etc/systemd/system/vpn-t2s@.service"
@@ -48,8 +49,9 @@ StartLimitIntervalSec=0
 Type=simple
 User=vpntor-%i
 # Kaskade: ohne Sperr-Regel für den Benutzer (Kill-Switch) startet Tor nicht – sonst ginge es direkt hinaus
-ExecStartPre=/bin/sh -c 'test ! -e /etc/vpn/tor/%i.via || { u=$$(id -u vpntor-%i) && ip -4 rule show | grep -q "uidrange $$u-$$u blackhole" && ip -6 rule show | grep -q "uidrange $$u-$$u blackhole"; }'
-ExecStart=/usr/bin/tor -f /etc/vpn/tor/%i.torrc --RunAsDaemon 0
+# „+“: als root – der Dienstbenutzer sähe die Datei womöglich nicht, und die Prüfung fiele weg
+ExecStartPre=+/bin/sh -c 'test ! -e /etc/vpn-tor/%i.via || { u=$$(id -u vpntor-%i) && ip -4 rule show | grep -q "uidrange $$u-$$u blackhole" && ip -6 rule show | grep -q "uidrange $$u-$$u blackhole"; }'
+ExecStart=/usr/bin/tor -f /etc/vpn-tor/%i.torrc --RunAsDaemon 0
 Restart=always
 RestartSec=10
 StateDirectory=vpn-tor/%i
@@ -70,7 +72,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=vpntor-%i
-EnvironmentFile=/etc/vpn/tor/%i.env
+EnvironmentFile=/etc/vpn-tor/%i.env
 ExecStart=/usr/local/bin/vpnpanel tun2socks -dev %i -socks ${SOCKS} -dns ${DNS}
 Restart=always
 RestartSec=3
@@ -343,6 +345,9 @@ func (m *Manager) applyTor(env *Env, e *Exit) error {
 			return fmt.Errorf("Verzeichnis %s: %v", torDir, err)
 		}
 	}
+	for _, f := range []string{".torrc", ".env", ".via"} { // alter Ort (bis 0.25.0)
+		_ = sys.Remove(torOldDir + "/" + n + f)
+	}
 	conf := torrc(e, plugins)
 	if _, err := sys.WriteFile(torDir+"/"+n+".torrc", []byte(conf), 0o640); err != nil {
 		return err
@@ -417,6 +422,7 @@ func removeTor(env *Env, n string) {
 	stopTor(env, n)
 	for _, f := range []string{".torrc", ".env", ".via"} {
 		_ = env.Sys.Remove(torDir + "/" + n + f)
+		_ = env.Sys.Remove(torOldDir + "/" + n + f)
 	}
 	if !env.Sys.DryRun() {
 		_, _ = env.Sys.Run("rm", "-rf", "--", torStateDir+"/"+n)
@@ -546,4 +552,41 @@ func (m *Manager) NewIdentity(env *Env, e *Exit) error {
 	_ = cmd("QUIT")
 	env.Log("info", "Ausgang „"+e.Name+"“: neue Tor-Identität")
 	return nil
+}
+
+// torDiag beschreibt, woran ein Tor-Ausgang hängt (Dienst aus, letzte Meldung, Bootstrap-Stand).
+func torDiag(env *Env, n string) string {
+	sys := env.Sys
+	for _, u := range []struct{ unit, name string }{{"vpn-tor@" + n, "Tor"}, {"vpn-t2s@" + n, "Tor-Schnittstelle"}} {
+		if _, err := sys.Run("systemctl", "is-active", "--quiet", u.unit); err != nil {
+			out, _ := sys.Run("journalctl", "-u", u.unit, "-n", "30", "-o", "cat", "--no-pager")
+			return u.name + " läuft nicht" + lastMsg(out, "")
+		}
+	}
+	out, _ := sys.Run("journalctl", "-u", "vpn-tor@"+n, "-n", "200", "-o", "cat", "--no-pager")
+	if m := lastMsg(out, "Bootstrapped "); m != "" {
+		return "Tor" + m
+	}
+	return "Tor" + lastMsg(out, "")
+}
+
+// lastMsg: letzte (passende) Zeile eines Journals, gekürzt, als „: …“.
+func lastMsg(out, want string) string {
+	ls := strings.Split(strings.TrimSpace(out), "\n")
+	for i := len(ls) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(ls[i])
+		if l == "" || (want != "" && !strings.Contains(l, want)) {
+			continue
+		}
+		if want != "" {
+			l = l[strings.Index(l, want):]
+		} else if j := strings.Index(l, "] "); j >= 0 && j < 40 { // „… [notice] Text“
+			l = l[j+2:]
+		}
+		if r := []rune(l); len(r) > 160 {
+			l = string(r[:160]) + "…"
+		}
+		return ": " + l
+	}
+	return ""
 }
