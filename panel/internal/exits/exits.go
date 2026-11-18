@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,6 +111,7 @@ type Group struct {
 	Blocked string
 	// Rotate: Wechsel innerhalb der Gruppe (ganze Gruppe bzw. je Ziel), siehe rotate.go
 	Rotate Rotation
+	Block  BlockCheck
 }
 
 func num(m store.M, k string, def float64) float64 {
@@ -171,6 +173,7 @@ func GroupFrom(o *store.Object) *Group {
 		g.DNS = []string{"1.1.1.1", "9.9.9.9"}
 	}
 	g.Rotate = RotationFrom(o.Data["rotate"])
+	g.Block = BlockCheckFrom(o.Data["block"])
 	return g
 }
 
@@ -267,13 +270,15 @@ type Manager struct {
 	force   bool           // nächste Prüfung: auch Ausgänge in Bereitschaft (Knopf „Jetzt prüfen“)
 	wake    chan struct{}  // Prüfung sofort statt nach 30 s
 	// Wechsel und weiches Umschalten
-	rot        map[int64]*rotState      // je Gruppe
-	drain      map[int64]drainState     // auslaufende Ausgänge
-	drainBy    map[int64]map[int64]bool // Gruppe → auslaufende Ausgänge
-	lastExits  []*Exit                  // letzter Stand (für die Verbindungs-Zuordnung)
-	lastGroups []*Group                 //
-	now        func() time.Time         // Uhr (Tests)
-	rngMu      sync.Mutex               //
+	rot        map[int64]*rotState                // je Gruppe
+	drain      map[int64]drainState               // auslaufende Ausgänge
+	drainBy    map[int64]map[int64]bool           // Gruppe → auslaufende Ausgänge
+	lastExits  []*Exit                            // letzter Stand (für die Verbindungs-Zuordnung)
+	lastGroups []*Group                           //
+	now        func() time.Time                   // Uhr (Tests)
+	ov         map[int64]map[string]int64         // Block-Prüfung: Gruppe → Domain → Ausgang
+	ovIPs      map[ovKey]map[netip.Addr]time.Time // gelernte Adressen der Ausnahmen
+	rngMu      sync.Mutex                         //
 	rng        interface {
 		Float64() float64
 		Intn(int) int
@@ -283,7 +288,8 @@ type Manager struct {
 
 func New() *Manager {
 	return &Manager{status: map[int64]*ExitStatus{}, groups: map[int64]*GroupStatus{}, healthy: map[string]time.Time{}, conn: map[int64]bool{},
-		wake: make(chan struct{}, 1), rot: map[int64]*rotState{}, drain: map[int64]drainState{}, drainBy: map[int64]map[int64]bool{}, rng: newRand()}
+		wake: make(chan struct{}, 1), rot: map[int64]*rotState{}, drain: map[int64]drainState{}, drainBy: map[int64]map[int64]bool{}, rng: newRand(),
+		ov: map[int64]map[string]int64{}, ovIPs: map[ovKey]map[netip.Addr]time.Time{}}
 }
 
 // Wake: nächste Prüfung sofort (z. B. wenn eine Gruppe ihren Ausgang verloren hat).

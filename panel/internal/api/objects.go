@@ -54,6 +54,8 @@ type groupRow struct {
 	Limit   *engine.ExitLimitState      `json:"limit"`   // Verbrauch und Status im Zeitraum
 	Traffic map[string]store.ExitTotals `json:"traffic"` // day | month (über die Gruppe gelaufen)
 	Rotate  exits.Rotation              `json:"rotate"`  // Wechsel innerhalb der Gruppe
+	Block   exits.BlockCheck            `json:"block"`   // Block-Prüfung
+	Avoid   int                         `json:"avoid"`   // Ziele mit Ausnahme (laufen über einen anderen Ausgang)
 }
 
 func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
@@ -71,11 +73,13 @@ func (a *API) listExits(w http.ResponseWriter, r *http.Request) {
 	now0 := time.Now()
 	gtDay, _ := a.St.GroupTraffic(now0.Add(-24 * time.Hour).Unix())
 	gtMonth, _ := a.St.GroupTraffic(now0.AddDate(0, 0, -30).Unix())
+	ov := a.E.Exits.Overrides()
 	for _, o := range gro {
 		g := exits.GroupFrom(o)
 		row := &groupRow{ID: g.ID, Name: g.Name, Enabled: g.Enabled, Exits: g.Exits, OnFail: g.OnFail, MaxLoss: g.MaxLoss,
 			MaxRTT: g.MaxRTT, MinMbit: g.MinMbit, DNS: strings.Join(g.DNS, ", "), Users: []map[string]any{},
-			Limits: engine.ExitLimits(o), Traffic: map[string]store.ExitTotals{"day": gtDay[g.ID], "month": gtMonth[g.ID]}, Rotate: g.Rotate}
+			Limits: engine.ExitLimits(o), Traffic: map[string]store.ExitTotals{"day": gtDay[g.ID], "month": gtMonth[g.ID]}, Rotate: g.Rotate,
+			Block: g.Block, Avoid: len(ov[g.ID])}
 		if st, ok := glim[g.ID]; ok {
 			row.Limit = &st
 		}
@@ -389,16 +393,17 @@ func (a *API) checkExit(w http.ResponseWriter, r *http.Request) {
 }
 
 type groupInput struct {
-	Name    *string         `json:"name"`
-	Enabled *bool           `json:"enabled"`
-	Exits   []int64         `json:"exits"`
-	OnFail  string          `json:"on_fail"`
-	MaxLoss *float64        `json:"max_loss"`
-	MaxRTT  *float64        `json:"max_rtt"`
-	MinMbit *float64        `json:"min_mbit"`
-	DNS     *string         `json:"dns"`
-	Limits  json.RawMessage `json:"limits"` // fehlt = unverändert, null = keine Limits
-	Rotate  *exits.Rotation `json:"rotate"` // fehlt = unverändert
+	Name    *string           `json:"name"`
+	Enabled *bool             `json:"enabled"`
+	Exits   []int64           `json:"exits"`
+	OnFail  string            `json:"on_fail"`
+	MaxLoss *float64          `json:"max_loss"`
+	MaxRTT  *float64          `json:"max_rtt"`
+	MinMbit *float64          `json:"min_mbit"`
+	DNS     *string           `json:"dns"`
+	Limits  json.RawMessage   `json:"limits"` // fehlt = unverändert, null = keine Limits
+	Rotate  *exits.Rotation   `json:"rotate"` // fehlt = unverändert
+	Block   *exits.BlockCheck `json:"block"`  // fehlt = unverändert
 }
 
 func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, o *store.Object) {
@@ -495,6 +500,32 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, o *store.Object)
 		_ = json.Unmarshal(b, &mm)
 		o.Data["rotate"] = mm
 	}
+	if in.Block != nil {
+		b := *in.Block
+		var ds []string
+		seen := map[string]bool{}
+		for _, d := range b.Domains {
+			n := exits.NormDomain(d)
+			if n == "" {
+				if strings.TrimSpace(d) != "" {
+					errJSON(w, http.StatusBadRequest, "Block-Prüfung: ungültiges Ziel „"+strings.TrimSpace(d)+"“")
+					return
+				}
+				continue
+			}
+			if !seen[n] {
+				seen[n] = true
+				ds = append(ds, n)
+			}
+		}
+		b.Domains = ds
+		if msg := b.Check(); msg != "" {
+			errJSON(w, http.StatusBadRequest, msg)
+			return
+		}
+		o.Data["block"] = b.Map()
+		defer a.E.BlockKick()
+	}
 	if o.ID == 0 {
 		slot, err := a.E.NewSlot("group")
 		if err != nil {
@@ -552,6 +583,46 @@ func (a *API) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	_ = a.St.SetSetting(fmt.Sprintf("state:exits:pin:%d", o.ID), "")
 	a.E.Log("warn", "Ausgangsgruppe „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// groupBlock: Ziele und Ergebnisse der Block-Prüfung einer Gruppe.
+func (a *API) groupBlock(w http.ResponseWriter, r *http.Request) {
+	rows, last, err := a.E.BlockReport(pathID(r))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	var ts int64
+	if !last.IsZero() {
+		ts = last.Unix()
+	}
+	writeJSON(w, map[string]any{"rows": rows, "last": ts})
+}
+
+// checkGroupBlock: Ziele der Gruppe (bzw. ein Ziel) sofort über alle Ausgänge prüfen.
+func (a *API) checkGroupBlock(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Domain string `json:"domain"`
+	}
+	_ = readJSON(r, &in)
+	a.E.BlockCheckNow(pathID(r), in.Domain)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// resetGroupBlock: gespeicherte Ergebnisse eines Ziels verwerfen (wird neu geprüft).
+func (a *API) resetGroupBlock(w http.ResponseWriter, r *http.Request) {
+	d := exits.NormDomain(r.URL.Query().Get("domain"))
+	if d == "" {
+		errJSON(w, http.StatusBadRequest, "Ziel fehlt")
+		return
+	}
+	if err := a.St.DeleteBlockResults(d, 0); err != nil {
+		fail(w, err)
+		return
+	}
+	a.E.Log("info", "Block-Prüfung: Ergebnisse für "+d+" zurückgesetzt")
+	a.E.BlockCheckNow(pathID(r), d)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

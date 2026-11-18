@@ -34,7 +34,7 @@ type Runner interface {
 
 type Real struct{}
 
-func (Real) DryRun() bool   { return false }
+func (Real) DryRun() bool  { return false }
 func (Real) Log() []string { return nil }
 
 func (r Real) Run(name string, args ...string) (string, error) { return r.RunInput("", name, args...) }

@@ -91,6 +91,11 @@ var migrations = []string{
 	`CREATE TABLE group_traffic (group_id INTEGER NOT NULL, hour INTEGER NOT NULL, up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
 	   PRIMARY KEY (group_id, hour));
 	 CREATE INDEX group_traffic_hour ON group_traffic(hour);`,
+	// Block-Prüfung: Ergebnis je Ziel und Ausgang (siehe blockcheck.go)
+	`CREATE TABLE block_results (domain TEXT NOT NULL, exit_id INTEGER NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+	   checked INTEGER NOT NULL DEFAULT 0, fails INTEGER NOT NULL DEFAULT 0, since INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0,
+	   PRIMARY KEY (domain, exit_id));
+	 CREATE INDEX dns_log_via ON dns_log(via, ts);`,
 }
 
 // SchemaVersion: Stand der Datenbank, den dieses Programm kennt (für die Prüfung von Sicherungen).
@@ -446,9 +451,11 @@ func (s *Store) queryPeers(where string, args ...any) ([]*Peer, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) Peers() ([]*Peer, error)                   { return s.queryPeers("") }
-func (s *Store) PeersOfUser(id int64) ([]*Peer, error)     { return s.queryPeers("WHERE user_id=?", id) }
-func (s *Store) PeersOfServer(id int64) ([]*Peer, error)   { return s.queryPeers("WHERE server_id=?", id) }
+func (s *Store) Peers() ([]*Peer, error)               { return s.queryPeers("") }
+func (s *Store) PeersOfUser(id int64) ([]*Peer, error) { return s.queryPeers("WHERE user_id=?", id) }
+func (s *Store) PeersOfServer(id int64) ([]*Peer, error) {
+	return s.queryPeers("WHERE server_id=?", id)
+}
 
 func (s *Store) Peer(id int64) (*Peer, error) {
 	p, err := scanPeer(s.db.QueryRow(`SELECT `+peerCols+` FROM peers WHERE id=?`, id))
@@ -696,8 +703,10 @@ func (s *Store) adminWhere(where string, arg any) (*Admin, error) {
 	return &a, err
 }
 
-func (s *Store) Admin(id int64) (*Admin, error)            { return s.adminWhere("id=?", id) }
-func (s *Store) AdminByName(n string) (*Admin, error)      { return s.adminWhere("username=? COLLATE NOCASE", n) }
+func (s *Store) Admin(id int64) (*Admin, error) { return s.adminWhere("id=?", id) }
+func (s *Store) AdminByName(n string) (*Admin, error) {
+	return s.adminWhere("username=? COLLATE NOCASE", n)
+}
 
 func (s *Store) SaveAdmin(a *Admin) error {
 	if a.ID == 0 {

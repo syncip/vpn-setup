@@ -26,14 +26,14 @@ type Peer struct {
 	Secrets  M      `json:"-"`
 
 	// Traffic aus Sicht des Nutzers: Up = vom Gerät gesendet, Down = empfangen
-	TotalUp   int64 `json:"total_up"`
-	TotalDown int64 `json:"total_down"`
-	LastRx    int64 `json:"-"` // letzter Rohzähler (WireGuard)
-	LastTx    int64 `json:"-"`
-	Handshake int64 `json:"handshake"`
-	LastSeen  int64 `json:"last_seen"`
+	TotalUp   int64  `json:"total_up"`
+	TotalDown int64  `json:"total_down"`
+	LastRx    int64  `json:"-"` // letzter Rohzähler (WireGuard)
+	LastTx    int64  `json:"-"`
+	Handshake int64  `json:"handshake"`
+	LastSeen  int64  `json:"last_seen"`
 	Endpoint  string `json:"endpoint"` // zuletzt gesehene öffentliche Adresse
-	Created   int64 `json:"created"`
+	Created   int64  `json:"created"`
 }
 
 // Tier: ab einem Verbrauch gilt eine geringere Geschwindigkeit.

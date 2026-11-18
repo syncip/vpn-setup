@@ -32,11 +32,22 @@ type pinGroup struct {
 	Slot  int
 	Exits []int // Plätze der Ausgänge: einer = ganze Gruppe, mehrere = je Ziel verteilt
 	Seed  uint32
+	Ov    []pinOv // Ausnahmen der Block-Prüfung (vor der Verteilung)
+}
+
+// pinOv: Ziele (gelernte Adressen) einer Gruppe, die über einen bestimmten Ausgang laufen.
+type pinOv struct {
+	Exit  int      // Platz des Ausgangs
+	Elems []string // „1.2.3.4 timeout 3600s“
 }
 
 // pinScript erzeugt die Tabelle. exits = Plätze aller eingeschalteten Ausgänge (für bestehende
 // Verbindungen), groups = Verteilung je Gruppe. Leer, wenn es keine Ausgänge gibt.
-func pinScript(exits []int, groups []pinGroup) string {
+func pinScript(exits []int, groups []pinGroup) string { return pinScriptX(exits, groups, true) }
+
+// pinScriptX: elems=false ohne Set-Inhalte (Kennung für „hat sich etwas geändert“ – die Inhalte
+// ändern sich laufend und werden einzeln nachgetragen).
+func pinScriptX(exits []int, groups []pinGroup, elems bool) string {
 	if len(exits) == 0 {
 		return ""
 	}
@@ -83,7 +94,22 @@ func pinScript(exits []int, groups []pinGroup) string {
 		if len(ex) == 0 {
 			continue
 		}
+		for _, o := range g.Ov {
+			if !has[o.Exit] {
+				continue
+			}
+			fmt.Fprintf(&b, "\tset ov%d_%d {\n\t\ttype ipv4_addr; flags timeout;\n", g.Slot, o.Exit)
+			if elems && len(o.Elems) > 0 {
+				fmt.Fprintf(&b, "\t\telements = { %s }\n", strings.Join(o.Elems, ", "))
+			}
+			b.WriteString("\t}\n")
+		}
 		fmt.Fprintf(&b, "\tchain g%d {\n", g.Slot)
+		for _, o := range g.Ov {
+			if has[o.Exit] {
+				fmt.Fprintf(&b, "\t\tct mark & 0x%08x == 0x0 ip daddr @ov%d_%d ct mark set ct mark & 0x%08x | 0x%08x\n", pinBit, g.Slot, o.Exit, keepMask, probeMark(o.Exit))
+			}
+		}
 		if len(ex) == 1 {
 			fmt.Fprintf(&b, "\t\tct mark & 0x%08x == 0x0 ct mark set ct mark & 0x%08x | 0x%08x\n", pinBit, keepMask, probeMark(ex[0]))
 		} else {
@@ -144,6 +170,14 @@ func (m *Manager) syncPins(env *Env) {
 			}
 		}
 		if len(p.Exits) > 0 {
+			seen := map[int64]bool{}
+			for _, x := range m.ov[g.ID] {
+				if xe := byID[x]; xe != nil && xe.Enabled && xe.Slot > 0 && !seen[x] {
+					seen[x] = true
+					p.Ov = append(p.Ov, pinOv{Exit: xe.Slot, Elems: m.ovElementsLocked(ovKey{g.ID, x})})
+				}
+			}
+			sort.Slice(p.Ov, func(i, j int) bool { return p.Ov[i].Exit < p.Ov[j].Exit })
 			pg = append(pg, p)
 		}
 	}
@@ -158,7 +192,7 @@ func (m *Manager) syncPins(env *Env) {
 		}
 		return
 	}
-	sig := hash(script)
+	sig := hash(pinScriptX(slots, pg, false))
 	if env.Get(key) == sig {
 		if _, err := sys.Run("nft", "-t", "list", "table", "inet", pinTable); err == nil {
 			return

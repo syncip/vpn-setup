@@ -754,6 +754,10 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 		}
 		return done(nil, "error", "keine Antwort vom DNS-Server", group)
 	}
+	if group != 0 && q.Type == dnsmessage.TypeA && e.Exits != nil && e.Exits.HasOverrides(group) {
+		// Block-Prüfung: Adressen von Zielen mit Ausnahme in deren Set eintragen
+		e.Exits.LearnOverride(e.exitEnv(), group, name, answerAddrs(resp))
+	}
 	detail := ""
 	if matched {
 		if q.Type == dnsmessage.TypeA {

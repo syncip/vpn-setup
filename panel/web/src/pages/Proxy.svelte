@@ -276,6 +276,7 @@
       ? clone($state.snapshot({ name: g.name, enabled: g.enabled, exits: g.exits, on_fail: g.on_fail, max_loss: g.max_loss, max_rtt: g.max_rtt, min_mbit: g.min_mbit, dns: g.dns }))
       : { name: '', enabled: true, exits: d.exits.length === 1 ? [d.exits[0].id] : [], on_fail: 'block', max_loss: 20, max_rtt: 400, min_mbit: 0, dns: '1.1.1.1, 9.9.9.9' };
     gr.rot = rotForm(g?.rotate);
+    gr.blk = blkForm(g?.block);
     grOpen = true;
   }
   function toggleMember(id) {
@@ -292,6 +293,8 @@
     for (const k of ['max_loss', 'max_rtt', 'min_mbit']) body[k] = Number(body[k]) || 0;
     body.rotate = rotBody(body.rot);
     delete body.rot;
+    body.block = blkBody(body.blk);
+    delete body.blk;
     const r = grCur ? await run(() => put(`/groups/${grCur.id}`, body), 'Gruppe gespeichert') : await run(() => post('/groups', body), 'Gruppe angelegt');
     if (r) {
       grOpen = false;
@@ -313,6 +316,93 @@
     return `in ${fmtNum(Math.round(s / 360) / 10)} Std.`;
   }
   const ROT_MODE = { group: 'Ganze Gruppe wechselt', dest: 'Je Ziel verteilt' };
+  // Block-Prüfung: Formularwerte (Ziele als Text, eins pro Zeile)
+  function blkForm(b) {
+    b = b || {};
+    return {
+      on: !!b.on,
+      domains: (b.domains || []).join('\n'),
+      auto: b.auto ?? true,
+      top: b.top || 20,
+      ok_hours: b.ok_hours || 24,
+      bad_hours: b.bad_hours || 6,
+      fails: b.fails || 4,
+      realtime: b.realtime ?? true,
+    };
+  }
+  function blkBody(f) {
+    return {
+      on: !!f.on,
+      domains: String(f.domains || '')
+        .split(/[\s,;]+/)
+        .map((x) => x.trim())
+        .filter(Boolean),
+      auto: !!f.auto,
+      top: Number(f.top) || 20,
+      ok_hours: Number(f.ok_hours) || 24,
+      bad_hours: Number(f.bad_hours) || 6,
+      fails: Number(f.fails) || 4,
+      realtime: !!f.realtime,
+    };
+  }
+  // Ergebnis-Übersicht
+  let bkOpen = $state(false);
+  let bkGroup = $state(null);
+  let bkData = $state(null);
+  let bkAdd = $state('');
+  async function openBlock(g) {
+    bkGroup = g;
+    bkData = null;
+    bkAdd = '';
+    bkOpen = true;
+    await loadBlock();
+  }
+  async function loadBlock() {
+    if (!bkGroup) return;
+    const r = await run(() => get(`/groups/${bkGroup.id}/block`));
+    if (r) bkData = r;
+  }
+  $effect(() => {
+    if (!bkOpen) return;
+    const t = setInterval(loadBlock, 5000);
+    return () => clearInterval(t);
+  });
+  async function checkBlock(domain = '') {
+    if (await run(() => post(`/groups/${bkGroup.id}/block/check`, { domain }), domain ? `${domain} wird geprüft` : 'Alle Ziele werden geprüft')) setTimeout(loadBlock, 2500);
+  }
+  async function resetBlock(domain) {
+    if (await run(() => del(`/groups/${bkGroup.id}/block?domain=${encodeURIComponent(domain)}`), 'Ergebnisse verworfen – wird neu geprüft')) setTimeout(loadBlock, 2500);
+  }
+  async function addBlockTarget() {
+    const g = groupById[bkGroup.id];
+    const n = bkAdd.trim();
+    if (!g || !n) return;
+    const b = blkBody(blkForm(g.block));
+    b.on = true;
+    b.domains = [...b.domains, n];
+    if (await run(() => put(`/groups/${g.id}`, { ...groupPayload(g), block: b }), `${n} wird geprüft`)) {
+      bkAdd = '';
+      await load();
+      setTimeout(loadBlock, 2500);
+    }
+  }
+  // unveränderte Felder einer Gruppe (zum Speichern nur der Block-Prüfung)
+  function groupPayload(g) {
+    return { name: g.name, enabled: g.enabled, exits: g.exits, on_fail: g.on_fail, max_loss: g.max_loss, max_rtt: g.max_rtt, min_mbit: g.min_mbit, dns: g.dns };
+  }
+  const BLK = {
+    ok: ['ok', 'erreichbar'],
+    captcha: ['bad', 'Captcha'],
+    blocked: ['bad', 'gesperrt'],
+    error: ['warn', 'Fehler'],
+  };
+  function blkCell(r, fails) {
+    if (!r) return null;
+    if (r.status === 'error' && r.fails >= fails) return ['bad', `${r.fails}× Fehler`];
+    if (r.status === 'ok' && r.fails > 0) return ['warn', `${r.fails}× Fehler gemeldet`];
+    if (r.status === 'error') return ['warn', `Fehler (${r.fails}×)`];
+    return BLK[r.status] || ['', r.status];
+  }
   async function switchTo(g, exitId) {
     if (!exitId || exitId === g.status?.active) return;
     if (await run(() => post(`/groups/${g.id}/switch`, { exit: exitId }), 'Umgeschaltet')) load();
@@ -514,6 +604,18 @@
               {#if R.rotate_at}{R.next_rotate ? ' oder' : g.rotate.mode === 'dest' ? 'neu gemischt' : 'nächster Wechsel'} nach {bytes(R.rotate_at)} ({bytes(R.rotate_bytes || 0)} erreicht){/if}
               {#if R.next}{' · '}als Nächstes: {exitById[R.next]?.name || '–'} (bereit){/if}
               {#if R.rotated}{' · '}zuletzt {date(R.rotated, true)}{/if}
+            </span>
+          </div>
+        {/if}
+        {#if g.enabled && g.block?.on}
+          <div class="glim rot">
+            <span class="spread tiny">
+              <span class="strong"><Icon name="shield" size={12} /> Block-Prüfung</span>
+              <button class="btn sm ghost" onclick={() => openBlock(g)} title="Ergebnisse je Ziel und Ausgang">Ergebnisse</button>
+            </span>
+            <span class="tiny muted">
+              {g.block.domains?.length || 0} feste Ziele{#if g.block.auto} + {g.block.top} meistbesuchte{/if}
+              {#if g.avoid}{' · '}<span class="warn-text">{g.avoid} {g.avoid === 1 ? 'Ziel weicht' : 'Ziele weichen'} auf einen anderen Ausgang aus</span>{:else}{' · '}keine Ausnahmen{/if}
             </span>
           </div>
         {/if}
@@ -845,11 +947,95 @@
         {/if}
       </div>
     {/if}
+    {#if gr.blk}
+      <div class="field rotbox">
+        <span class="label">Block-Prüfung <Info title="Block-Prüfung" wide text="Prüft Ziele (Websites) über jeden Ausgang der Gruppe – wie ein Browser. Kommt über einen Ausgang ein Captcha, eine Sperrseite oder scheitert das Ziel mehrmals in Folge, läuft dieses Ziel automatisch über einen anderen Ausgang der Gruppe, der nachweislich funktioniert (Gegenprobe). Die Ergebnisse werden gespeichert und nur in großen Abständen erneuert – bekannte Ziele werden nicht ständig neu geprüft. Fehlschläge aus dem Verkehr (Proxy) zählen mit und lösen bei Bedarf sofort eine Prüfung aus." /></span>
+        <label class="check"><input type="checkbox" bind:checked={gr.blk.on} /> Ziele prüfen und bei Sperre ausweichen</label>
+        {#if gr.blk.on}
+          <div class="stack" style="gap:8px;margin-top:8px">
+            <div class="field"><label for="gr-blkd">Feste Ziele <span class="muted tiny">(eins pro Zeile, z. B. example.org – gilt auch für Unterdomains)</span></label><textarea id="gr-blkd" class="input" rows="3" bind:value={gr.blk.domains} placeholder="shop.example.org"></textarea></div>
+            <div class="row wrap rotline">
+              <label class="check"><input type="checkbox" bind:checked={gr.blk.auto} /> dazu die meistbesuchten Ziele der Gruppe</label>
+              {#if gr.blk.auto}<span class="row small" style="gap:6px">die <input class="input num" type="number" min="1" max="200" bind:value={gr.blk.top} /> häufigsten (DNS, 7 Tage)</span>{/if}
+            </div>
+            <div class="grid cols-3">
+              <div class="field"><label for="gr-blkok">„Erreichbar“ erneut prüfen (Std.)</label><input id="gr-blkok" class="input" type="number" min="1" bind:value={gr.blk.ok_hours} /></div>
+              <div class="field"><label for="gr-blkbad">„Gesperrt“ erneut prüfen (Std.)</label><input id="gr-blkbad" class="input" type="number" min="1" bind:value={gr.blk.bad_hours} /></div>
+              <div class="field"><label for="gr-blkf">Gesperrt ab … Fehlern in Folge</label><input id="gr-blkf" class="input" type="number" min="1" max="20" bind:value={gr.blk.fails} /></div>
+            </div>
+            <label class="check small"><input type="checkbox" bind:checked={gr.blk.realtime} /> Proxy weicht sofort aus <Info title="Echtzeit" text="Kommt eine Verbindung des Proxys über den Ausgang nicht zustande, versucht der Proxy es ohne Wartezeit über den nächsten Ausgang der Gruppe. Der Fehlschlag zählt für die Block-Prüfung." /></label>
+            {#if !gr.blk.auto && !String(gr.blk.domains || '').trim()}<div class="tiny" style="color:var(--warn)">Ziele eintragen oder die meistbesuchten Ziele einschalten.</div>{/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
     <label class="switch"><input type="checkbox" bind:checked={gr.enabled} /><span class="track"></span> Aktiv</label>
   </div>
   {#snippet footer()}
     <button class="btn" onclick={() => (grOpen = false)}>Abbrechen</button>
-    <button class="btn primary" onclick={saveGroup} disabled={!gr.name || (gr.rot?.mode === 'group' && !gr.rot.time && !gr.rot.gb)}>{grCur ? 'Speichern' : 'Anlegen'}</button>
+    <button class="btn primary" onclick={saveGroup} disabled={!gr.name || (gr.rot?.mode === 'group' && !gr.rot.time && !gr.rot.gb) || (gr.blk?.on && !gr.blk.auto && !String(gr.blk.domains || '').trim())}>{grCur ? 'Speichern' : 'Anlegen'}</button>
+  {/snippet}
+</Modal>
+
+<Modal bind:open={bkOpen} title={bkGroup ? `Block-Prüfung ${bkGroup.name}` : 'Block-Prüfung'} width={860}>
+  {@const G = bkGroup ? groupById[bkGroup.id] || bkGroup : null}
+  {#if G}
+    <div class="stack" style="gap:10px">
+      <div class="row wrap" style="gap:8px">
+        <span class="small muted grow">
+          Ergebnisse je Ziel und Ausgang. Gesperrte Ziele laufen über einen Ausgang mit „erreichbar“.
+          {#if bkData?.last}Letzter Durchlauf {ago(bkData.last)}.{/if}
+        </span>
+        <button class="btn sm" onclick={() => checkBlock()}><Icon name="refresh" size={14} /> Alle jetzt prüfen</button>
+      </div>
+      <form class="row" style="gap:6px" onsubmit={(ev) => { ev.preventDefault(); addBlockTarget(); }}>
+        <input class="input grow" placeholder="Ziel hinzufügen, z. B. shop.example.org" bind:value={bkAdd} />
+        <button class="btn sm" type="submit" disabled={!bkAdd.trim()}><Icon name="plus" size={14} /> Hinzufügen</button>
+      </form>
+      {#if !bkData}
+        <div class="muted small">Lade …</div>
+      {:else if !bkData.rows.length}
+        <div class="muted small">Noch keine Ziele – feste Ziele eintragen oder warten, bis über die Gruppe Seiten aufgerufen wurden.</div>
+      {:else}
+        <div class="tblwrap">
+          <table class="table blk">
+            <thead>
+              <tr>
+                <th>Ziel</th>
+                {#each G.exits as xid}<th>{exitById[xid]?.name || xid}</th>{/each}
+                <th>Läuft über</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each bkData.rows as row (row.domain)}
+                <tr class:over={row.over}>
+                  <td><span class="strong">{row.domain}</span>{#if row.manual}<span class="tiny muted"> · fest</span>{/if}</td>
+                  {#each G.exits as xid}
+                    {@const r = row.results[xid]}
+                    {@const c = blkCell(r, G.block?.fails || 4)}
+                    <td title={r ? `${r.detail || ''}${r.checked ? ' · geprüft ' + date(r.checked, true) : ' · nur gemeldet'}` : 'noch nicht geprüft'}>
+                      {#if c}<span class="badge {c[0]}">{c[1]}</span>{#if r.checked}<div class="tiny muted">{ago(r.checked)}</div>{/if}{:else}<span class="tiny muted">–</span>{/if}
+                    </td>
+                  {/each}
+                  <td>
+                    {#if row.via}{exitById[row.via]?.name || row.via}{:else}<span class="muted">–</span>{/if}
+                    {#if row.over}<div><span class="badge warn">Ausnahme</span></div>{/if}
+                  </td>
+                  <td class="right nowrap">
+                    <button class="btn sm ghost" title="Jetzt über alle Ausgänge prüfen" onclick={() => checkBlock(row.domain)}><Icon name="refresh" size={14} /></button>
+                    <button class="btn sm ghost" title="Gespeicherte Ergebnisse verwerfen" onclick={() => resetBlock(row.domain)}><Icon name="trash" size={14} /></button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </div>
+  {/if}
+  {#snippet footer()}
+    <button class="btn" onclick={() => (bkOpen = false)}>Schließen</button>
   {/snippet}
 </Modal>
 
@@ -876,6 +1062,21 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+  .tblwrap {
+    overflow-x: auto;
+  }
+  .table.blk td {
+    vertical-align: top;
+  }
+  .table.blk tr.over td {
+    background: color-mix(in srgb, var(--warn) 7%, transparent);
+  }
+  .warn-text {
+    color: var(--warn);
+  }
+  .nowrap {
+    white-space: nowrap;
   }
   .rotbox {
     padding: 10px 12px;

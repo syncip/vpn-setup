@@ -262,8 +262,8 @@ func (t *tracked) close() {
 }
 
 type instance struct {
-	id        int64
-	name      string
+	id      int64
+	name    string
 	cfg     serverCfg
 	acl     *proto.ACL
 	users   map[string]*peerRT
@@ -824,6 +824,17 @@ func (in *instance) dial0(ctx context.Context, addr string, rt *peerRT) (net.Con
 			return nil, group, errNoRoute
 		}
 		mark = g.Mark
+		// Block-Prüfung: Ausgang je Ziel (Ausnahme) und sofortiges Ausweichen bei einem Fehlschlag
+		if ExitRoute != nil {
+			name := host
+			if _, perr := netip.ParseAddr(host); perr == nil {
+				name = ""
+			}
+			if choices := ExitRoute(group, name); len(choices) > 0 {
+				c, err := dialChoices(ctx, group, name, choices, ips, port, self)
+				return c, group, err
+			}
+		}
 	}
 	d := exits.Dialer(mark)
 	var lastErr error = errNotAllowed
@@ -843,6 +854,66 @@ func (in *instance) dial0(ctx context.Context, addr string, rt *peerRT) (net.Con
 		lastErr = err
 	}
 	return nil, group, lastErr
+}
+
+// Block-Prüfung (von der Engine gesetzt): Ausgänge für ein Ziel in der Reihenfolge, in der sie
+// versucht werden (leer = wie bisher über die Gruppen-Markierung), und Meldung von Fehlschlägen.
+var (
+	ExitRoute func(group int64, host string) []exits.RouteChoice
+	ExitFail  func(group int64, host string, exit int64, detail string)
+)
+
+// dialChoices verbindet über den ersten Ausgang; schlägt das fehl (Zeitüberschreitung, abgelehnt,
+// zurückgesetzt), sofort über den nächsten – der Fehlschlag wird der Block-Prüfung gemeldet.
+func dialChoices(ctx context.Context, group int64, name string, choices []exits.RouteChoice, ips []netip.Addr, port int, self []netip.Prefix) (net.Conn, error) {
+	var lastErr error = errNotAllowed
+	for i, ch := range choices {
+		d := exits.Dialer(ch.Mark)
+		if i < len(choices)-1 {
+			d.Timeout = 6 * time.Second // beim Ausweichen nicht lange warten
+		}
+		tried := false
+		for _, a := range ips {
+			a = a.Unmap()
+			if blocked(a) || inPrefixes(self, a) || a.Is6() {
+				continue
+			}
+			tried = true
+			c, err := d.DialContext(ctx, "tcp4", netip.AddrPortFrom(a, uint16(port)).String())
+			if err == nil {
+				return c, nil
+			}
+			lastErr = err
+			if ctx.Err() != nil {
+				return nil, err
+			}
+		}
+		if !tried {
+			return nil, lastErr
+		}
+		if ExitFail != nil && name != "" {
+			ExitFail(group, name, ch.Exit, "Proxy: "+shortErr(lastErr))
+		}
+	}
+	return nil, lastErr
+}
+
+func shortErr(err error) string {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "timeout") || strings.Contains(s, "deadline exceeded"):
+		return "Zeitüberschreitung beim Verbinden"
+	case strings.Contains(s, "refused"):
+		return "Verbindung abgelehnt"
+	case strings.Contains(s, "reset"):
+		return "Verbindung zurückgesetzt"
+	case strings.Contains(s, "unreachable"):
+		return "Ziel nicht erreichbar"
+	}
+	if len(s) > 120 {
+		s = s[:120] + " …"
+	}
+	return s
 }
 
 // httpTransport: Transport eines Zugangs für einfache HTTP-Anfragen (jede Verbindung wird nach

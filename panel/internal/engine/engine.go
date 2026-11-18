@@ -50,6 +50,7 @@ type Engine struct {
 	enc   encDNS       // DoH/DoT mit Zertifikat (encdns.go)
 	geo   geoState     // Länder zu Absender-Adressen (geo.go)
 	ubg   ubGroupState // Unbound je Ausgangsgruppe (unbound_groups.go)
+	blk   blockState   // Block-Prüfung je Ausgangsgruppe (blockcheck.go)
 
 	dnsLists dnsListState // Blocklisten des Panel-DNS (dnsfilter.go)
 

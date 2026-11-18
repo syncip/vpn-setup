@@ -71,6 +71,17 @@ X vxc python3 "$D/dest.py"
 echo "ct ex1=$(X vxr conntrack -L -m 0x41000000/0x7f000000 2>/dev/null | grep -c src=) ex3=$(X vxr conntrack -L -m 0x43000000/0x7f000000 2>/dev/null | grep -c src=)"
 `
 
+const labOv = `
+X vxr nft -f "$D/ov.nft"
+X vxr nft add element inet vpnexits ov1_2 '{ 192.0.2.12 timeout 600s }'   # gelernt aus einer DNS-Antwort
+X vxc python3 "$D/ov.py"
+`
+
+const pyOv = `import socket
+for i in (10,11,12):
+    s=socket.socket(); s.settimeout(4); s.connect(("192.0.2.%d"%i,9000)); print("ziel%d"%i, s.recv(50).decode().strip()); s.close()
+`
+
 const pySrv = `import socket,threading
 s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(("0.0.0.0",9000)); s.listen(50)
 def h(c,a):
@@ -126,7 +137,8 @@ func labRun(t *testing.T, body string) string {
 		"pin.nft":    pinScript([]int{1, 2}, []pinGroup{{Slot: 1, Exits: []int{1}}}),
 		"switch.nft": pinScript([]int{1, 2}, []pinGroup{{Slot: 1, Exits: []int{2}}}),
 		"dest.nft":   pinScript([]int{1, 2, 3}, []pinGroup{{Slot: 1, Exits: []int{1, 2}, Seed: 0x1234}}),
-		"srv.py":     pySrv, "cli.py": pyCli, "dest.py": pyDest,
+		"ov.nft":     pinScript([]int{1, 2}, []pinGroup{{Slot: 1, Exits: []int{1}, Ov: []pinOv{{Exit: 2, Elems: []string{"192.0.2.10 timeout 600s"}}}}}),
+		"srv.py":     pySrv, "cli.py": pyCli, "dest.py": pyDest, "ov.py": pyOv,
 	}
 	for n, c := range files {
 		if err := os.WriteFile(filepath.Join(d, n), []byte(c), 0o644); err != nil {
@@ -165,5 +177,16 @@ func TestLabDest(t *testing.T) {
 	}
 	if !strings.Contains(out, " ex3=0") || strings.Contains(out, "ct ex1=0 ") {
 		t.Fatalf("conntrack-Zählung je Ausgang falsch:\n%s", out)
+	}
+}
+
+// Ausnahmen der Block-Prüfung: Ziele im Set laufen über den anderen Ausgang, auch nachträglich
+// eingetragene; alle übrigen über den aktiven.
+func TestLabOverride(t *testing.T) {
+	out := labRun(t, labOv)
+	for _, want := range []string{"ziel10 src=10.5.2.1", "ziel11 src=10.5.1.1", "ziel12 src=10.5.2.1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("fehlt %q:\n%s", want, out)
+		}
 	}
 }
