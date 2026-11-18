@@ -139,7 +139,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnginx-mod-stream || true
 # Tor für Tor-Ausgänge: Das Panel startet je Ausgang eine eigene Instanz (vpn-tor@exN, eigener
 # Benutzer, nur 127.0.0.1). Debians Standard-Instanz (SOCKS auf 9050) wird nicht gebraucht.
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tor || true
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tor tor-geoipdb || true  # geoipdb: Länder (Ausgangsländer usw.)
 systemctl disable --now tor.service tor@default.service >/dev/null 2>&1 || true
 # Unbound: wahlweise Auflösung für den Panel-DNS (DNS → Einstellungen). Das Panel schreibt die
 # Konfiguration selbst (127.0.0.1:5335) und startet den Dienst nur, wenn Unbound gewählt ist.

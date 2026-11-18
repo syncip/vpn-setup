@@ -28,6 +28,7 @@ const (
 	torDir       = "/etc/vpn-tor" // außerhalb von /etc/vpn (0700): die Tor-Benutzer müssen ihre torrc lesen
 	torOldDir    = "/etc/vpn/tor" // bis 0.25.0
 	torStateDir  = "/var/lib/vpn-tor"
+	torGeoIP     = "/usr/share/tor/geoip" // Paket tor-geoipdb: ohne die Datei kennt Tor keine Länder
 	torUnitPath  = "/etc/systemd/system/vpn-tor@.service"
 	t2sUnitPath  = "/etc/systemd/system/vpn-t2s@.service"
 	torSocksBase = 19100 // + Platz
@@ -215,6 +216,8 @@ func torrc(e *Exit, plugins map[string]string) string {
 	fmt.Fprintf(&b, "SocksPort 127.0.0.1:%d%s\nDNSPort 127.0.0.1:%d\nControlPort 127.0.0.1:%d\nCookieAuthentication 1\n",
 		torSocksBase+s, iso, torDNSBase+s, torCtlBase+s)
 	fmt.Fprintf(&b, "DataDirectory %s/%s\nClientOnly 1\nAvoidDiskWrites 1\nLog notice stdout\nSafeLogging 1\n", torStateDir, n)
+	// tun2socks gibt Tor nur IP-Adressen (DNS läuft getrennt über den DNSPort) – sonst eine Warnung je Verbindung
+	b.WriteString("WarnUnsafeSocks 0\n")
 	// nur IPv4 (der Kill-Switch der Kaskade gilt für beide, der Weg über den Vorgänger nur für IPv4)
 	b.WriteString("ClientUseIPv4 1\nClientUseIPv6 0\nClientPreferIPv6ORPort 0\n")
 	fmt.Fprintf(&b, "MaxCircuitDirtiness %d\n", c.CircuitMin*60)
@@ -320,6 +323,9 @@ func (m *Manager) applyTor(env *Env, e *Exit) error {
 	}
 	if !sys.DryRun() && !sys.Exists("/dev/net/tun") {
 		return fmt.Errorf("/dev/net/tun fehlt (siehe README, Abschnitt OpenVPN)")
+	}
+	if c := e.Tor; !sys.DryRun() && len(c.ExitCountries)+len(c.EntryCountries)+len(c.ExcludeCountries) > 0 && !sys.Exists(torGeoIP) {
+		return fmt.Errorf("für Länder braucht Tor das Paket „tor-geoipdb“ – vpn-setup.sh erneut ausführen (oder apt install tor-geoipdb)")
 	}
 	plugins, err := torPlugins(env, e.Tor)
 	if err != nil {

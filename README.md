@@ -141,7 +141,7 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   weichen meist auf TCP aus. Gruppen, Limits (Tempo und Datenvolumen), Prüfung, Block-Prüfung, Wechsel
   und Kaskade gelten wie bei anderen Ausgängen; die Antwortzeit-Grenze der Gruppe gilt bei Tor nicht.
   Einstellungen: **Ausgangsländer**, **Eingangsländer**, **nie benutzte Länder**, **Streng**
-  (StrictNodes), **neue Identität** nach 1 Minute bis täglich, **eigener Kreis je Ziel**
+  (StrictNodes; Länder brauchen das Paket `tor-geoipdb`, installiert `vpn-setup.sh`), **neue Identität** nach 1 Minute bis täglich, **eigener Kreis je Ziel**
   (IsolateDestAddr) und **Brücken** (obfs4/webtunnel brauchen das Paket `obfs4proxy`, snowflake
   `snowflake-client` – beide installiert `vpn-setup.sh` nicht). Knopf ⟳ in der Liste: sofort neue
   Identität. **Tor über einen anderen Ausgang** (z. B. *Server → WARP → Tor*): Eine Routing-Regel für

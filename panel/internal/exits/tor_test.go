@@ -50,7 +50,7 @@ func TestTorrc(t *testing.T) {
 		"SocksPort 127.0.0.1:19105 IsolateDestAddr\n", "DNSPort 127.0.0.1:19205\n", "ControlPort 127.0.0.1:19305\n",
 		"DataDirectory /var/lib/vpn-tor/ex5\n", "ExitNodes {de}\n", "StrictNodes 1\n", "MaxCircuitDirtiness 600\n",
 		"ClientUseIPv6 0\n", "UseBridges 1\n", "ClientTransportPlugin obfs4 exec /usr/bin/lyrebird\n",
-		"Bridge obfs4 192.0.2.1:443 FP cert=x\n",
+		"Bridge obfs4 192.0.2.1:443 FP cert=x\n", "WarnUnsafeSocks 0\n",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("fehlt %q:\n%s", want, s)
