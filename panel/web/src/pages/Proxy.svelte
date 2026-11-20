@@ -17,7 +17,7 @@
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { ago, clone, date, fmtNum, bytes, limitsSummary } from '../lib/format.js';
-  import { protocol, toast, go } from '../lib/state.svelte.js';
+  import { protocol, toast, go, intent } from '../lib/state.svelte.js';
 
   let { tab = 'overview' } = $props();
   let rules = $state();
@@ -44,6 +44,7 @@
       d = x;
       servers = s.filter((v) => v.protocol === 'proxy');
       loaded = true;
+      takeIntent();
       if (tab === 'overview') get('/routes').then((r) => (ruleCount = { all: r.routes.length, on: r.routes.filter((x) => x.enabled).length })).catch(() => {});
     } catch (e) {
       toast(e.message, 'error');
@@ -195,6 +196,32 @@
     }),
   );
 
+  // Absicht von der Netzwerk-Karte: Dialog öffnen (vorbelegt) und danach zurück
+  let backTo = $state('');
+  let joinGroup = 0; // neuer Ausgang: danach in diese Gruppe aufnehmen
+  function takeIntent() {
+    const back = intent.back;
+    if (intent.create === 'exit') {
+      openExit();
+      ex.via = intent.via || 0;
+      joinGroup = intent.group || 0;
+    } else if (intent.create === 'group') {
+      openGroup();
+      if (intent.exits?.length) gr.exits = [...intent.exits];
+    } else if (intent.edit?.kind === 'exit' && exitById[intent.edit.id]) openExit(exitById[intent.edit.id]);
+    else if (intent.edit?.kind === 'group' && groupById[intent.edit.id]) openGroup(groupById[intent.edit.id]);
+    else return;
+    Object.assign(intent, { create: '', via: 0, group: 0, exits: [], edit: null, back: '' });
+    backTo = back;
+  }
+  $effect(() => {
+    if (backTo && !exOpen && !grOpen && !removedInfo) {
+      const b = backTo;
+      backTo = '';
+      joinGroup = 0;
+      go(b);
+    }
+  });
   function openExit(e = null) {
     exCur = e;
     const t = e?.tor;
@@ -231,6 +258,9 @@
     const r = exCur ? await run(() => put(`/exits/${exCur.id}`, body), 'Ausgang gespeichert') : await run(() => post('/exits', body), 'Ausgang angelegt');
     exBusy = false;
     if (r) {
+      const g = !exCur && joinGroup ? groupById[joinGroup] : null;
+      if (g && r.id) await run(() => put(`/groups/${g.id}`, { exits: [...g.exits, r.id] }), `In Gruppe ${g.name} aufgenommen`);
+      joinGroup = 0;
       exOpen = false;
       if (r.removed?.length) removedInfo = { name: ex.name, list: r.removed };
       ex.password = '';

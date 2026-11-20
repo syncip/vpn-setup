@@ -281,7 +281,30 @@ So wird es je Protokoll umgesetzt:
 
 ## Netzwerk-Übersicht
 
-Menü **Netzwerk** → **Übersicht**: eine Karte über alle Server und Protokolle – links Nutzer und Geräte,
+Menü **Netzwerk** → **Übersicht** hat zwei Ansichten: **Aufbau** (Vorgabe) und **Live**.
+
+### Aufbau
+
+Spalten von links nach rechts: **Server → Stufe 1 → Stufe 2 → Stufe 3 → Internet**. Stufe 1 verbindet
+sich direkt, jede weitere über die vorige – so ist sofort zu sehen, welcher Ausgang durch welchen anderen
+läuft. Das Panel ordnet alles selbst an. Blaue Linien sind der Weg der Server, gestrichelte sind ungenutzt;
+Zeigen auf einen Server hebt seinen Weg hervor.
+
+- **Server ziehen** auf einen Ausgang, eine Gruppe oder „Direkt“ → der ganze Verkehr des Servers läuft
+  darüber (samt der Stufen davor). Dahinter steht eine Ziel-Regel „Alles“ für diesen Server; Regeln für
+  bestimmte Ziele, Nutzer und Geräte gehen weiter vor.
+- **Ausgang auf Ausgang** → dahinter schalten (Kaskade, höchstens 3 Stufen). **Auf „Direkt“** → Kaskade
+  aufheben. Bestimmt eine Ziel-Regel den Weg, sagt die Karte das und ändert nichts.
+- **Ausgang auf Gruppe** → aufnehmen (aus einer anderen Gruppe gezogen: verschieben). **Auf „Nicht verwendet“**
+  → aus der Gruppe nehmen.
+- **Anlegen:** „Server“, „Ausgang“ oder „Gruppe“ aus der Leiste oben hineinziehen (oder anklicken). „Ausgang“
+  auf einem Ausgang = neuer Ausgang dahinter, auf einer Gruppe = darin. Nach dem Dialog geht es zur Karte zurück.
+- **Anklicken** zeigt Einzelheiten; dort lassen sich Weg bzw. „Verbunden über“ auch ohne Ziehen wählen.
+- Jede Änderung fragt vorher nach.
+
+### Live
+
+Eine Karte über alle Server und Protokolle – links Nutzer und Geräte,
 dann die Server, die Ausgänge („Direkt“ und die Ausgangsgruppen mit ihren Ausgängen) und das Internet.
 
 - **Verkehr:** Linien zeigen, wer verbunden ist; fließt gerade Verkehr, bewegen sie sich und werden mit

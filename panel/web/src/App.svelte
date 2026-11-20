@@ -204,7 +204,7 @@
       {:else if section === '/users'}
         <Users />
       {:else if section === '/network'}
-        <Network id={Number(parts[1]) || 0} view={parts[2] || 'map'} tab={parts[1] === 'access' ? 'access' : ''} />
+        <Network id={Number(parts[1]) || 0} view={parts[2] || 'map'} tab={parts[1] === 'access' || parts[1] === 'live' ? parts[1] : ''} />
       {:else if section === '/servers'}
         <Servers />
       {:else if section === '/proxy'}

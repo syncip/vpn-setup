@@ -9,15 +9,30 @@
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { bytes, copy, clone } from '../lib/format.js';
-  import { meta, protocol, toast } from '../lib/state.svelte.js';
+  import { meta, protocol, toast, intent, go } from '../lib/state.svelte.js';
 
   let servers = $state([]);
   let loaded = $state(false);
   async function load() {
     servers = await get('/servers');
     loaded = true;
+    if (intent.create === 'server') {
+      backTo = intent.back;
+      intent.create = '';
+      intent.back = '';
+      openNew();
+    }
   }
   load();
+  // von der Netzwerk-Karte: nach dem Dialog zurück
+  let backTo = $state('');
+  $effect(() => {
+    if (backTo && !open) {
+      const b = backTo;
+      backTo = '';
+      go(b);
+    }
+  });
 
   // ---------- Bearbeiten / Anlegen ----------
   let open = $state(false);

@@ -5,6 +5,7 @@
   import Modal from '../components/Modal.svelte';
   import PeerEditor from '../components/PeerEditor.svelte';
   import ConfigView from '../components/ConfigView.svelte';
+  import BuildMap from '../components/BuildMap.svelte';
   import TopologyMap from '../components/TopologyMap.svelte';
   import NetAccess from '../components/NetAccess.svelte';
   import SearchInput from '../components/SearchInput.svelte';
@@ -158,7 +159,8 @@
 
 <PageHead title="Netzwerk" subtitle={sid ? 'Geräte und Netze dieses WireGuard-Servers' : 'Verbindungen, Verkehr und Störungen'} helpTitle="Netzwerk">
   {#snippet help()}
-    <p><b>Übersicht:</b> Wer verbunden ist, wohin der Verkehr gerade fließt und wo es hakt. Bei vielen Nutzern ist die Karte kompakt – Nutzer aufklappen oder suchen.</p>
+    <p><b>Übersicht → Aufbau:</b> Welcher Server über welche Ausgänge ins Internet geht (Stufe 1 verbindet direkt, jede weitere über die vorige). Ziehen: Server auf einen Ausgang, eine Gruppe oder „Direkt“ = Weg des Servers; Ausgang auf Ausgang = dahinter schalten; Ausgang auf Gruppe = aufnehmen. „Server“, „Ausgang“ und „Gruppe“ oben hineinziehen = anlegen.</p>
+    <p><b>Übersicht → Live:</b> Wer verbunden ist, wohin der Verkehr gerade fließt und wo es hakt. Bei vielen Nutzern ist die Karte kompakt – Nutzer aufklappen oder suchen.</p>
     <p><b>Zugriff:</b> Welche Nutzer, Tarife oder Geräte andere WireGuard-Netze erreichen dürfen (z. B. Anna auf WireGuard 1 und 2).</p>
     <p><b>WireGuard-Server:</b> Geräte und Netze, die über diesen Server miteinander verbunden sind, und wer wen erreichen darf (Karte, Matrix, Liste).</p>
   {/snippet}
@@ -179,7 +181,14 @@
 {#if tab === 'access'}
   <NetAccess />
 {:else if !sid}
-  <TopologyMap />
+  <div class="spread mapbar">
+    <div class="segmented" role="tablist" aria-label="Ansicht der Karte">
+      <button class:active={tab !== 'live'} onclick={() => go('/network')} title="Server, Stufen und Ausgänge – per Ziehen ändern"><Icon name="layers" size={14} /> Aufbau</button>
+      <button class:active={tab === 'live'} onclick={() => go('/network/live')} title="Geräte und aktueller Verkehr"><Icon name="activity" size={14} /> Live</button>
+    </div>
+    <span class="muted small">{tab === 'live' ? 'Geräte, Verkehr und Störungen in Echtzeit' : 'Welcher Server über welche Ausgänge ins Internet geht – ziehen zum Ändern'}</span>
+  </div>
+  {#if tab === 'live'}<TopologyMap />{:else}<BuildMap />{/if}
 {:else}
 
   {#if net}
@@ -381,6 +390,10 @@
 </Modal>
 
 <style>
+  .mapbar {
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
   .map {
     position: relative;
     padding: 8px 12px 0;
