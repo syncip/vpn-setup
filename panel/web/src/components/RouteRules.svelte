@@ -98,6 +98,18 @@
   let cur = $state(null);
   let f = $state({});
 
+  // „Regel anlegen“ steht im Seitenkopf (Proxy-Seite) und ruft das hier auf
+  let addPending = false;
+  export function add() {
+    if (loaded) openRule();
+    else addPending = true; // öffnet, sobald die Regeln geladen sind
+  }
+  $effect(() => {
+    if (loaded && addPending) {
+      addPending = false;
+      openRule();
+    }
+  });
   function openRule(r = null) {
     cur = r;
     const g0 = d.groups.find((g) => g.enabled && !g.auto);
@@ -158,7 +170,6 @@
   </div>
   <div class="row" style="gap:8px">
     {#if d.routes.length > 5}<SearchInput bind:value={rq} placeholder="Regeln durchsuchen …" width="230px" />{/if}
-    <button class="btn sm primary" onclick={() => openRule()} disabled={!loaded}><Icon name="plus" size={15} /> Regel anlegen</button>
   </div>
 </div>
 {#if d.error}<div class="notice bad" style="margin-bottom:12px"><Icon name="alert" /><span>{d.error}</span></div>{/if}
@@ -230,9 +241,9 @@
   <div class="stack">
     <div class="field">
       <span class="label">Gilt für <Info title="Gilt für" text="Rangfolge: Gerät vor Nutzer vor Server vor „Alle“. „Nutzer“ gilt für alle Zugänge des Nutzers. Hysteria2-Zugänge folgen nur Regeln für „Server“ und „Alle“." /></span>
-      <div class="seg">
+      <div class="segmented">
         {#each Object.entries(SCOPE) as [k, label]}
-          <button class="btn sm" class:primary={f.scope === k} onclick={() => setScope(k)} disabled={k !== 'global' && !d[k + 's']?.length}>{label}</button>
+          <button class:active={f.scope === k} onclick={() => setScope(k)} disabled={k !== 'global' && !d[k + 's']?.length}>{label}</button>
         {/each}
       </div>
       {#if f.scope === 'server'}
@@ -249,9 +260,9 @@
 
     <div class="field">
       <span class="label">Ziele</span>
-      <div class="seg">
-        <button class="btn sm" class:primary={f.match === 'all'} onclick={() => (f.match = 'all')}>Alles</button>
-        <button class="btn sm" class:primary={f.match === 'targets'} onclick={() => (f.match = 'targets')}>Nur bestimmte Ziele</button>
+      <div class="segmented">
+        <button class:active={f.match === 'all'} onclick={() => (f.match = 'all')}>Alles</button>
+        <button class:active={f.match === 'targets'} onclick={() => (f.match = 'targets')}>Nur bestimmte Ziele</button>
       </div>
     </div>
     {#if f.match === 'targets'}
@@ -399,10 +410,8 @@
     padding: 8px 18px 12px;
     border-top: 1px solid var(--border);
   }
-  .seg {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+  .segmented {
+    align-self: flex-start;
     margin-bottom: 8px;
   }
   .ok-text {
@@ -415,7 +424,7 @@
     margin-top: 2px;
   }
   .warn-text {
-    color: var(--warn, #b7791f);
+    color: var(--warn);
     display: inline-flex;
     align-items: center;
     gap: 4px;

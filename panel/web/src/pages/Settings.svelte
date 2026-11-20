@@ -17,6 +17,10 @@
     ['backup', 'Sicherung', 'archive'],
     ['admins', 'Administratoren', 'users'],
   ];
+  // unbekannter Tab in der Adresse → erster Tab statt leerer Seite
+  $effect(() => {
+    if (!tabs.some((t) => t[0] === tab)) go('/settings');
+  });
 
   // ---------- Allgemein ----------
   let s = $state(null);

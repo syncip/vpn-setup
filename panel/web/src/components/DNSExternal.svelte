@@ -570,7 +570,7 @@
   }
   .kv > span:nth-child(odd) {
     color: var(--text-2);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .kv > span {
     min-width: 0;
@@ -617,7 +617,7 @@
     border: 1px solid var(--border);
     background: var(--panel);
     border-radius: 6px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 1px 7px;
     cursor: pointer;
     color: var(--text);
@@ -661,7 +661,7 @@
     border: 1px solid var(--border);
     border-radius: 999px;
     padding: 1px 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .mono {
     font-family: var(--mono, ui-monospace, monospace);

@@ -250,11 +250,11 @@
     white-space: nowrap;
   }
   .bad-text {
-    color: var(--bad, #c0392b);
+    color: var(--bad);
   }
   .label {
     font-weight: 600;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .srvs {
     display: flex;
@@ -275,6 +275,6 @@
   }
   textarea.input {
     resize: vertical;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 </style>

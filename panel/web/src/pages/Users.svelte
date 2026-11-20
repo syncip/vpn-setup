@@ -121,7 +121,7 @@
     </select>
   </div>
   <div class="table-wrap">
-    <table class="table">
+    <table class="table mcards">
       <thead>
         <tr><th>Nutzer</th><th>Status</th><th>Tarif / Limits</th><th>Verbrauch (Zeitraum)</th><th>Tempo</th><th>Zugänge</th><th>Zuletzt da</th></tr>
       </thead>
@@ -137,23 +137,23 @@
                 </div>
               </div>
             </td>
-            <td><StatusBadge status={u.status} reason={u.status_reason} /></td>
-            <td>
+            <td data-label="Status"><StatusBadge status={u.status} reason={u.status_reason} /></td>
+            <td data-label="Tarif">
               {#if u.plan_name && !u.limits}<span class="badge accent">{u.plan_name}</span>
               {:else if u.limits}<span class="badge">Individuell</span>
               {:else}<span class="muted small">keine</span>{/if}
             </td>
-            <td style="min-width:170px"><Usage used={u.period_up + u.period_down} limitGb={u.effective?.traffic_gb || 0} tiers={u.effective?.tiers || []} compact /></td>
-            <td class="small nowrap">
+            <td data-label="Verbrauch" class="fill" style="min-width:170px"><Usage used={u.period_up + u.period_down} limitGb={u.effective?.traffic_gb || 0} tiers={u.effective?.tiers || []} compact /></td>
+            <td data-label="Tempo" class="small nowrap">
               {#if u.status === "blocked" || u.status === "expired" || u.status === "disabled"}<span class="muted">–</span>{:else if u.rate_down || u.rate_up}<span class:warn-text={u.status === "throttled"}>↓ {rate(u.rate_down)}</span>{:else}<span class="muted">frei</span>{/if}
             </td>
-            <td>
+            <td data-label="Zugänge">
               <div class="row">
                 {#each u.protocols || [] as p}<ProtoLogo id={p} size={20} />{/each}
                 <span class="muted small">{u.devices}</span>
               </div>
             </td>
-            <td class="small nowrap" title={u.online && u.online_since ? sinceClock(u.online_since) : ''}><span class="row"><span class="dot" class:on={u.online || isOnline(u.last_seen)}></span>{u.online ? onlineFor(u.online_since, now) : ago(u.last_seen)}</span></td>
+            <td data-label="Zuletzt da" class="small nowrap" title={u.online && u.online_since ? sinceClock(u.online_since) : ''}><span class="row"><span class="dot" class:on={u.online || isOnline(u.last_seen)}></span>{u.online ? onlineFor(u.online_since, now) : ago(u.last_seen)}</span></td>
           </tr>
         {/each}
       </tbody>
@@ -264,7 +264,7 @@
     border-radius: 20px;
     padding: 4px 11px;
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     font-weight: 550;
     color: var(--text-2);
     cursor: pointer;

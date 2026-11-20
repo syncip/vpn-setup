@@ -131,7 +131,7 @@
     margin-bottom: 8px;
   }
   .kpi {
-    font-size: 22px;
+    font-size: var(--fs-xl);
     font-weight: 700;
     color: var(--down);
   }

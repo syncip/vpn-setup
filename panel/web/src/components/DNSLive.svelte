@@ -173,7 +173,7 @@
     margin: 4px 0 0;
     white-space: pre-wrap;
     word-break: break-word;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .livecard {
     margin-bottom: 0;
@@ -183,7 +183,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--ok, #16a34a);
+    background: var(--ok);
     margin-right: 2px;
     animation: pulse 1.6s infinite;
   }
@@ -203,7 +203,7 @@
     margin-bottom: 10px;
   }
   .lk {
-    font-size: 20px;
+    font-size: var(--fs-xl);
     font-weight: 650;
     font-variant-numeric: tabular-nums;
   }
@@ -228,7 +228,7 @@
     opacity: 0.25;
   }
   .a-bl {
-    fill: var(--bad, #dc2626);
+    fill: var(--bad);
     opacity: 0.7;
   }
   .cursor {
@@ -268,7 +268,7 @@
     opacity: 0.25;
   }
   .sw.bl {
-    background: var(--bad, #dc2626);
+    background: var(--bad);
     opacity: 0.7;
   }
   .ups {

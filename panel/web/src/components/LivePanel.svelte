@@ -174,13 +174,13 @@
     }
   }
   .kpi {
-    font-size: 22px;
+    font-size: var(--fs-xl);
     font-weight: 700;
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
   }
   .kpi .muted {
-    font-size: 15px;
+    font-size: var(--fs-lg);
   }
   .kpi.down {
     color: var(--down);
@@ -192,8 +192,8 @@
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: var(--ok, #22a06b);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok, #22a06b) 60%, transparent);
+    background: var(--ok);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent);
     animation: pulse 2s infinite;
   }
   @keyframes pulse {
@@ -235,7 +235,7 @@
   }
   .mono {
     font-family: ui-monospace, monospace;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   @media (max-width: 800px) {
     .hide-sm {

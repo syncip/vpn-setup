@@ -3,6 +3,7 @@
   import Board from '../components/Board.svelte';
   import LayoutButton from '../components/LayoutButton.svelte';
   import ProtoLogo from '../components/ProtoLogo.svelte';
+  import PeerRoutes from '../components/PeerRoutes.svelte';
   import Modal from '../components/Modal.svelte';
   import Info from '../components/Info.svelte';
   import TrafficPanel from '../components/TrafficPanel.svelte';
@@ -313,6 +314,7 @@
       {:else}
         <div class="card empty"><h3>Keine Zugänge</h3><p>Füge ein Gerät oder einen VLESS-Zugang hinzu.</p></div>
       {/each}
+      <PeerRoutes userId={id} peers={d.peers} />
     </div>
   {:else if tab === 'limits'}
     <div class="card card-pad" style="max-width:820px">
@@ -422,7 +424,7 @@
     background: var(--accent-soft);
     color: var(--accent);
     font-weight: 700;
-    font-size: 20px;
+    font-size: var(--fs-xl);
     position: relative;
   }
   .avatar.on::after {
@@ -437,7 +439,7 @@
     border: 2px solid var(--bg);
   }
   .big {
-    font-size: 20px;
+    font-size: var(--fs-xl);
     font-weight: 700;
     margin: 4px 0 2px;
   }
@@ -452,7 +454,7 @@
     background: var(--panel-2);
   }
   .segmented.sm button {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 4px 10px;
   }
   .side-sub {

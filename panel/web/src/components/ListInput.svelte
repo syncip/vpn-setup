@@ -47,7 +47,7 @@
     background: var(--accent-soft);
     color: var(--accent);
     font-weight: 550;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .chip.mono {
     font-family: var(--mono);

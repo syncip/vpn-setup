@@ -1,11 +1,11 @@
 <script>
   // Deutliche Zustandsanzeige: farbige Pille mit Symbol (und pulsierendem Punkt bei „Verbunden“).
   import Icon from './Icon.svelte';
-  let { tone = 'muted', label = '', icon = '', title = '', small = false } = $props();
+  let { tone = 'muted', label = '', icon = '', title = '', small = false, pulse = true } = $props();
 </script>
 
 <span class="sb {tone}" class:small {title}>
-  {#if tone === 'ok'}<span class="pulse"></span>{:else if icon}<Icon name={icon} size={small ? 11 : 13} />{/if}
+  {#if tone === 'ok' && pulse}<span class="pulse"></span>{:else if !pulse && !icon}<span class="pip"></span>{:else if icon}<Icon name={icon} size={small ? 11 : 13} />{/if}
   {label}
 </span>
 
@@ -16,14 +16,14 @@
     gap: 6px;
     padding: 3px 10px 3px 8px;
     border-radius: 999px;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     white-space: nowrap;
     border: 1px solid transparent;
     line-height: 1.4;
   }
   .sb.small {
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     padding: 1px 8px 1px 6px;
     gap: 5px;
   }
@@ -55,6 +55,12 @@
     color: var(--muted);
     background: var(--panel-2);
     border-color: var(--border);
+  }
+  .pip {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
   }
   .pulse {
     width: 8px;

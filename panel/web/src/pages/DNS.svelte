@@ -33,6 +33,10 @@
     ['external', 'Ohne VPN', 'globe'],
     ['settings', 'Einstellungen', 'settings'],
   ];
+  // unbekannter Tab in der Adresse → erster Tab statt leerer Seite
+  $effect(() => {
+    if (!TABS.some((t) => t[0] === tab)) go('/dns');
+  });
 
   const peerById = $derived(Object.fromEntries(d.choices.peers.map((p) => [p.id, p])));
   const userById = $derived(Object.fromEntries(d.choices.users.map((u) => [u.id, u])));
@@ -1270,7 +1274,7 @@
     border: 1px solid var(--border);
     border-radius: 999px;
     padding: 1px 4px 1px 9px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .cands .chip button {
     border: 0;
@@ -1288,7 +1292,7 @@
   }
   .sub-h {
     margin: 6px 0 -4px;
-    font-size: 14px;
+    font-size: var(--fs-base);
   }
   tr.best td {
     background: var(--ok-soft);
@@ -1311,13 +1315,13 @@
     cursor: pointer;
   }
   .warn-t {
-    color: var(--warn, #b7791f);
+    color: var(--warn);
   }
   .notice.okn {
     background: var(--ok-soft);
   }
   .kpi {
-    font-size: 22px;
+    font-size: var(--fs-xl);
     font-weight: 650;
     margin-top: 2px;
   }
@@ -1439,7 +1443,7 @@
   }
   .label {
     font-weight: 600;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .srvs {
     display: flex;
@@ -1473,7 +1477,7 @@
   }
   textarea.input {
     resize: vertical;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .ubg {
     margin-top: 8px;

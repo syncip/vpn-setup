@@ -242,7 +242,7 @@
     padding: 4px;
   }
   .grp {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 650;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -289,12 +289,12 @@
     font-weight: 550;
   }
   .sub {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
   }
   .nohit {
     padding: 10px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
 </style>

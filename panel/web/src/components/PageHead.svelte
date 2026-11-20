@@ -13,8 +13,8 @@
   </div>
   {#if children || layout.active}
     <div class="row wrap">
-      {#if children}{@render children()}{/if}
       <LayoutButton />
+      {#if children}{@render children()}{/if}
     </div>
   {/if}
 </div>
@@ -28,6 +28,6 @@
     flex-wrap: wrap;
   }
   h1 :global(.info-btn) {
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
 </style>

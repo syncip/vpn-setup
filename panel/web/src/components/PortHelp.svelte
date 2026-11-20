@@ -70,7 +70,7 @@
     background: var(--panel);
     border-radius: 6px;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 2px 7px;
     cursor: pointer;
     color: var(--text-2);

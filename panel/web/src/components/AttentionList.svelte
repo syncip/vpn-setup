@@ -56,7 +56,7 @@
     color: var(--warn);
   }
   .att-row.info .att-ic {
-    color: var(--accent, #4a64e8);
+    color: var(--accent);
   }
   .att-title {
     font-weight: 550;
@@ -73,6 +73,6 @@
     align-items: center;
     gap: 8px;
     padding: 12px 14px;
-    color: var(--ok, #2f9e6a);
+    color: var(--ok);
   }
 </style>

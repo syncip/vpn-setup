@@ -123,12 +123,12 @@
     flex-direction: column;
   }
   .vol {
-    font-size: 15px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     margin-bottom: 10px;
   }
   .num {
-    font-size: 30px;
+    font-size: var(--fs-2xl);
     font-weight: 750;
     letter-spacing: -0.03em;
   }
@@ -140,7 +140,7 @@
     flex-direction: column;
     gap: 6px;
     color: var(--text-2);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .facts li {
     display: flex;

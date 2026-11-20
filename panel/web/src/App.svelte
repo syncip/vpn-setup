@@ -97,6 +97,8 @@
   const parts = $derived(route.path.split('/').filter(Boolean));
   const section = $derived('/' + (parts[0] || ''));
 
+  const pageLabel = $derived(section === '/account' ? 'Mein Konto' : nav.flatMap((g) => g.items).find((n) => active(n.path))?.label || 'VPN-Panel');
+
   function active(p) {
     return p === '/' ? section === '/' : section === p;
   }
@@ -142,17 +144,15 @@
           </div>
         </div>
       </div>
+      <div class="side-scroll">
       <a class="mini" href="#/health" title="Zustand des Servers – Details unter „Zustand“">
         {#if status.host}
           {@const h = status.host}
-          <div class="mrow"><span>CPU</span><span>{Math.round(h.cpu)} %</span></div>
-          <div class="bar"><i style="width:{Math.min(100, h.cpu)}%" class:hot={h.cpu > 85}></i></div>
-          <div class="mrow"><span>RAM</span><span title="{bytes(h.mem_used)} von {bytes(h.mem_total)}">{memPct} %</span></div>
-          <div class="bar"><i style="width:{memPct}%" class:hot={memPct > 90}></i></div>
-          {#if h.disk_size}
-            <div class="mrow"><span>Speicher</span><span title="{bytes(h.disk_used)} von {bytes(h.disk_size)}">{diskPct} %</span></div>
-            <div class="bar"><i style="width:{diskPct}%" class:hot={diskPct > 90}></i></div>
-          {/if}
+          <div class="gauges">
+            <div title="CPU"><div class="mrow"><span>CPU</span><span>{Math.round(h.cpu)} %</span></div><div class="bar"><i style="width:{Math.min(100, h.cpu)}%" class:hot={h.cpu > 85}></i></div></div>
+            <div title="{bytes(h.mem_used)} von {bytes(h.mem_total)}"><div class="mrow"><span>RAM</span><span>{memPct} %</span></div><div class="bar"><i style="width:{memPct}%" class:hot={memPct > 90}></i></div></div>
+            {#if h.disk_size}<div title="Speicher: {bytes(h.disk_used)} von {bytes(h.disk_size)}"><div class="mrow"><span>Disk</span><span>{diskPct} %</span></div><div class="bar"><i style="width:{diskPct}%" class:hot={diskPct > 90}></i></div></div>{/if}
+          </div>
           <div class="mrow" title="Durchsatz auf {h.iface}"><span>Traffic</span><span class="nowrap"><Icon name="down" size={11} />{speed(h.rx)} <Icon name="up" size={11} />{speed(h.tx)}</span></div>
           <div class="mrow"><span>Geräte online</span><span>{status.peers_online} / {status.peers}</span></div>
         {:else}
@@ -173,6 +173,7 @@
           {/each}
         {/each}
       </nav>
+      </div>
       <div class="side-foot">
         {#if meta.dry_run}<div class="badge warn" style="margin:0 8px 10px;height:auto;padding:4px 8px;white-space:normal">Testmodus – keine Systemänderungen</div>{/if}
         <div class="me">
@@ -188,7 +189,14 @@
     {#if navOpen}<div class="scrim" role="presentation" onclick={() => (navOpen = false)}></div>{/if}
 
     <main>
-      <button class="btn icon menu-btn" onclick={() => (navOpen = true)} aria-label="Menü"><Icon name="menu" /></button>
+      <!-- Handy: Kopfzeile mit Menü, Seitenname und Warnungen -->
+      <div class="topbar">
+        <button class="btn icon ghost" onclick={() => (navOpen = true)} aria-label="Menü"><Icon name="menu" /></button>
+        <span class="logo sm"><Icon name="shield" size={15} /></span>
+        <span class="strong grow ellipsis">{pageLabel}</span>
+        {#if issues.length}<a class="nav-count" class:bad={issues.some((a) => a.level === 'error')} href="#/" title="Braucht Aufmerksamkeit">{issues.length}</a>{/if}
+        <button class="btn icon ghost" onclick={() => (search.open = true)} aria-label="Suchen"><Icon name="search" size={18} /></button>
+      </div>
       {#if section === '/'}
         <Overview />
       {:else if section === '/users' && parts[1]}
@@ -260,8 +268,28 @@
     position: sticky;
     top: 0;
     height: 100vh;
+    height: 100dvh;
     z-index: 30;
+    overflow: hidden;
+  }
+  .side-scroll {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    scrollbar-width: thin;
+    padding-bottom: 8px;
+  }
+  .gauges {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .gauges .mrow {
+    flex-direction: column;
+    gap: 0;
+  }
+  .gauges .bar {
+    margin: 3px 0 4px;
   }
   .brand {
     display: flex;
@@ -280,7 +308,7 @@
     border-radius: 10px;
     display: grid;
     place-items: center;
-    background: linear-gradient(135deg, #5b77ff, #3b54d4);
+    background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
     color: #fff;
   }
   nav {
@@ -305,7 +333,7 @@
   nav a.active {
     background: var(--sidebar-hover);
     color: var(--sidebar-active);
-    box-shadow: inset 3px 0 0 #6f88ff;
+    box-shadow: inset 3px 0 0 var(--side-accent);
   }
   .mini {
     display: grid;
@@ -316,7 +344,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.06);
     color: var(--sidebar-text);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .mini:hover {
     background: var(--sidebar-hover);
@@ -344,14 +372,14 @@
     display: block;
     height: 100%;
     border-radius: 2px;
-    background: #6f88ff;
+    background: var(--side-accent);
     transition: width 0.6s;
   }
   .bar i.hot {
-    background: #f0a33a;
+    background: var(--side-warn);
   }
   .nav-title {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--sidebar-text);
@@ -363,29 +391,29 @@
     height: 18px;
     padding: 0 6px;
     border-radius: 9px;
-    background: #f0a33a;
+    background: var(--side-warn);
     color: #1b1f2a;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 650;
     display: grid;
     place-items: center;
   }
   .nav-count.bad {
-    background: #f06a6a;
+    background: var(--side-bad);
     color: #fff;
   }
   .nav-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #f0a33a;
+    background: var(--side-warn);
   }
   .nav-dot.bad {
-    background: #f06a6a;
+    background: var(--side-bad);
   }
   .side-foot {
-    margin-top: auto;
-    padding: 12px 10px 14px;
+    flex: none;
+    padding: 10px 10px 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
   }
   .me {
@@ -417,7 +445,7 @@
     place-items: center;
     background: #2a3350;
     font-weight: 650;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .icon-btn {
     border: none;
@@ -439,9 +467,13 @@
     padding: 28px 32px 48px;
     max-width: none;
   }
-  .menu-btn {
+  .topbar {
     display: none;
-    margin-bottom: 12px;
+  }
+  .logo.sm {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
   }
   .scrim {
     position: fixed;
@@ -459,8 +491,20 @@
     .sidebar.open {
       transform: none;
     }
-    .menu-btn {
-      display: inline-flex;
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      margin: -16px -16px 14px;
+      padding: 8px 10px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .topbar .nav-count {
+      text-decoration: none;
     }
     main {
       padding: 16px 16px 40px;
@@ -514,7 +558,7 @@
     background: transparent;
     color: var(--sidebar-text);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--fs-md);
     cursor: pointer;
     text-align: left;
   }
@@ -524,7 +568,7 @@
   }
   .sbtn kbd {
     font: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     border: 1px solid var(--sidebar-hover);
     border-radius: 4px;
     padding: 0 4px;

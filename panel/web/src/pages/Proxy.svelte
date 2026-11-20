@@ -20,6 +20,7 @@
   import { protocol, toast, go } from '../lib/state.svelte.js';
 
   let { tab = 'overview' } = $props();
+  let rules = $state();
   const TABS = [
     ['overview', 'Übersicht', 'activity'],
     ['exits', 'Ausgänge', 'globe'],
@@ -27,6 +28,10 @@
     ['rules', 'Ziel-Regeln', 'route'],
     ['proxy', 'Proxy-Server', 'server'],
   ];
+  // unbekannter Tab in der Adresse → erster Tab statt leerer Seite
+  $effect(() => {
+    if (!TABS.some((t) => t[0] === tab)) go('/proxy');
+  });
 
   let d = $state({ exits: [], groups: [], error: '' });
   let ruleCount = $state(null);
@@ -493,6 +498,7 @@
   {/if}
   {#if tab === 'exits'}<button class="btn primary" onclick={() => openExit()}><Icon name="plus" size={16} /> Ausgang anlegen</button>{/if}
   {#if tab === 'groups'}<button class="btn primary" onclick={() => openGroup()} disabled={!d.exits.length}><Icon name="plus" size={16} /> Gruppe anlegen</button>{/if}
+  {#if tab === 'rules'}<button class="btn primary" onclick={() => rules?.add()}><Icon name="plus" size={16} /> Regel anlegen</button>{/if}
   {#if tab === 'proxy'}<button class="btn primary" onclick={() => openServer()}><Icon name="plus" size={16} /> Proxy anlegen</button>{/if}
 </PageHead>
 
@@ -598,7 +604,7 @@
 {/if}
 
 {#if tab === 'rules'}
-<RouteRules reload={d.groups.length + servers.length} />
+<RouteRules bind:this={rules} reload={d.groups.length + servers.length} />
 {/if}
 
 {#if tab === 'groups'}
@@ -1315,7 +1321,7 @@
     font-weight: 600;
   }
   .tile .big {
-    font-size: 26px;
+    font-size: var(--fs-2xl);
     font-weight: 700;
     line-height: 1.1;
   }
@@ -1438,13 +1444,13 @@
   }
   .label {
     font-weight: 600;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   textarea.input {
     margin-top: 8px;
     min-height: 140px;
     resize: vertical;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .srvlogo {
     position: relative;

@@ -89,7 +89,7 @@
     border-radius: 50%;
     vertical-align: middle;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 550;
     line-height: 1;
   }
@@ -127,7 +127,7 @@
   }
   .ih strong {
     color: var(--text);
-    font-size: 13.5px;
+    font-size: var(--fs-md);
   }
   .x {
     border: none;
@@ -140,7 +140,7 @@
   }
   .ib {
     padding: 10px 14px 12px;
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--text-2);
     overflow: auto;
     line-height: 1.5;
@@ -157,7 +157,7 @@
   }
   .ib :global(pre) {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 6px;

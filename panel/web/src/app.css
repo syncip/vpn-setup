@@ -27,6 +27,20 @@
   --sidebar-active: #ffffff;
   --sidebar-hover: #1d2539;
   --mono: ui-monospace, SFMono-Regular, 'Cascadia Code', Menlo, Consolas, monospace;
+  /* Schriftskala – alle Größen im Panel kommen von hier */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-base: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 22px;
+  --fs-2xl: 24px;
+  /* Seitenleiste (immer dunkel) */
+  --side-accent: #6f88ff;
+  --side-warn: #f0a33a;
+  --side-bad: #f06a6a;
+  --brand-1: #5b77ff;
+  --brand-2: #3b54d4;
   color-scheme: light;
 }
 
@@ -113,20 +127,20 @@ h4 {
   letter-spacing: -0.01em;
 }
 h1 {
-  font-size: 22px;
+  font-size: var(--fs-xl);
 }
 h2 {
-  font-size: 17px;
+  font-size: var(--fs-lg);
 }
 h3 {
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 
 code,
 pre,
 .mono {
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- Bausteine ---------- */
@@ -178,9 +192,16 @@ pre,
 }
 @media (max-width: 720px) {
   .cols-2,
-  .cols-3,
-  .cols-4 {
+  .cols-3 {
     grid-template-columns: minmax(0, 1fr);
+  }
+  /* Kennzahlen: auf dem Handy zwei nebeneinander */
+  .cols-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .card-pad {
+    padding: 14px 16px;
   }
 }
 
@@ -226,10 +247,10 @@ pre,
   color: var(--muted);
 }
 .small {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .tiny {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 .strong {
   font-weight: 600;
@@ -308,7 +329,7 @@ pre,
 .btn.sm {
   height: 28px;
   padding: 0 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .btn.icon {
   width: 34px;
@@ -327,12 +348,12 @@ pre,
 }
 .field > label,
 .label {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
 .help {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 .input,
@@ -361,7 +382,7 @@ textarea.input {
 }
 .input.mono {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .input-group {
   display: flex;
@@ -380,7 +401,7 @@ textarea.input {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--panel-2);
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
@@ -441,11 +462,18 @@ textarea.input {
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 550;
   padding: 4px 11px;
   border-radius: 6px;
   cursor: pointer;
+}
+.segmented button:hover:not(:disabled) {
+  color: var(--text);
+}
+.segmented button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .segmented button.active {
   background: var(--panel);
@@ -464,7 +492,7 @@ table.table {
 }
 .table th {
   text-align: left;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -489,6 +517,49 @@ table.table {
   background: var(--panel-2);
 }
 
+/* Tabelle wird auf dem Handy zu Karten: Zeile = Karte, Zelle = „Bezeichnung  Wert“ (data-label) */
+@media (max-width: 720px) {
+  .table.mcards thead {
+    display: none;
+  }
+  .table.mcards,
+  .table.mcards tbody {
+    display: block;
+  }
+  .table.mcards tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .table.mcards td {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 0;
+    border: none;
+    min-width: 0 !important;
+  }
+  .table.mcards td[data-label]::before {
+    content: attr(data-label);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .table.mcards td.fill {
+    align-items: stretch;
+  }
+  .table.mcards td:first-child {
+    grid-column: 1 / -1;
+  }
+  .table.mcards tr.click:hover td {
+    background: none;
+  }
+}
+
 /* ---------- Abzeichen ---------- */
 
 .badge {
@@ -498,7 +569,7 @@ table.table {
   height: 22px;
   padding: 0 8px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
   background: var(--panel-2);
@@ -565,7 +636,7 @@ table.table {
   border-radius: var(--radius-sm);
   background: var(--accent-soft);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .notice.warn {
   background: var(--warn-soft);
@@ -578,7 +649,7 @@ table.table {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 8px 18px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .kv dt {
   color: var(--muted);
@@ -626,6 +697,22 @@ pre.code {
 }
 .tabs button:hover {
   color: var(--text);
+}
+/* Trenner in einer Tab-Leiste (z. B. Ansichten | einzelne Server) */
+.tabs .tabs-sep {
+  flex: none;
+  width: 1px;
+  margin: 10px 6px;
+  background: var(--border-strong);
+}
+.tabs .tabs-label {
+  align-self: center;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-right: 4px;
 }
 .tabs button.active {
   color: var(--accent);

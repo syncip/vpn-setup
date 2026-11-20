@@ -222,7 +222,7 @@
     gap: 2px;
   }
   .tile b {
-    font-size: 22px;
+    font-size: var(--fs-xl);
     font-weight: 650;
   }
   @media (max-width: 700px) {

@@ -283,13 +283,13 @@
     border-radius: 12px;
   }
   .big {
-    font-size: 24px;
+    font-size: var(--fs-2xl);
     font-weight: 700;
     letter-spacing: -0.02em;
     line-height: 1.2;
   }
   .big .muted {
-    font-size: 16px;
+    font-size: var(--fs-lg);
     font-weight: 600;
   }
   .list {

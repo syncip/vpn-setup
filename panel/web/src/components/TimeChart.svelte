@@ -340,7 +340,7 @@
   }
   .btn.sm {
     padding: 3px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .wrap {
     position: relative;
@@ -362,12 +362,12 @@
   }
   .ylab {
     fill: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     text-anchor: end;
   }
   .xlab {
     fill: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     text-anchor: middle;
   }
   .down {
@@ -420,7 +420,7 @@
     box-shadow: var(--shadow-lg);
     padding: 7px 10px;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     pointer-events: none;
     white-space: nowrap;
     z-index: 2;

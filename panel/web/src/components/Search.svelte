@@ -219,7 +219,7 @@
     outline: none;
     background: none;
     font: inherit;
-    font-size: 16px;
+    font-size: var(--fs-lg);
     color: var(--text);
     min-width: 0;
   }
@@ -228,7 +228,7 @@
     padding: 6px;
   }
   .sr-group {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -269,7 +269,7 @@
   }
   kbd {
     font: inherit;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     border: 1px solid var(--border);
     border-bottom-width: 2px;
     border-radius: 4px;

@@ -18,6 +18,10 @@
     ['updates', 'Updates', 'download'],
     ['events', 'Ereignisse', 'list'],
   ];
+  // unbekannter Tab in der Adresse → erster Tab statt leerer Seite
+  $effect(() => {
+    if (!tabs.some((t) => t[0] === tab)) go('/health');
+  });
 
   // ---------- System ----------
   let sys = $state(null);

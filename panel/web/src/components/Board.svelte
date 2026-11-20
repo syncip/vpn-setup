@@ -136,6 +136,7 @@
     <div
       class="bw"
       class:sm={span <= 4}
+      class:xs={span <= 3}
       class:md={span > 4 && span <= 8}
       class:dragging={dragging === wid}
       class:drop-before={over.id === wid && !over.after}
@@ -206,6 +207,10 @@
     .bw.sm {
       grid-column: span 12;
     }
+    /* Kennzahlen: auf dem Handy zwei nebeneinander */
+    .bw.xs {
+      grid-column: span 6;
+    }
   }
   .editing .bw {
     outline: 2px dashed var(--border);
@@ -239,7 +244,7 @@
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .grip {
     cursor: grab;
@@ -302,7 +307,7 @@
     border-radius: 999px;
     padding: 2px 10px;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .chip:hover {

@@ -86,10 +86,10 @@
     display: grid;
     place-items: center;
     color: #fff;
-    background: linear-gradient(135deg, #5b77ff, #3b54d4);
+    background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
   }
   .code {
-    font-size: 20px;
+    font-size: var(--fs-xl);
     letter-spacing: 0.3em;
     text-align: center;
     height: 46px;

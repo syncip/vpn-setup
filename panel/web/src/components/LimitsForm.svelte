@@ -146,7 +146,7 @@
     align-items: center;
     gap: 7px;
     margin-bottom: 10px;
-    font-size: 14px;
+    font-size: var(--fs-base);
   }
   .tier {
     display: grid;

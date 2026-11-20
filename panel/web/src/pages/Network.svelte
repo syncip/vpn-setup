@@ -169,6 +169,7 @@
   <div class="tabs">
     <button class:active={!sid && tab !== 'access'} onclick={() => go('/network')}><Icon name="network" size={14} /> Übersicht</button>
     <button class:active={tab === 'access'} onclick={() => go('/network/access')}><Icon name="lock" size={14} /> Zugriff</button>
+    <span class="tabs-sep" aria-hidden="true"></span><span class="tabs-label">WireGuard-Server</span>
     {#each mesh as s}
       <button class:active={s.id === sid} onclick={() => go(`/network/${s.id}${view === 'matrix' ? '/matrix' : ''}`)}><span class="dot" class:on={s.status?.running}></span> {s.name}</button>
     {/each}
@@ -418,12 +419,12 @@
   .hub-t {
     fill: #fff;
     font-weight: 700;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .hub-s {
     fill: #fff;
     opacity: 0.8;
-    font-size: 9.5px;
+    font-size: var(--fs-xs);
     font-family: var(--mono);
   }
   .node {
@@ -462,15 +463,15 @@
   .nt {
     fill: var(--text);
     font-weight: 650;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .nt.small {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     font-weight: 600;
   }
   .ns {
     fill: var(--muted);
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     font-family: var(--mono);
   }
   .route {
@@ -478,7 +479,7 @@
   }
   .rt {
     fill: var(--accent);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-family: var(--mono);
     font-weight: 600;
   }
@@ -526,7 +527,7 @@
     display: inline-block;
     text-transform: none;
     letter-spacing: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .yes {
     display: inline-grid;

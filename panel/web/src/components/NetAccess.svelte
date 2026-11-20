@@ -316,7 +316,7 @@
     border-radius: 999px;
     background: var(--panel-2);
     border: 1px solid var(--border);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .chip button {
     border: none;
@@ -346,7 +346,7 @@
     gap: 8px;
   }
   .warn-text {
-    color: var(--warn, #b7791f);
+    color: var(--warn);
     display: inline-flex;
     align-items: center;
     gap: 4px;
