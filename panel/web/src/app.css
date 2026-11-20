@@ -14,6 +14,8 @@
   --ok-soft: #e3f6ec;
   --warn: #c98510;
   --warn-soft: #fcf1dc;
+  --person: #d2603a;
+  --person-soft: #fbe9e1;
   --bad: #d64545;
   --bad-soft: #fbe6e6;
   --up: #9aa9f4;
@@ -61,6 +63,8 @@
     --ok-soft: #173326;
     --warn: #e5a83b;
     --warn-soft: #3a2d14;
+    --person: #f08a5d;
+    --person-soft: #3d2419;
     --bad: #f06a6a;
     --bad-soft: #3d1c1e;
     --up: #4a5893;
@@ -89,6 +93,8 @@
   --ok-soft: #173326;
   --warn: #e5a83b;
   --warn-soft: #3a2d14;
+  --person: #f08a5d;
+  --person-soft: #3d2419;
   --bad: #f06a6a;
   --bad-soft: #3d1c1e;
   --up: #4a5893;

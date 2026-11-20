@@ -299,6 +299,22 @@ Zeigen auf einen Server hebt seinen Weg hervor.
   → aus der Gruppe nehmen.
 - **Anlegen:** „Server“, „Ausgang“ oder „Gruppe“ aus der Leiste oben hineinziehen (oder anklicken). „Ausgang“
   auf einem Ausgang = neuer Ausgang dahinter, auf einer Gruppe = darin. Nach dem Dialog geht es zur Karte zurück.
+- **Eigener Weg für Nutzer und Geräte:** Unter den Servern stehen nur Nutzer und Geräte mit eigener Ziel-Regel
+  „Alles“ (Linien in Koralle) – alle anderen nehmen den Weg ihres Servers.
+  - **Anlegen:** „Nutzer/Gerät“ aus der Leiste auf einen Ausgang, eine Gruppe oder „Direkt“ ziehen und
+    danach in der Auswahl „Für wen?“ den Nutzer oder das Gerät wählen.
+  - **Ändern:** Den Nutzer bzw. das Gerät auf einen anderen Ausgang ziehen.
+  - **Entfernen:** Auf „Nicht verwendet“ ziehen. Danach gilt wieder der Weg des Servers (bei Geräten zuerst
+    der des Nutzers).
+  - Ein Nutzer-Weg gilt für alle Zugänge des Nutzers außer Hysteria2 (Hysteria2 folgt nur Server-Regeln).
+    Regeln für bestimmte Ziele gehen vor.
+- **Weg verlängern (Kaskade aus Sicht der Quelle):** Einen Server, Nutzer oder ein Gerät anklicken, dann sitzt
+  am Ende des Wegs ein **„+“**.
+  - Das „+“ auf einen Ausgang oder eine Gruppe ziehen = weitere Stufe anhängen, z. B. Nutzer1 → Ausgang A →
+    Ausgang B. **„−“** nimmt die letzte Stufe wieder weg.
+  - Höchstens 3 Stufen; eine Gruppe nur am Ende.
+  - Ein Ausgang hat nur einen Weg: Läuft B schon über einen anderen Ausgang, sagt die Karte das. Für den
+    zweiten Weg ist dann ein zweiter Ausgang nötig.
 - **Anklicken** zeigt Einzelheiten; dort lassen sich Weg bzw. „Verbunden über“ auch ohne Ziehen wählen.
 - Jede Änderung fragt vorher nach.
 

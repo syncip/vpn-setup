@@ -7,10 +7,17 @@
   //   Ausgang auf Gruppe                     = in die Gruppe aufnehmen (aus einer Gruppe gezogen: verschieben)
   //   Ausgang aus einer Gruppe auf „Nicht verwendet“ = aus der Gruppe nehmen
   //   „+ Ausgang“, „+ Gruppe“, „+ Server“    = anlegen (dort, wo sie landen, z. B. „+ Ausgang“ auf einen Ausgang = dahinter)
+  // Eigener Weg (Nutzer und Geräte mit eigener Ziel-Regel „Alles“):
+  //   „+ Nutzer/Gerät“ auf Ausgang/Gruppe/„Direkt“ = Auswahl „Für wen?“, dann Regel anlegen
+  //   Nutzer/Gerät auf Ausgang/Gruppe/„Direkt“  = Weg ändern; auf „Nicht verwendet“ = eigenen Weg entfernen
+  //   „+“-Griff am Ende eines gewählten Wegs     = weitere Stufe anhängen (Kaskade aus Sicht der Quelle), „−“ = letzte Stufe weg
   import Icon from './Icon.svelte';
   import ProtoLogo from './ProtoLogo.svelte';
+  import Modal from './Modal.svelte';
+  import Picker from './Picker.svelte';
   import { confirmDialog } from './Confirm.svelte';
-  import { get, post, put, run } from '../lib/api.js';
+  import { get, post, put, del, run } from '../lib/api.js';
+  import { userItems, peerItems } from '../lib/pick.js';
   import { speed, fmtNum } from '../lib/format.js';
   import { go, intent } from '../lib/state.svelte.js';
 
@@ -127,17 +134,60 @@
   const ROW_H = 30;
   const VGAP = 14;
   const SRV_H = 52;
+  const PSN_H = 44;
+  const OWN_HEAD = 26;
 
+  // eigene Regel „Alles“ einer Quelle (Server, Nutzer, Gerät) – die erste greift
+  const ownRule = (scope, id) => routes.filter((r) => r.scope === scope && r.scope_id === id && r.match === 'all').sort((a, b) => a.id - b.id)[0];
   // Weg eines Servers für „Alles“: eigene Regel vor der Regel für alle
   function serverRule(s) {
-    const own = routes.filter((r) => r.scope === 'server' && r.scope_id === s.id && r.match === 'all').sort((a, b) => a.id - b.id)[0];
+    const own = ownRule('server', s.id);
     if (own) return { r: own, own: true };
     const all = routes.filter((r) => r.scope === 'global' && r.match === 'all').sort((a, b) => a.id - b.id)[0];
     return all ? { r: all, own: false } : null;
   }
   // weitere Regeln, die nur einen Teil des Verkehrs betreffen (bestimmte Ziele) – Anzeige „+n“
   const extraRules = (s) => routes.filter((r) => r.match !== 'all' && ((r.scope === 'server' && r.scope_id === s.id) || r.scope === 'global')).length;
-  const personalRules = $derived(routes.filter((r) => r.scope === 'user' || r.scope === 'peer').length);
+  const personalRules = $derived(routes.filter((r) => (r.scope === 'user' || r.scope === 'peer') && r.match !== 'all').length);
+
+  // ---------- Nutzer und Geräte mit eigenem Weg ----------
+  const userById = $derived(byId(rt.users));
+  const peerById = $derived(byId(rt.peers));
+  function personName(kind, id) {
+    if (kind === 'user') return userById[id]?.name || `Nutzer ${id}`;
+    const p = peerById[id];
+    return p ? `${userById[p.user_id]?.name || '?'} · ${p.name}` : `Gerät ${id}`;
+  }
+  const persons = $derived.by(() => {
+    const seen = new Set();
+    const out = [];
+    for (const r of [...routes].sort((a, b) => a.id - b.id)) {
+      if (r.match !== 'all' || (r.scope !== 'user' && r.scope !== 'peer')) continue;
+      const key = `${r.scope[0]}${r.scope_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const p = r.scope === 'peer' ? peerById[r.scope_id] : null;
+      out.push({
+        key,
+        kind: r.scope,
+        id: r.scope_id,
+        r,
+        name: personName(r.scope, r.scope_id),
+        proto: p?.protocol || '',
+        hy: p?.protocol === 'hysteria2',
+        off: r.scope === 'user' ? userById[r.scope_id]?.enabled === false : p?.enabled === false,
+      });
+    }
+    return out.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'user' ? -1 : 1));
+  });
+  // Quelle aus Schlüssel „s12“, „u3“, „p7“
+  const KIND = { s: 'server', u: 'user', p: 'peer' };
+  const srcOf = (key) => ({ kind: KIND[key[0]], id: Number(key.slice(1)) });
+  const srcKeyOf = (s) => (s && (s.kind === 'server' || s.kind === 'user' || s.kind === 'peer') ? `${s.kind[0]}${s.id}` : '');
+  function srcName(src) {
+    if (src.kind === 'server') return `„${serverById[src.id]?.name || '?'}“`;
+    return `${src.kind === 'user' ? 'Nutzer' : 'Gerät'} „${personName(src.kind, src.id)}“`;
+  }
 
   // Knoten, der einen Ausgang zeigt (eigene Karte oder Zeile der ersten Gruppe)
   const nodeOfExit = (id) => {
@@ -191,8 +241,15 @@
     const srv = servers.map((s, i) => {
       const sr = serverRule(s);
       const target = sr ? ruleTarget(sr.r) : 'direct';
-      return { s, sr, target, first: firstOf(target), y: TOP + i * (SRV_H + VGAP) };
+      return { key: `s${s.id}`, kind: 'server', id: s.id, name: s.name, s, sr, target, first: firstOf(target), y: TOP + i * (SRV_H + VGAP), h: SRV_H };
     });
+    // darunter: Nutzer und Geräte mit eigenem Weg
+    const ownTop = TOP + srv.length * (SRV_H + VGAP) + (srv.length ? 10 : 0);
+    const psn = persons.map((p, i) => {
+      const target = ruleTarget(p.r);
+      return { ...p, target, first: firstOf(target), y: ownTop + OWN_HEAD + i * (PSN_H + VGAP), h: PSN_H };
+    });
+    const src = [...srv, ...psn];
 
     // Anordnung: je Stufe nach der mittleren Höhe der Vorgänger, sonst untereinander
     const pos = {};
@@ -207,13 +264,13 @@
       }
       return p.y + EX_H / 2;
     };
-    let bottom = srv.length ? srv[srv.length - 1].y + SRV_H : TOP;
+    let bottom = psn.length ? psn[psn.length - 1].y + PSN_H : ownTop + OWN_HEAD + 34;
     let directY = null;
     for (let d = 1; d <= stages; d++) {
       const list = Object.values(nodes).filter((n) => n.depth === d);
       for (const n of list) {
         const ys = [];
-        for (const x of srv) if (x.first === n.key) ys.push(x.y + SRV_H / 2);
+        for (const x of src) if (x.first === n.key) ys.push(x.y + x.h / 2);
         for (const ed of edges) if (ed.to === n.key) {
           const y = exitY(ed.from);
           if (y != null) ys.push(y);
@@ -229,7 +286,7 @@
         cur = y + n.h + VGAP;
       }
       if (d === 1) {
-        const ds = srv.filter((x) => x.first === 'direct').map((x) => x.y + SRV_H / 2);
+        const ds = src.filter((x) => x.first === 'direct').map((x) => x.y + x.h / 2);
         const want = ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length - 23 : cur;
         directY = Math.max(cur, want);
         pos.direct = { x: colX(1), y: directY };
@@ -238,11 +295,11 @@
       bottom = Math.max(bottom, cur - VGAP);
     }
 
-    // Wege der Server (für Hervorhebung und Farbe)
-    const pathEdges = {}; // Server-ID → Set der Kanten
+    // Wege der Quellen (für Hervorhebung und Farbe)
+    const pathEdges = {}; // Quelle („s12“, „u3“, „p7“) → Set der Kanten
     const terminals = new Set();
-    for (const x of srv) {
-      const set = new Set([`s${x.s.id}>${x.first}`]);
+    for (const x of src) {
+      const set = new Set([`${x.key}>${x.first}`]);
       terminals.add(x.target);
       if (x.target !== 'direct') {
         let e = x.target[0] === 'e' ? exitById[Number(x.target.slice(2))] : exitById[groupById[Number(x.target.slice(2))]?.status?.active] || exitById[groupById[Number(x.target.slice(2))]?.exits?.[0]];
@@ -253,7 +310,7 @@
         }
       }
       set.add(`${x.target}>net`);
-      pathEdges[x.s.id] = set;
+      pathEdges[x.key] = set;
     }
     // Ins Internet: Ziele von Regeln und Knoten ohne Nachfolger
     const sources = new Set(edges.map((ed) => nodeOfExit(ed.from)));
@@ -263,7 +320,7 @@
     const netY = Math.max(TOP, (ncs.length ? ncs.reduce((a, b) => a + b, 0) / ncs.length : TOP) - 23);
     bottom = Math.max(bottom, netY + 46);
 
-    return { nodes, pos, srv, edges, stages, colX, netX, W, H: bottom + 20, pathEdges, netFrom, netY, exitY, center, terminals };
+    return { nodes, pos, srv, psn, src, ownTop, edges, stages, colX, netX, W, H: bottom + 20, pathEdges, netFrom, netY, exitY, center, terminals };
   });
 
   // ---------- Linien ----------
@@ -275,13 +332,13 @@
     const v = view;
     const out = [];
     const on = (id) => [...Object.values(v.pathEdges)].some((s) => s.has(id));
-    const hot = (id) => (selServer ? v.pathEdges[selServer]?.has(id) : null);
+    const hot = (id) => (selSrc ? v.pathEdges[selSrc]?.has(id) : null);
     const leftY = (key) => v.center(key);
-    for (const x of v.srv) {
-      const id = `s${x.s.id}>${x.first}`;
+    for (const x of v.src) {
+      const id = `${x.key}>${x.first}`;
       const p = v.pos[x.first];
       if (!p) continue;
-      out.push({ id, d: curve(PAD + SRV_W, x.y + SRV_H / 2, p.x, leftY(x.first)), on: on(id), hot: hot(id), direct: x.first === 'direct' });
+      out.push({ id, d: curve(PAD + SRV_W, x.y + x.h / 2, p.x, leftY(x.first)), on: on(id), hot: hot(id), direct: x.first === 'direct', psn: x.kind !== 'server' });
     }
     for (const ed of v.edges) {
       const y1 = v.exitY(ed.from);
@@ -303,22 +360,24 @@
   });
 
   // ---------- Auswahl ----------
-  let sel = $state(null); // {kind: 'server'|'exit'|'group'|'direct', id}
-  // beim Ziehen nichts abdunkeln – alle Ziele bleiben gut sichtbar
-  const selServer = $derived(drag?.moved ? 0 : sel?.kind === 'server' ? sel.id : hoverServer);
-  let hoverServer = $state(0);
+  let sel = $state(null); // {kind: 'server'|'user'|'peer'|'exit'|'group'|'direct', id}
+  // gewählte oder gezeigte Quelle („s12“, „u3“, „p7“); beim Ziehen nichts abdunkeln – alle Ziele bleiben gut sichtbar
+  const selSrc = $derived(drag?.moved ? '' : srcKeyOf(sel) || hoverSrc);
+  let hoverSrc = $state('');
   const isSel = (kind, id) => sel?.kind === kind && sel.id === id;
   function pick(kind, id) {
     sel = isSel(kind, id) ? null : { kind, id };
   }
-  // Knoten auf dem Weg des gewählten Servers
+  // Knoten auf dem Weg der gewählten Quelle
   const onPath = (key) => {
-    if (!selServer) return true;
-    const set = view.pathEdges[selServer];
+    if (!selSrc) return true;
+    const set = view.pathEdges[selSrc];
     if (!set) return false;
+    // „e:ID“ bzw. Ausgangs-ID → Knoten, der den Ausgang zeigt (Ausgang in einer Gruppe: die Gruppe)
+    const nk = (s) => (s.startsWith('e:') ? nodeOfExit(Number(s.slice(2))) : /^\d+$/.test(s) ? nodeOfExit(Number(s)) : s);
     for (const id of set) {
       const [a, b] = id.split('>');
-      if (b === key || nodeOfExit(Number(a)) === key || a === key) return true;
+      if (nk(a) === key || nk(b) === key) return true;
     }
     return false;
   };
@@ -354,16 +413,58 @@
     if (!d.moved) {
       // Klick
       if (d.kind.startsWith('new-')) create(d.kind.slice(4), { kind: 'canvas', id: 0 });
-      else pick(d.kind, d.id);
+      else if (d.kind !== 'extend') pick(d.kind, d.id);
       return;
     }
     if (t && canDrop(d, t)) await act(d, t);
   }
 
+  const isPath = (t) => ['group', 'exit', 'direct'].includes(t.kind) && (t.kind !== 'group' || !!groupById[t.id]?.exits.length);
+  // Ziel als Schlüssel ↔ als {kind, id}
+  const keyToT = (key) => (key === 'direct' ? { kind: 'direct', id: 0 } : { kind: key[0] === 'g' ? 'group' : 'exit', id: Number(key.slice(2)) });
+  const srcEntry = (key) => view.src.find((x) => x.key === key);
+  const curStages = (key) => {
+    const x = srcEntry(key);
+    return x ? stagesTo(keyToT(x.target)) : [];
+  };
+  // „+“-Griff: Stufen nach dem Anhängen von t; Widerspruch, wenn der Ausgang schon einen anderen Weg hat
+  function extended(key, t) {
+    const cur = curStages(key);
+    if (!cur.length) return stagesTo(t);
+    return [...cur, { kind: t.kind === 'group' ? 'group' : 'exit', id: t.id }];
+  }
+  function extendConflict(key, t) {
+    if (t.kind !== 'exit') return '';
+    const cur = curStages(key);
+    if (!cur.length) return '';
+    const b = exitById[t.id];
+    const last = cur[cur.length - 1].id;
+    if (cur.some((s) => s.kind === 'exit' && s.id === t.id)) return `„${b?.name}“ liegt schon auf diesem Weg.`;
+    if (b && b.via && b.via !== last) return `„${b.name}“ läuft schon über „${exitById[b.via]?.name || '?'}“ – ein Ausgang hat nur einen Weg. Für diesen Weg einen zweiten Ausgang anlegen.`;
+    return '';
+  }
+
   function canDrop(d, t) {
     if (!d || !t) return false;
+    if (d.kind === 'new-person') return isPath(t) || t.kind === 'canvas';
     if (d.kind.startsWith('new-')) return true;
-    if (d.kind === 'server') return ['group', 'exit', 'direct'].includes(t.kind) && (t.kind !== 'group' || !!groupById[t.id]?.exits.length);
+    if (d.kind === 'server') return isPath(t);
+    if (d.kind === 'user' || d.kind === 'peer') return isPath(t) || t.kind === 'tray';
+    if (d.kind === 'extend') {
+      const cur = curStages(d.id);
+      if (cur.length >= 3 || cur.some((s) => s.kind === 'group')) return false;
+      if (!cur.length) return isPath(t) && t.kind !== 'direct';
+      if (t.kind === 'group') {
+        const g = groupById[t.id];
+        return !!g?.exits.length && !g.exits.some((id) => cur.some((s) => s.kind === 'exit' && s.id === id));
+      }
+      if (t.kind !== 'exit') return false;
+      const b = exitById[t.id];
+      if (!b || cur.some((s) => s.kind === 'exit' && s.id === b.id)) return false;
+      const last = exitById[cur[cur.length - 1].id];
+      if (last?.type === 'tor' && b.type === 'wireguard') return false; // Tor überträgt nur TCP
+      return !extendConflict(d.id, t);
+    }
     if (d.kind !== 'exit') return false;
     const a = exitById[d.id];
     if (!a) return false;
@@ -391,13 +492,24 @@
     const t = over;
     if (d.kind === 'exit' && exitById[d.id]?.via_rule && (!t || t.kind === 'exit' || t.kind === 'direct'))
       return `Den Weg von ${nm('exit', d.id)} bestimmt die Ziel-Regel ${exitById[d.id].via_rule} – dort ändern. In eine Gruppe ziehen geht.`;
-    if (!t) {
+    if (d.kind === 'extend' && t && t.kind === 'exit' && extendConflict(d.id, t)) return extendConflict(d.id, t);
+    if (!t || t.kind === 'canvas') {
       if (d.kind === 'server') return 'Auf einen Ausgang, eine Gruppe oder „Direkt“ ziehen';
+      if (d.kind === 'user' || d.kind === 'peer') return 'Auf einen Ausgang, eine Gruppe oder „Direkt“ ziehen = Weg ändern · auf „Nicht verwendet“ = eigenen Weg entfernen';
       if (d.kind === 'exit') return 'Auf einen Ausgang ziehen = dahinter schalten · auf eine Gruppe = aufnehmen · auf „Direkt“ = Kaskade aufheben';
+      if (d.kind === 'extend') return 'Auf einen Ausgang oder eine Gruppe ziehen = als weitere Stufe anhängen (höchstens 3, eine Gruppe nur am Ende)';
+      if (d.kind === 'new-person') return 'Auf einen Ausgang, eine Gruppe oder „Direkt“ ziehen – danach Nutzer oder Gerät wählen';
       return 'Loslassen zum Anlegen – auf einem Ausgang: dahinter, auf einer Gruppe: darin';
     }
     if (!canDrop(d, t)) return 'Hier nicht möglich';
     if (d.kind === 'server') return `${nm('server', d.id)}: Verkehr ${t.kind === 'direct' ? 'direkt ins Internet' : `über ${pathText(t)}`}`;
+    if (d.kind === 'user' || d.kind === 'peer') {
+      const who = srcName({ kind: d.kind, id: d.id });
+      if (t.kind === 'tray') return `Eigenen Weg von ${who} entfernen – danach gilt wieder der Weg ${d.kind === 'peer' ? 'des Nutzers bzw. ' : ''}des Servers`;
+      return `${who}: Verkehr ${t.kind === 'direct' ? 'direkt ins Internet' : `über ${pathText(t)}`}`;
+    }
+    if (d.kind === 'extend') return `${srcName(srcOf(d.id))}: Verkehr über ${stagesText(extended(d.id, t))}`;
+    if (d.kind === 'new-person') return t.kind === 'direct' ? 'Nutzer oder Gerät wählen, das direkt ins Internet geht' : `Nutzer oder Gerät wählen, das über ${pathText(t)} geht`;
     if (d.kind === 'exit') {
       if (t.kind === 'exit') return `${nm('exit', d.id)} über ${nm('exit', t.id)} verbinden`;
       if (t.kind === 'direct') return `${nm('exit', d.id)} direkt verbinden`;
@@ -421,10 +533,13 @@
     const first = exitById[g?.status?.active] || exitById[g?.exits?.[0]];
     return [...(first ? chainOf(first).reverse() : []).map((v) => ({ kind: 'exit', id: v.id })), { kind: 'group', id: t.id }];
   }
-  const pathText = (t) => stagesTo(t).map((s) => (s.kind === 'exit' ? exitById[s.id]?.name : `Gruppe ${groupById[s.id]?.name}`)).join(' → ');
+  const stagesText = (st) => st.map((s) => (s.kind === 'exit' ? exitById[s.id]?.name : `Gruppe ${groupById[s.id]?.name}`)).join(' → ') || 'direkt';
+  const pathText = (t) => stagesText(stagesTo(t));
 
   async function act(d, t) {
     if (d.kind === 'server') return setServerPath(d.id, t);
+    if (d.kind === 'user' || d.kind === 'peer') return t.kind === 'tray' ? removeOwn({ kind: d.kind, id: d.id }) : applyPath({ kind: d.kind, id: d.id }, stagesTo(t));
+    if (d.kind === 'extend') return applyPath(srcOf(d.id), extended(d.id, t));
     if (d.kind.startsWith('new-')) return create(d.kind.slice(4), t);
     if (t.kind === 'exit') return setVia(d.id, t.id);
     if (t.kind === 'direct') return setVia(d.id, 0);
@@ -433,21 +548,80 @@
   }
   const later = () => setTimeout(load, 600);
 
-  async function setServerPath(sid, t) {
-    const s = serverById[sid];
-    const stages = stagesTo(t);
-    const own = routes.find((r) => r.scope === 'server' && r.scope_id === sid && r.match === 'all');
+  const setServerPath = (sid, t) => applyPath({ kind: 'server', id: sid }, stagesTo(t));
+
+  // Weg einer Quelle (Server, Nutzer, Gerät) setzen: eigene Regel „Alles“ ändern oder anlegen
+  async function applyPath(src, stages, ask = true) {
+    const own = ownRule(src.kind, src.id);
+    const name = srcName(src);
+    const dest = stages.length ? `über ${stagesText(stages)}` : 'direkt über den Server hinaus';
+    if (ask) {
+      const who =
+        src.kind === 'server'
+          ? `Der gesamte Verkehr des Servers ${name} läuft danach ${dest}. Regeln für bestimmte Ziele, Nutzer und Geräte gehen weiterhin vor.`
+          : src.kind === 'user'
+            ? `Der gesamte Verkehr von ${name} läuft danach ${dest} – auf allen Zugängen außer Hysteria2. Regeln für bestimmte Ziele und eigene Wege einzelner Geräte gehen vor.`
+            : `Der gesamte Verkehr des Geräts ${name.replace(/^Gerät /, '')} läuft danach ${dest}. Regeln für bestimmte Ziele gehen vor.${peerById[src.id]?.protocol === 'hysteria2' ? ' Achtung: Hysteria2 folgt nur Server-Regeln – für dieses Gerät gilt die Regel nicht.' : ''}`;
+      const ok = await confirmDialog({
+        title: stages.length ? `${name} über ${stagesText(stages)}?` : `${name} direkt ins Internet?`,
+        text: `${who} Das Panel ${own ? 'ändert dafür die eigene Ziel-Regel' : 'legt dafür eine eigene Ziel-Regel an'}.`,
+        ok: 'Übernehmen',
+      });
+      if (!ok) return false;
+    }
+    const r = own
+      ? await run(() => put(`/routes/${own.id}`, { stages }), 'Weg geändert')
+      : await run(() => post('/routes', { name: '', enabled: true, scope: src.kind, scope_id: src.id, match: 'all', nets: '', domains: '', lists: [], stages }), 'Weg geändert');
+    if (r) {
+      sel = { kind: src.kind, id: src.id };
+      later();
+    }
+    return !!r;
+  }
+  // letzte Stufe vom Weg einer Quelle nehmen
+  function shrink(key) {
+    const cur = curStages(key);
+    if (cur.length) applyPath(srcOf(key), cur.slice(0, -1));
+  }
+  // eigenen Weg eines Nutzers oder Geräts entfernen (Regel löschen)
+  async function removeOwn(src) {
+    const r = ownRule(src.kind, src.id);
+    if (!r) return;
+    const name = srcName(src);
     const ok = await confirmDialog({
-      title: t.kind === 'direct' ? `${s.name} direkt ins Internet?` : `${s.name} über ${pathText(t)}?`,
-      text: `Der gesamte Verkehr des Servers „${s.name}“ läuft danach ${t.kind === 'direct' ? 'direkt über den Server hinaus' : `über ${pathText(t)}`}. Regeln für bestimmte Ziele, Nutzer und Geräte gehen weiterhin vor. Das Panel ${own ? 'ändert dafür die Ziel-Regel dieses Servers' : 'legt dafür eine Ziel-Regel für diesen Server an'}.`,
-      ok: 'Übernehmen',
+      title: `Eigenen Weg von ${name} entfernen?`,
+      text: `Die Ziel-Regel ${r.name ? `„${r.name}“` : `#${r.id}`} wird gelöscht. Danach gilt wieder der Weg ${src.kind === 'peer' ? 'des Nutzers bzw. ' : ''}des Servers. Regeln für bestimmte Ziele bleiben erhalten.`,
+      ok: 'Entfernen',
+      danger: true,
     });
     if (!ok) return;
-    const body = { stages };
-    const r = own
-      ? await run(() => put(`/routes/${own.id}`, body), 'Weg geändert')
-      : await run(() => post('/routes', { name: '', enabled: true, scope: 'server', scope_id: sid, match: 'all', nets: '', domains: '', lists: [], stages }), 'Weg geändert');
-    if (r) later();
+    if (await run(() => del(`/routes/${r.id}`), 'Eigener Weg entfernt')) {
+      if (isSel(src.kind, src.id)) sel = null;
+      later();
+    }
+  }
+
+  // „Für wen?“ – neuer eigener Weg für einen Nutzer oder ein Gerät
+  let who = $state({ open: false, value: '', target: 'direct' });
+  const whoItems = $derived([...userItems(rt.users || [], 'user', rt.peers || []), ...peerItems(rt.peers || [], rt.users || [], servers, 'peer')]);
+  const whoSrc = $derived.by(() => {
+    const [kind, id] = String(who.value || '').split(':');
+    return kind && Number(id) ? { kind, id: Number(id) } : null;
+  });
+  const whoHy = $derived(whoSrc?.kind === 'peer' && peerById[whoSrc.id]?.protocol === 'hysteria2');
+  const whoOwn = $derived(whoSrc ? ownRule(whoSrc.kind, whoSrc.id) : null);
+  const tVal = (t) => (t.kind === 'direct' || t.kind === 'canvas' ? 'direct' : `${t.kind}:${t.id}`);
+  const valToT = (v) => {
+    if (v === 'direct') return { kind: 'direct', id: 0 };
+    const [kind, id] = v.split(':');
+    return { kind, id: Number(id) };
+  };
+  function openWho(t) {
+    who = { open: true, value: '', target: tVal(t) };
+  }
+  async function saveWho() {
+    if (!whoSrc || whoHy) return;
+    if (await applyPath(whoSrc, stagesTo(valToT(who.target)), false)) who.open = false;
   }
   async function setVia(id, via) {
     const a = exitById[id];
@@ -494,6 +668,7 @@
   }
   // Anlegen: Dialog auf der passenden Seite, danach zurück zur Karte
   function create(kind, t) {
+    if (kind === 'person') return openWho(t);
     intent.back = '/network';
     if (kind === 'exit') {
       intent.via = t.kind === 'exit' ? t.id : 0;
@@ -518,8 +693,35 @@
   // ---------- Details ----------
   const selExit = $derived(sel?.kind === 'exit' ? exitById[sel.id] : null);
   const selGroup = $derived(sel?.kind === 'group' ? groupById[sel.id] : null);
-  const selSrv = $derived(sel?.kind === 'server' ? view.srv.find((x) => x.s.id === sel.id) : null);
-  const usedBy = (key) => view.srv.filter((x) => x.target === key || x.first === key).map((x) => x.s.name);
+  const selSource = $derived(srcKeyOf(sel) ? srcEntry(srcKeyOf(sel)) : null);
+  const selSrv = $derived(selSource?.kind === 'server' ? selSource : null);
+  const selPsn = $derived(selSource && selSource.kind !== 'server' ? selSource : null);
+  const usedBy = (key) => view.src.filter((x) => x.target === key || x.first === key).map((x) => x.name);
+  // „+“/„−“ am Ende des Wegs der gewählten Quelle
+  const handle = $derived.by(() => {
+    const x = selSource;
+    if (!x || drag?.moved) return null;
+    const v = view;
+    let px, py;
+    if (x.target === 'direct') {
+      if (!v.pos.direct) return null;
+      px = v.pos.direct.x;
+      py = v.pos.direct.y + 23;
+    } else if (x.target[0] === 'g') {
+      const p = v.pos[x.target];
+      if (!p) return null;
+      px = p.x;
+      py = p.y + G_HEAD / 2;
+    } else {
+      const id = Number(x.target.slice(2));
+      const p = v.pos[nodeOfExit(id)];
+      py = v.exitY(id);
+      if (!p || py == null) return null;
+      px = p.x;
+    }
+    const cur = stagesTo(keyToT(x.target));
+    return { key: x.key, x: px + NODE_W + 6, y: py, plus: cur.length < 3 && !cur.some((s) => s.kind === 'group'), minus: cur.length > 0 };
+  });
   // Auswahl „Weg“ für einen Server (ohne Ziehen)
   const targetOptions = $derived([
     { v: 'direct', label: 'Direkt' },
@@ -527,11 +729,7 @@
     ...ex.exits.map((e) => ({ v: `exit:${e.id}`, label: [...chainOf(e).reverse(), e].map((x) => x.name).join(' → ') })),
   ]);
   const curTarget = (x) => (x.target === 'direct' ? 'direct' : x.target[0] === 'g' ? `group:${x.target.slice(2)}` : `exit:${x.target.slice(2)}`);
-  function chooseTarget(sid, v) {
-    if (v === 'direct') return setServerPath(sid, { kind: 'direct', id: 0 });
-    const [kind, id] = v.split(':');
-    setServerPath(sid, { kind, id: Number(id) });
-  }
+  const chooseTarget = (src, v) => applyPath(src, stagesTo(valToT(v)));
 </script>
 
 <div class="card">
@@ -541,9 +739,11 @@
       <button class="pal" onpointerdown={(e) => startDrag(e, 'new-server', 0, '+ Server')} title="Ziehen oder klicken: Server anlegen"><Icon name="server" size={14} /> Server</button>
       <button class="pal" onpointerdown={(e) => startDrag(e, 'new-exit', 0, '+ Ausgang')} title="Auf einen Ausgang ziehen = dahinter schalten, auf eine Gruppe = darin anlegen"><Icon name="globe" size={14} /> Ausgang</button>
       <button class="pal" onpointerdown={(e) => startDrag(e, 'new-group', 0, '+ Gruppe')} title="Auf einen Ausgang ziehen = Gruppe mit diesem Ausgang"><Icon name="layers" size={14} /> Gruppe</button>
+      <button class="pal psn" onpointerdown={(e) => startDrag(e, 'new-person', 0, '+ Nutzer/Gerät')} title="Auf einen Ausgang, eine Gruppe oder „Direkt“ ziehen = eigener Weg für einen Nutzer oder ein Gerät"><Icon name="user" size={14} /> Nutzer/Gerät</button>
     </div>
     <div class="legend tiny muted">
       <span><i class="ln on"></i> Weg der Server</span>
+      <span><i class="ln psn"></i> Eigener Weg</span>
       <span><i class="ln"></i> nicht genutzt</span>
     </div>
   </div>
@@ -559,7 +759,7 @@
 
       <svg class="wires" width={view.W} height={view.H} aria-hidden="true">
         {#each lines as l (l.id)}
-          <path d={l.d} class:on={l.on} class:via={l.via} class:direct={l.direct} class:hot={l.hot === true} class:dim={l.hot === false} />
+          <path d={l.d} class:on={l.on} class:via={l.via} class:direct={l.direct} class:psn={l.psn} class:hot={l.hot === true} class:dim={l.hot === false} />
         {/each}
       </svg>
 
@@ -570,11 +770,11 @@
           class="node srv"
           class:sel={isSel('server', s.id)}
           class:off={!s.enabled}
-          class:dim={selServer && selServer !== s.id}
+          class:dim={selSrc && selSrc !== x.key}
           style="left:{PAD}px;top:{x.y}px;width:{SRV_W}px;height:{SRV_H}px"
           onpointerdown={(e) => startDrag(e, 'server', s.id, s.name)}
-          onpointerenter={() => (hoverServer = s.id)}
-          onpointerleave={() => hoverServer === s.id && (hoverServer = 0)}
+          onpointerenter={() => (hoverSrc = x.key)}
+          onpointerleave={() => hoverSrc === x.key && (hoverSrc = '')}
           role="button"
           tabindex="0"
           onkeydown={(e) => e.key === 'Enter' && pick('server', s.id)}
@@ -589,6 +789,33 @@
         </div>
       {/each}
       {#if !view.srv.length && loaded}<div class="muted small" style="position:absolute;left:{PAD}px;top:{TOP}px;width:{SRV_W}px">Noch kein Server – „Server“ oben hineinziehen.</div>{/if}
+
+      <!-- Nutzer und Geräte mit eigenem Weg -->
+      <div class="ownh" style="left:{PAD}px;top:{view.ownTop}px;width:{SRV_W}px" title="Nutzer und Geräte mit eigener Ziel-Regel „Alles“ – alle anderen nehmen den Weg ihres Servers">Eigener Weg</div>
+      {#each view.psn as x (x.key)}
+        <div
+          class="node psn"
+          class:sel={isSel(x.kind, x.id)}
+          class:off={x.off || x.hy}
+          class:dim={selSrc && selSrc !== x.key}
+          style="left:{PAD}px;top:{x.y}px;width:{SRV_W}px;height:{PSN_H}px"
+          onpointerdown={(e) => startDrag(e, x.kind, x.id, x.name)}
+          onpointerenter={() => (hoverSrc = x.key)}
+          onpointerleave={() => hoverSrc === x.key && (hoverSrc = '')}
+          role="button"
+          tabindex="0"
+          onkeydown={(e) => e.key === 'Enter' && pick(x.kind, x.id)}
+          title="Ziehen auf einen Ausgang, eine Gruppe oder „Direkt“ = Weg ändern · auf „Nicht verwendet“ = eigenen Weg entfernen"
+        >
+          {#if x.kind === 'peer'}<ProtoLogo id={x.proto} size={18} />{:else}<span class="pic"><Icon name="user" size={13} /></span>{/if}
+          <div class="grow">
+            <div class="strong name">{x.name}</div>
+            <div class="tiny muted name">{x.kind === 'user' ? 'Nutzer · alle Zugänge' : 'Gerät'}{x.hy ? ' · gilt nicht (Hysteria2)' : ''}</div>
+          </div>
+        </div>
+      {:else}
+        {#if loaded}<div class="ownempty tiny muted" style="left:{PAD}px;top:{view.ownTop + OWN_HEAD}px;width:{SRV_W}px">Keiner – „Nutzer/Gerät“ oben auf einen Ausgang ziehen.</div>{/if}
+      {/each}
 
       <!-- Direkt -->
       {#if view.pos.direct}
@@ -690,12 +917,23 @@
       <div class="node net" style="left:{view.netX}px;top:{view.netY}px;width:110px;height:46px">
         <span class="ic"><Icon name="globe" size={16} /></span><span class="strong">Internet</span>
       </div>
+
+      <!-- Weg der gewählten Quelle verlängern / kürzen -->
+      {#if handle}
+        {#if handle.plus}
+          <button class="hdl plus" style="left:{handle.x}px;top:{handle.y - (handle.minus ? 24 : 11)}px" onpointerdown={(e) => startDrag(e, 'extend', handle.key, '+ Stufe')} title="Auf einen Ausgang oder eine Gruppe ziehen = weitere Stufe anhängen" aria-label="Stufe anhängen">+</button>
+        {/if}
+        {#if handle.minus}
+          <button class="hdl" style="left:{handle.x}px;top:{handle.y + (handle.plus ? 2 : -11)}px" onclick={() => shrink(handle.key)} title="Letzte Stufe entfernen" aria-label="Letzte Stufe entfernen">−</button>
+        {/if}
+      {/if}
     </div>
   </div>
 
   <!-- Nicht verwendet -->
   <div class="tray" class:drop={dropOk('tray', 0)} class:over={isOver('tray', 0)} data-drop="tray:0">
     <span class="muted small">Nicht verwendet</span>
+    {#if drag?.moved && (drag.kind === 'user' || drag.kind === 'peer')}<span class="tiny muted">Hier ablegen = eigenen Weg entfernen</span>{/if}
     {#each trayExits as e (e.id)}
       <button class="chip" class:sel={isSel('exit', e.id)} data-drop="exit:{e.id}" class:over={isOver('exit', e.id)} onpointerdown={(ev) => startDrag(ev, 'exit', e.id, e.name)} title="Ziehen: auf eine Gruppe = aufnehmen, auf einen Ausgang = dahinter schalten; Server hierher ziehen = Weg über diesen Ausgang">
         <span class="dot {health(e)}"></span>{e.name}<span class="tiny muted">{TYPE[e.type] || e.type}</span>
@@ -708,8 +946,8 @@
   <div class="foot tiny muted">
     {#if hint}<span class="hint"><Icon name="info" size={13} /> {hint}</span>
     {:else}
-      Klicken = Details · Server ziehen = Weg festlegen · Ausgang auf Ausgang = dahinter schalten (Kaskade, höchstens 3 Stufen)
-      {#if personalRules} · Außerdem {personalRules} {personalRules === 1 ? 'Regel' : 'Regeln'} für einzelne Nutzer oder Geräte – <button class="linkbtn" onclick={() => go('/proxy/rules')}>Ziel-Regeln</button>{/if}
+      Klicken = Details · Server, Nutzer oder Gerät ziehen = Weg festlegen · „+“ am Ende eines gewählten Wegs = Stufe anhängen · Ausgang auf Ausgang = dahinter schalten (höchstens 3 Stufen)
+      {#if personalRules} · Außerdem {personalRules} {personalRules === 1 ? 'Regel' : 'Regeln'} für bestimmte Ziele einzelner Nutzer oder Geräte – <button class="linkbtn" onclick={() => go('/proxy/rules')}>Ziel-Regeln</button>{/if}
     {/if}
   </div>
 </div>
@@ -724,7 +962,7 @@
     </div>
     <div class="field" style="max-width:520px">
       <label for="bm-target">Weg für den gesamten Verkehr</label>
-      <select id="bm-target" class="input" value={curTarget(x)} onchange={(e) => chooseTarget(x.s.id, e.currentTarget.value)}>
+      <select id="bm-target" class="input" value={curTarget(x)} onchange={(e) => chooseTarget({ kind: 'server', id: x.s.id }, e.currentTarget.value)}>
         {#each targetOptions as o}<option value={o.v}>{o.label}</option>{/each}
       </select>
       <div class="help">{x.sr ? (x.sr.own ? 'Eigene Ziel-Regel dieses Servers.' : 'Folgt der Regel für alle – eine Änderung legt eine eigene Regel für diesen Server an.') : 'Keine Regel – direkt.'} Regeln für bestimmte Ziele, Nutzer und Geräte gehen vor.</div>
@@ -732,6 +970,31 @@
     <div class="row wrap" style="margin-top:10px">
       <button class="btn sm" onclick={() => go('/proxy/rules')}><Icon name="route" size={14} /> Ziel-Regeln</button>
       <button class="btn sm" onclick={() => go('/servers')}><Icon name="server" size={14} /> Server</button>
+    </div>
+  </div>
+{:else if selPsn}
+  {@const x = selPsn}
+  {@const uid = x.kind === 'user' ? x.id : peerById[x.id]?.user_id}
+  <div class="card card-pad detail">
+    <div class="spread">
+      <h3 class="row">{#if x.kind === 'peer'}<ProtoLogo id={x.proto} size={20} />{:else}<Icon name="user" size={18} />{/if} {x.name} <span class="badge">{x.kind === 'user' ? 'Nutzer' : 'Gerät'}</span></h3>
+      <button class="btn sm ghost icon" onclick={() => (sel = null)} aria-label="Schließen"><Icon name="x" size={15} /></button>
+    </div>
+    <div class="field" style="max-width:520px">
+      <label for="bm-ptarget">Weg für den gesamten Verkehr</label>
+      <select id="bm-ptarget" class="input" value={curTarget(x)} onchange={(e) => chooseTarget({ kind: x.kind, id: x.id }, e.currentTarget.value)}>
+        {#each targetOptions as o}<option value={o.v}>{o.label}</option>{/each}
+      </select>
+      <div class="help">
+        {x.kind === 'user' ? 'Gilt für alle Zugänge dieses Nutzers außer Hysteria2. Regeln für bestimmte Ziele und eigene Wege einzelner Geräte gehen vor.' : 'Gilt nur für dieses Gerät. Regeln für bestimmte Ziele gehen vor.'}
+        Ziel-Regel {x.r.name ? `„${x.r.name}“` : `#${x.r.id}`}. Mit „+“ am Ende des Wegs hängst du eine weitere Stufe an.
+      </div>
+      {#if x.hy}<div class="help" style="color:var(--warn)">Hysteria2 folgt nur Server-Regeln – diese Regel greift für das Gerät nicht.</div>{/if}
+    </div>
+    <div class="row wrap" style="margin-top:10px">
+      <button class="btn sm danger" onclick={() => removeOwn({ kind: x.kind, id: x.id })}><Icon name="trash" size={14} /> Eigenen Weg entfernen</button>
+      {#if uid}<button class="btn sm" onclick={() => go(`/users/${uid}/peers`)}><Icon name="user" size={14} /> Nutzer öffnen</button>{/if}
+      <button class="btn sm" onclick={() => go('/proxy/rules')}><Icon name="route" size={14} /> Ziel-Regeln</button>
     </div>
   </div>
 {:else if selExit}
@@ -782,8 +1045,31 @@
 {/if}
 
 {#if drag?.moved}
-  <div class="ghost" style="left:{drag.x + 12}px;top:{drag.y + 10}px">{drag.label}</div>
+  <div class="ghost" class:psn={drag.kind === 'user' || drag.kind === 'peer' || drag.kind === 'new-person'} style="left:{drag.x + 12}px;top:{drag.y + 10}px">{drag.label}</div>
 {/if}
+
+<Modal bind:open={who.open} title="Eigener Weg für Nutzer oder Gerät" width={540}>
+  <div class="field">
+    <label for="bm-who">Für wen?</label>
+    <Picker id="bm-who" items={whoItems} bind:value={who.value} placeholder="Nutzer oder Gerät suchen …" />
+  </div>
+  <div class="field">
+    <label for="bm-who-target">Weg für den gesamten Verkehr</label>
+    <select id="bm-who-target" class="input" bind:value={who.target}>
+      {#each targetOptions as o}<option value={o.v}>{o.label}</option>{/each}
+    </select>
+  </div>
+  <div class="help">
+    {#if whoSrc?.kind === 'user'}Gilt für alle Zugänge dieses Nutzers außer Hysteria2.{:else if whoSrc}Gilt nur für dieses Gerät.{:else}Ein Nutzer-Weg gilt für alle seine Zugänge (außer Hysteria2), ein Geräte-Weg nur für das Gerät.{/if}
+    Regeln für bestimmte Ziele gehen weiterhin vor.
+  </div>
+  {#if whoHy}<div class="help" style="color:var(--warn)">Hysteria2 folgt nur Server-Regeln – für dieses Gerät geht das nicht. Wähle den Nutzer oder ändere den Weg des Servers.</div>{/if}
+  {#if whoOwn}<div class="help">Hat schon einen eigenen Weg – er wird geändert.</div>{/if}
+  {#snippet footer()}
+    <button class="btn" onclick={() => (who.open = false)}>Abbrechen</button>
+    <button class="btn primary" onclick={saveWho} disabled={!whoSrc || whoHy}>Übernehmen</button>
+  {/snippet}
+</Modal>
 
 <style>
   .palette {
@@ -838,6 +1124,81 @@
   }
   .ln.on {
     border-top: 2.5px solid var(--accent);
+  }
+  .ln.psn {
+    border-top: 2.5px solid var(--person);
+  }
+  .pal.psn::before {
+    color: var(--person);
+  }
+  .pal.psn:hover {
+    border-color: var(--person);
+  }
+  .ownh {
+    position: absolute;
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--person);
+    font-weight: 600;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border-strong);
+  }
+  .ownempty {
+    position: absolute;
+    line-height: 1.4;
+  }
+  .node.psn {
+    cursor: grab;
+    touch-action: none;
+    gap: 8px;
+    border-left: 3px solid var(--person);
+  }
+  .node.psn.sel {
+    border-color: var(--person);
+    box-shadow: 0 0 0 3px var(--person-soft);
+  }
+  .pic {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--person-soft);
+    color: var(--person);
+    flex: none;
+  }
+  .wires path.on.psn,
+  .wires path.on.psn.direct {
+    stroke: var(--person);
+  }
+  .hdl {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    z-index: 2;
+  }
+  .hdl.plus {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    cursor: grab;
+    touch-action: none;
+  }
+  .hdl:hover {
+    border-color: var(--accent);
   }
   .scroll {
     overflow-x: auto;
@@ -1079,5 +1440,8 @@
     font-size: var(--fs-sm);
     font-weight: 600;
     box-shadow: var(--shadow-lg);
+  }
+  .ghost.psn {
+    background: var(--person);
   }
 </style>
