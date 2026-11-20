@@ -1045,7 +1045,7 @@
 {/if}
 
 {#if drag?.moved}
-  <div class="ghost" class:psn={drag.kind === 'user' || drag.kind === 'peer' || drag.kind === 'new-person'} style="left:{drag.x + 12}px;top:{drag.y + 10}px">{drag.label}</div>
+  <div class="dragimg" class:psn={drag.kind === 'user' || drag.kind === 'peer' || drag.kind === 'new-person'} style="left:{drag.x + 12}px;top:{drag.y + 10}px">{drag.label}</div>
 {/if}
 
 <Modal bind:open={who.open} title="Eigener Weg für Nutzer oder Gerät" width={540}>
@@ -1429,7 +1429,7 @@
   .detail h3 {
     gap: 8px;
   }
-  .ghost {
+  .dragimg {
     position: fixed;
     z-index: 200;
     pointer-events: none;
@@ -1441,7 +1441,7 @@
     font-weight: 600;
     box-shadow: var(--shadow-lg);
   }
-  .ghost.psn {
+  .dragimg.psn {
     background: var(--person);
   }
 </style>
