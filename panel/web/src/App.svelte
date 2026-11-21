@@ -117,6 +117,7 @@
         ['/stats/live', 'Live'],
         ['/stats/exits', 'Ausgänge'],
         ['/stats/dns', 'DNS'],
+        ['/stats/smart', 'SmartDNS'],
       ],
     },
     {

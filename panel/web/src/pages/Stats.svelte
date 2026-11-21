@@ -1,5 +1,5 @@
 <script>
-  // Statistik: alle Grafiken an einem Ort – Verkehr (Verlauf), Live (Tempo und Geräte), Ausgänge, DNS.
+  // Statistik: alle Grafiken an einem Ort – Verkehr (Verlauf), Live (Tempo und Geräte), Ausgänge, DNS, SmartDNS.
   // Jede Seite ist anpassbar (Fenster verschieben, Breite, ausblenden, hinzufügen); jede Grafik merkt sich
   // Zeitraum, Darstellung, Einheit, Höhe und ausgeblendete Reihen.
   import Icon from '../components/Icon.svelte';
@@ -10,6 +10,7 @@
   import ExitLive from '../components/ExitLive.svelte';
   import ExitTraffic from '../components/ExitTraffic.svelte';
   import DNSLive from '../components/DNSLive.svelte';
+  import SmartLive from '../components/SmartLive.svelte';
   import { get } from '../lib/api.js';
   import { bytes, fmtNum, speed } from '../lib/format.js';
   import { go } from '../lib/state.svelte.js';
@@ -21,6 +22,7 @@
     ['live', 'Live', 'activity'],
     ['exits', 'Ausgänge', 'route'],
     ['dns', 'DNS', 'globe'],
+    ['smart', 'SmartDNS', 'route'],
   ];
   $effect(() => {
     if (!TABS.some((t) => t[0] === tab)) go('/stats', true);
@@ -136,6 +138,8 @@
   {#snippet w_dns()}<DNSLive />{/snippet}
   <Board id="stats-dns" widgets={[{ id: 'live', title: 'DNS live', w: 12, body: w_dns }]} />
   <p class="muted small" style="margin-top:12px">Weitere DNS-Zahlen (Top-Domains, gesperrte Anfragen, Geräte) stehen unter <a href="#/dns">DNS → Übersicht</a>.</p>
+{:else if tab === 'smart'}
+  <SmartLive />
 {/if}
 
 <style>

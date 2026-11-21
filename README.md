@@ -14,7 +14,7 @@ Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
 | **Server** | Server, WireGuard-Netze (Geräte, Sternkarte, Zugriffsmatrix), Zugriff zwischen Netzen |
 | **Routing** | Übersicht, Karte (Aufbau/Live), Ausgänge, Gruppen, Ziel-Regeln, IP-Listen, Proxy-Server |
 | **DNS** | Übersicht, Protokoll, Filterprofile, Blocklisten, SmartDNS, Ohne VPN, Einstellungen |
-| **Statistik** | Verkehr, Live, Ausgänge, DNS |
+| **Statistik** | Verkehr, Live, Ausgänge, DNS, SmartDNS |
 | **System** | Zustand, Was gilt?, Updates, Ereignisse, Einstellungen, Mein Konto |
 
 - Die Seitenleiste lässt sich einklappen (Knopf oben); eingeklappt öffnen die Symbole die Unterseiten als
@@ -533,6 +533,9 @@ um – deshalb nach dem Update die Config neu laden.
     freigegebene Adressen und VPN-Geräte. Die IPv6 des Servers bekommt nur, wer auch über IPv6 fragt; sonst würde
     das Gerät über eine unbekannte IPv6-Adresse kommen. Abgewiesene Verbindungen stehen mit Grund auf der
     SmartDNS-Seite („Zuletzt abgewiesen“).
+  - **Statistik → SmartDNS** (live, alle 5 Sekunden): was gerade über SmartDNS läuft – Tempo jetzt (↓/↑, davon
+    ohne VPN) mit Verlauf der letzten 5 Minuten, Verkehr in 24 Stunden und gesamt (VPN und ohne VPN je ↑/↓), offene
+    Verbindungen am Proxy, die zuletzt über den Proxy genutzten Domains und die Detailstatistik je Profil.
   - **Statistik je Profil** (Zeile auf jeder Profilkarte, Knopf „Statistik“; live, alle 5 Sekunden neu, solange die Seite offen ist): Anfragen und Geräte der letzten
     24 Stunden, Verkehr, zuletzt gegriffen; im Dialog der Verlauf der letzten 7 Tage (Anfragen oder Verkehr je
     Stunde), eine Wochenansicht „Wann wird es genutzt?“ (Wochentag × Stunde), Weiterleitungen im Vergleich, alle
