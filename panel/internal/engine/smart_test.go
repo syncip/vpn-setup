@@ -109,6 +109,16 @@ func TestSmartDNS(t *testing.T) {
 	if _, got := answers(t, e.dns.handle(e, tvIP, dnsQuery("example.org.", dnsmessage.TypeA), false)); strings.Join(got, " ") != "198.51.100.9" {
 		t.Errorf("normale Domain: %v", got)
 	}
+	// Statistik: eine A-Anfrage des Fernsehers gezählt (AAAA nicht), auch die eines VPN-Geräts
+	if a4 := proto.Str(p.Settings, "address4"); a4 != "" {
+		ip := netip.MustParseAddr(strings.Split(a4, "/")[0])
+		_ = e.dns.handle(e, ip, dnsQuery("api.nflxvideo.net.", dnsmessage.TypeA), false)
+	}
+	st := e.SmartStats()[prof.ID]
+	if st == nil || st.Queries != 2 || st.Domains["netflix.com"].Q != 1 || st.Domains["nflxvideo.net"].Q != 1 || st.Names["www.netflix.com"] == nil ||
+		st.Devices[-tv.ID] == nil || st.Devices[p.ID] == nil || st.Routes[0].Q != 2 {
+		t.Errorf("SmartDNS-Statistik: %+v", st)
+	}
 	// nginx: Namen samt Unterdomains an den Proxy
 	ng, _ := e.Sys.ReadFile(nginxStream)
 	if !strings.Contains(string(ng), "hostnames;") || !strings.Contains(string(ng), ".netflix.com "+smartAddr+";") {

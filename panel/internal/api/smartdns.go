@@ -178,6 +178,7 @@ func (a *API) deleteSmartDNS(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	a.E.ForgetSmartStats(o.ID)
 	a.E.Log("warn", "SmartDNS-Profil „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
 	writeJSON(w, map[string]bool{"ok": true})

@@ -41,17 +41,18 @@ type Engine struct {
 	Exits    *exits.Manager
 	liveKick chan struct{}
 
-	lists   listState    // Online-Listen (lists.go)
-	acl     aclState     // wirksame Sperr-/Freigabelisten (acl.go)
-	rt      routeState   // Ziel-Regeln (routes.go)
-	dns     dnsGate      // Panel-DNS bzw. DNS-Umleiter für Domain-Regeln (dns.go)
-	dnsx    dnsExt       // DNS für Geräte ohne VPN (dnsext.go)
-	smart   smartProxy   // SmartDNS-Proxy (smartproxy.go)
-	dnsRate extLimiter   // Begrenzung für DNS von außen über UDP (dnsrate.go)
-	enc     encDNS       // DoH/DoT mit Zertifikat (encdns.go)
-	geo     geoState     // Länder zu Absender-Adressen (geo.go)
-	ubg     ubGroupState // Unbound je Ausgangsgruppe (unbound_groups.go)
-	blk     blockState   // Block-Prüfung je Ausgangsgruppe (blockcheck.go)
+	lists     listState    // Online-Listen (lists.go)
+	acl       aclState     // wirksame Sperr-/Freigabelisten (acl.go)
+	rt        routeState   // Ziel-Regeln (routes.go)
+	dns       dnsGate      // Panel-DNS bzw. DNS-Umleiter für Domain-Regeln (dns.go)
+	dnsx      dnsExt       // DNS für Geräte ohne VPN (dnsext.go)
+	smart     smartProxy   // SmartDNS-Proxy (smartproxy.go)
+	dnsRate   extLimiter   // Begrenzung für DNS von außen über UDP (dnsrate.go)
+	smartStat smartStats   // Statistik je SmartDNS-Profil (smartstats.go)
+	enc       encDNS       // DoH/DoT mit Zertifikat (encdns.go)
+	geo       geoState     // Länder zu Absender-Adressen (geo.go)
+	ubg       ubGroupState // Unbound je Ausgangsgruppe (unbound_groups.go)
+	blk       blockState   // Block-Prüfung je Ausgangsgruppe (blockcheck.go)
 
 	dnsLists dnsListState // Blocklisten des Panel-DNS (dnsfilter.go)
 
@@ -542,6 +543,7 @@ func (e *Engine) collectLocked() error {
 		}
 	}
 	e.collectExitTraffic(ts)
+	e.collectSmart(now)
 	// Nutzer: Zeitraum prüfen, Verbrauch addieren
 	for id, u := range snap.Users {
 		changed := false

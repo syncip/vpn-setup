@@ -145,6 +145,8 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("POST /api/dns/profiles", a.auth(a.createDNSProfile))
 	api.HandleFunc("PUT /api/dns/profiles/{id}", a.auth(a.updateDNSProfile))
 	api.HandleFunc("DELETE /api/dns/profiles/{id}", a.auth(a.deleteDNSProfile))
+	api.HandleFunc("GET /api/dns/smart/stats", a.auth(a.smartStats))
+	api.HandleFunc("POST /api/dns/smart/stats/reset", a.auth(a.resetSmartStats))
 	api.HandleFunc("POST /api/dns/smart", a.auth(a.createSmartDNS))
 	api.HandleFunc("PUT /api/dns/smart/{id}", a.auth(a.updateSmartDNS))
 	api.HandleFunc("DELETE /api/dns/smart/{id}", a.auth(a.deleteSmartDNS))

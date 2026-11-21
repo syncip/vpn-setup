@@ -677,11 +677,14 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 	// SmartDNS für Geräte ohne VPN: Name zeigt auf den Server, der die HTTPS-Verbindung über die
 	// Gruppe weiterreicht (VPN-Geräte leitet stattdessen die Ziel-Regel aus dem SmartDNS-Profil).
 	if s.peer < 0 {
-		if gid, dom, ok := s.smart.match(name); ok {
+		if rid, gid, dom, ok := s.smart.matchRule(name); ok {
 			g.mu.Lock()
 			gr, gok := g.groups[gid]
 			g.mu.Unlock()
 			if gok && gr.Enabled {
+				if q.Type == dnsmessage.TypeA {
+					e.smartQuery(rid, dom, name, s.peer)
+				}
 				v4, v6 := e.PublicAddrs()
 				detail := "SmartDNS: " + dom + " über „" + gr.Name + "“"
 				switch q.Type {
@@ -708,6 +711,11 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 
 	// 3./4. Weg bestimmen
 	rule, matched := s.pol.MatchDomain(name)
+	if matched && rule.ID >= smartRuleBase && q.Type == dnsmessage.TypeA {
+		if rid, _, dom, ok := s.smart.matchRule(name); ok && rid == rule.ID {
+			e.smartQuery(rid, dom, name, s.peer)
+		}
+	}
 	if matched && (q.Type == dnsmessage.TypeAAAA || q.Type == 64 || q.Type == 65) {
 		// Keine IPv6-Adressen für Ziele einer Regel – Ausgänge können nur IPv4. Das gilt auch für
 		// HTTPS-/SVCB-Einträge (Typ 65/64): Browser entnehmen ihnen sonst IPv6-Adressen (ipv6hint).

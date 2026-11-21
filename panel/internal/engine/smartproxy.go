@@ -145,7 +145,7 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 		p.denied.Add(1)
 		return
 	}
-	gid, dom, ok := s.smart.match(sni)
+	rid, gid, dom, ok := s.smart.matchRule(sni)
 	if !ok {
 		p.denied.Add(1)
 		return
@@ -153,12 +153,16 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	e.dns.mu.Lock()
 	gr, gok := e.dns.groups[gid]
 	e.dns.mu.Unlock()
+	note := func(n int64, errText string) {
+		p.note(dom, gid, n, errText)
+		e.smartProxied(rid, dom, s.peer, n, errText)
+	}
 	if !gok || !gr.Enabled {
-		p.note(dom, gid, -1, "Gruppe deaktiviert")
+		note(-1, "Gruppe deaktiviert")
 		return
 	}
 	p.total.Add(1)
-	p.note(dom, gid, -1, "")
+	note(-1, "")
 	servers := gr.DNS
 	if len(servers) == 0 {
 		servers = []string{"1.1.1.1", "9.9.9.9"}
@@ -167,7 +171,7 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	ips, err := exits.Resolver(gr.Mark, servers).LookupNetIP(ctx, "ip4", sni)
 	cancel()
 	if err != nil {
-		p.note(dom, gid, 0, "Auflösung über die Gruppe: "+shortErr(err))
+		note(0, "Auflösung über die Gruppe: "+shortErr(err))
 		return
 	}
 	pub4, pub6 := e.PublicAddrs()
@@ -186,7 +190,7 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 		if err == nil {
 			err = errors.New("keine öffentliche Adresse")
 		}
-		p.note(dom, gid, 0, "Verbinden über die Gruppe: "+shortErr(err))
+		note(0, "Verbinden über die Gruppe: "+shortErr(err))
 		return
 	}
 	defer up.Close()
@@ -201,7 +205,7 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	go func() { n, _ := io.Copy(c, up); _ = closeWrite(c); done <- n }()
 	n := <-done + <-done
 	p.bytes.Add(n)
-	p.note(dom, gid, n, "")
+	note(n, "")
 }
 
 func closeWrite(c net.Conn) error {

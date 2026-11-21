@@ -159,6 +159,7 @@ func serve(args []string) {
 			log.Printf("Demo-Verkehr der Ausgänge: %v", err)
 		}
 		e.DemoExtSeen()
+		e.DemoSmartStats()
 	}
 	ensureAdmin(e, o)
 

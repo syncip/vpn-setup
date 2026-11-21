@@ -15,6 +15,7 @@
   import DNSLive from '../components/DNSLive.svelte';
   import DNSListBrowser from '../components/DNSListBrowser.svelte';
   import Board from '../components/Board.svelte';
+  import SmartStats, { spark } from '../components/SmartStats.svelte';
 
   let { tab = 'overview' } = $props();
 
@@ -299,6 +300,32 @@
     if (!sm.assign.includes(it.value)) sm.assign = [...sm.assign, it.value];
   }
   const smartState = $derived(d.smart_state || {});
+  // ---------- SmartDNS-Statistik ----------
+  let sStats = $state([]);
+  let statOpen = $state(false);
+  let statID = $state(0);
+  const statById = $derived(Object.fromEntries(sStats.map((x) => [x.id, x])));
+  const statCur = $derived(statById[statID]);
+  async function loadSmartStats() {
+    sStats = await get('/dns/smart/stats').catch(() => sStats);
+  }
+  $effect(() => {
+    if (tab !== 'smart') return;
+    loadSmartStats();
+    const t = setInterval(loadSmartStats, 60000);
+    return () => clearInterval(t);
+  });
+  async function resetSmartStats(id) {
+    const name = id ? statById[id]?.name : '';
+    if (!(await confirmDialog({ title: 'Statistik zurücksetzen?', text: id ? `Alle Zahlen des Profils „${name}“ werden gelöscht.` : 'Alle Zahlen aller SmartDNS-Profile werden gelöscht.', ok: 'Zurücksetzen', danger: true }))) return;
+    if (await run(() => post('/dns/smart/stats/reset', { id }), 'Statistik zurückgesetzt')) loadSmartStats();
+  }
+  const sum24 = $derived(sStats.reduce((a, x) => ({ q: a.q + x.q24, b: a.b + x.bytes24, unused: a.unused + (x.queries ? x.unused.length : 0), err: a.err + x.errors }), { q: 0, b: 0, unused: 0, err: 0 }));
+  const sparkPath = (vals, w = 120, h = 26) => {
+    const m = Math.max(1, ...vals);
+    const step = w / Math.max(1, vals.length - 1);
+    return vals.map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(1)},${(h - 2 - (v / m) * (h - 4)).toFixed(1)}`).join(' ');
+  };
 
   async function saveProfile() {
     const body = $state.snapshot(pf);
@@ -897,6 +924,16 @@
       <a class="btn primary" href="#/routing/groups">Zu den Gruppen</a>
     </div>
   {:else}
+    {#if sStats.some((x) => x.queries)}
+      <div class="row wrap smartsum">
+        <span><b>{fmtNum(sum24.q)}</b> Anfragen in 24 h</span>
+        <span><b>{bytes(sum24.b)}</b> Verkehr in 24 h</span>
+        {#if sum24.unused}<span class="muted">{sum24.unused} Einträge noch nie genutzt</span>{/if}
+        {#if sum24.err}<span class="warn-t"><Icon name="alert" size={13} /> {sum24.err} mit Fehler beim Proxy</span>{/if}
+        <span class="grow"></span>
+        <button class="btn sm ghost" onclick={() => resetSmartStats(0)}><Icon name="reset" size={14} /> Alle zurücksetzen</button>
+      </div>
+    {/if}
     <div class="grid cols-2">
       {#each smartProfiles as p (p.id)}
         <div class="card lst" class:off={!p.enabled}>
@@ -925,8 +962,20 @@
               </div>
             {/each}
           </div>
+          {#if statById[p.id]}
+            {@const st = statById[p.id]}
+            <button class="statstrip" onclick={() => ((statID = p.id), (statOpen = true))} title="Statistik öffnen">
+              <svg viewBox="0 0 120 26" preserveAspectRatio="none" aria-hidden="true"><path d={sparkPath(spark(st.hours, 48))} /></svg>
+              <span class="nums">
+                <span><b>{fmtNum(st.q24)}</b> Anfragen · <b>{fmtNum(st.devices24)}</b> {st.devices24 === 1 ? 'Gerät' : 'Geräte'} · <b>{bytes(st.bytes24)}</b> <span class="muted">in 24 h</span></span>
+                <span class="tiny muted">{st.last ? `zuletzt ${ago(st.last)}` : 'noch nie gegriffen'}{st.domains[0]?.q ? ` · meist ${st.domains[0].domain}` : ''}</span>
+              </span>
+              <Icon name="chart" size={15} />
+            </button>
+          {/if}
           <div class="actions">
             <button class="btn sm" onclick={() => openSmart(p)}><Icon name="edit" size={15} /> Bearbeiten</button>
+            <button class="btn sm ghost" onclick={() => ((statID = p.id), (statOpen = true))}><Icon name="chart" size={15} /> Statistik</button>
             <button class="btn sm ghost" onclick={() => toggleSmart(p)}><Icon name="power" size={15} /> {p.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
             <span class="grow"></span>
             <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeSmart(p)}><Icon name="trash" size={15} /></button>
@@ -970,6 +1019,9 @@
       {/each}
     </div>
   </div>
+  <Modal bind:open={statOpen} title={statCur ? `Statistik: ${statCur.name}` : 'Statistik'} subtitle={statCur ? `seit ${new Date(statCur.since * 1000).toLocaleDateString('de-DE')} · aktualisiert jede Minute` : ''} width={860}>
+    {#if statCur}<SmartStats s={statCur} {groupById} onreset={() => resetSmartStats(statCur.id)} />{/if}
+  </Modal>
 {:else if tab === 'external'}
   <DNSExternal onchange={load} />
 {:else if tab === 'profiles'}
@@ -1484,6 +1536,53 @@
 <DNSListBrowser bind:open={br.open} list={br.list} preset={br.preset} start={br.start} onchange={load} onadd={(pr) => openList(null, pr)} />
 
 <style>
+  .smartsum {
+    gap: 6px 18px;
+    margin-bottom: 12px;
+    font-size: var(--fs-sm);
+    align-items: center;
+  }
+  .statstrip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: calc(100% - 28px);
+    margin: 0 14px 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .statstrip:hover {
+    border-color: var(--accent);
+  }
+  .statstrip svg {
+    width: 90px;
+    height: 26px;
+    flex-shrink: 0;
+  }
+  .statstrip path {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+  }
+  .statstrip .nums {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-sm);
+  }
+  .statstrip .nums .tiny {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .smartline {
     display: flex;
     align-items: center;

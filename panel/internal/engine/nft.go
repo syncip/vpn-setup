@@ -256,7 +256,11 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 						defined[name] = true
 						dynSets = append(dynSets, r.ID)
 					}
-					fmt.Fprintf(&chains, "\t\tip daddr @%s %s\n", name, act)
+					ctr := ""
+					if r.ID >= smartRuleBase { // SmartDNS: Verkehr je Weiterleitung zählen (smartstats.go)
+						ctr = fmt.Sprintf("counter name \"s%d_up\" ", r.ID)
+					}
+					fmt.Fprintf(&chains, "\t\tip daddr @%s %s%s\n", name, ctr, act)
 				}
 			}
 			chains.WriteString("\t}\n")
@@ -329,7 +333,21 @@ func (e *Engine) nftScript(snap *Snapshot, rt *routing, plan *aclPlan, srcs []sr
 		}
 		dynFull.WriteString("\t}\n")
 	}
-	return head + sets.String() + dynFull.String() + chains.String() + "}\n", head + sets.String() + dynStatic.String() + chains.String() + "}\n", true
+	// SmartDNS: benannte Zähler je Weiterleitung – _up an der Ziel-Regel (oben), _dn für Antworten
+	// aus den Zieladressen (eigene Kette, ändert nichts am Verkehr)
+	var ctrs, smartFwd strings.Builder
+	for _, id := range dynSets {
+		if id < smartRuleBase {
+			continue
+		}
+		fmt.Fprintf(&ctrs, "\tcounter s%d_up {\n\t}\n\tcounter s%d_dn {\n\t}\n", id, id)
+		fmt.Fprintf(&smartFwd, "\t\tip saddr @d%d counter name \"s%d_dn\"\n", id, id)
+	}
+	tail := chains.String()
+	if smartFwd.Len() > 0 {
+		tail += "\tchain vp_smart {\n\t\ttype filter hook forward priority -5; policy accept;\n" + smartFwd.String() + "\t}\n"
+	}
+	return head + sets.String() + dynFull.String() + ctrs.String() + tail + "}\n", head + sets.String() + dynStatic.String() + ctrs.String() + tail + "}\n", true
 }
 
 // applyNft lädt die Tabelle neu, wenn sich etwas geändert hat.

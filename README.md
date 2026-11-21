@@ -514,6 +514,15 @@ um – deshalb nach dem Update die Config neu laden.
   Geräte ohne VPN (Port 53, DoH, DoT) bekommen für diese Namen die Adresse des Servers; nginx reicht die
   HTTPS-Verbindungen anhand des Namens an das Panel, das sie über die Gruppe weiterleitet (Ende-zu-Ende
   verschlüsselt, nur Port 443 – HTTP und QUIC nicht). Die SmartDNS-Seite zeigt Verbindungen und Fehler je Domain.
+  - **Statistik je Profil** (Zeile auf jeder Profilkarte, Knopf „Statistik“): Anfragen und Geräte der letzten
+    24 Stunden, Verkehr, zuletzt gegriffen; im Dialog der Verlauf der letzten 7 Tage (Anfragen oder Verkehr je
+    Stunde), eine Wochenansicht „Wann wird es genutzt?“ (Wochentag × Stunde), Weiterleitungen im Vergleich, alle
+    Domains des Profils mit Anfragen, Verkehr und Fehlern – auch solche, die noch nie gegriffen haben (Tippfehler?) –,
+    die meistgefragten Namen und die aktivsten Geräte (mit Link zu „Was gilt?“). Gezählt werden A-Anfragen, die
+    SmartDNS über eine Gruppe geleitet hat. Verkehr: VPN-Geräte (WireGuard, OpenVPN) über Zähler der Firewall je
+    Weiterleitung (zu den Zielen bzw. Antworten von den Zieladressen), Geräte ohne VPN genau über den Proxy; VLESS
+    und Hysteria2 leiten selbst, dort zählen nur die Anfragen. Gespeichert in `smartstats.json` im Datenordner
+    (7 Tage Verlauf), je Profil oder für alle zurücksetzbar.
 - **Live** (DNS-Übersicht und Statistik → DNS): Anfragen je Sekunde der letzten 1–10 Minuten (beantwortet, Speicher, gesperrt),
   aktive Geräte, Antwortzeit und welcher DNS-Server bzw. Unbound wie oft geantwortet hat. Das Protokoll
   vermerkt den antwortenden Server je Anfrage; die Übersicht zeigt die Anteile je Zeitraum.

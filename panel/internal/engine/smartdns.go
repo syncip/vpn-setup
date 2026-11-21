@@ -48,6 +48,16 @@ type smartRule struct {
 type smartSet struct {
 	rules []smartRule
 	m     map[string]int64 // Domain → Gruppe
+	rid   map[string]int64 // Domain → Regel (Profil und Weiterleitung, für die Statistik)
+}
+
+// matchRule: wie match, zusätzlich mit der Regel-ID (SmartRuleID).
+func (s *smartSet) matchRule(name string) (rid, group int64, domain string, ok bool) {
+	group, domain, ok = s.match(name)
+	if ok {
+		rid = s.rid[domain]
+	}
+	return
 }
 
 // match: Läuft der Name per SmartDNS über eine Gruppe? (Unterdomains zählen mit.)
@@ -98,10 +108,11 @@ func smartFor(profiles []*SmartProfile, scopes ...string) *smartSet {
 				var doms []string
 				for _, d := range r.Domains {
 					if s == nil {
-						s = &smartSet{m: map[string]int64{}}
+						s = &smartSet{m: map[string]int64{}, rid: map[string]int64{}}
 					}
 					if _, taken := s.m[d]; !taken {
 						s.m[d] = r.Group
+						s.rid[d] = SmartRuleID(p.ID, i)
 						doms = append(doms, d)
 					}
 				}
