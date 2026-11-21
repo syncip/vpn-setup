@@ -41,6 +41,7 @@ type smartRule struct {
 	Profile int64
 	Group   int64
 	Domains []string
+	Scope   string // Zuordnung, über die die Regel kommt (peer:3, vpn, global …)
 }
 
 // smartSet: SmartDNS eines Geräts.
@@ -105,7 +106,7 @@ func smartFor(profiles []*SmartProfile, scopes ...string) *smartSet {
 					}
 				}
 				if len(doms) > 0 {
-					s.rules = append(s.rules, smartRule{ID: SmartRuleID(p.ID, i), Profile: p.ID, Group: r.Group, Domains: doms})
+					s.rules = append(s.rules, smartRule{ID: SmartRuleID(p.ID, i), Profile: p.ID, Group: r.Group, Domains: doms, Scope: sc})
 				}
 			}
 		}

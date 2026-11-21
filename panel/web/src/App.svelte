@@ -11,6 +11,7 @@
   import Plans from './pages/Plans.svelte';
   import Settings from './pages/Settings.svelte';
   import Account from './pages/Account.svelte';
+  import Effective from './pages/Effective.svelte';
   import Proxy from './pages/Proxy.svelte';
   import IPLists from './pages/IPLists.svelte';
   import DNS from './pages/DNS.svelte';
@@ -125,6 +126,7 @@
       keys: ['err:', 'port:', 'disk', 'mem', 'server_host', 'pkg:', 'alarm:'],
       subs: [
         ['/system', 'Zustand'],
+        ['/system/effective', 'Was gilt?'],
         ['/system/updates', 'Updates'],
         ['/system/events', 'Ereignisse'],
         ['/system/settings', 'Einstellungen'],
@@ -326,6 +328,8 @@
         <Stats tab={parts[1] || 'traffic'} />
       {:else if section === '/system' && parts[1] === 'settings'}
         <Settings tab={parts[2] || 'general'} />
+      {:else if section === '/system' && parts[1] === 'effective'}
+        <Effective kind={parts[2] || ''} id={Number(parts[3]) || 0} />
       {:else if section === '/system' && parts[1] === 'account'}
         <Account />
       {:else if section === '/system'}

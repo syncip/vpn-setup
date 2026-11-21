@@ -137,6 +137,7 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/routes/{id}", a.auth(a.deleteRoute))
 	api.HandleFunc("POST /api/routes/assign", a.auth(a.assignRoute))
 	api.HandleFunc("GET /api/topology", a.auth(a.topology))
+	api.HandleFunc("GET /api/effective", a.auth(a.effective))
 	api.HandleFunc("POST /api/peers/{id}/reach", a.auth(a.setReach))
 
 	api.HandleFunc("GET /api/dns", a.auth(a.dnsOverview))

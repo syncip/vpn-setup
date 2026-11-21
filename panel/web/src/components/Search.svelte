@@ -39,6 +39,7 @@
     ['/routing/iplists', 'IP-Listen', 'filter', 'sperrliste freigabe länder ip'],
     ['/system', 'Zustand', 'activity', 'system komponenten cpu ram anwenden einsammeln'],
     ['/system', 'Portweiterleitungen prüfen', 'activity', 'port weiterleitung proxmox erreichbar dnat'],
+    ['/system/effective', 'Was gilt? (wirksame Einstellungen)', 'search', 'übersicht einstellungen wirksam gilt herkunft routing dns limits nutzer gerät server gruppe'],
     ['/system/updates', 'Updates', 'download', 'paket update xray hysteria debian apt sicherheit version'],
     ['/system/events', 'Ereignisse', 'clock', 'log protokoll fehler warnungen'],
     ['/system/settings', 'Einstellungen · Allgemein', 'settings', 'domain server host abo port update-prüfung'],

@@ -15,7 +15,7 @@ Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
 | **Routing** | Übersicht, Karte (Aufbau/Live), Ausgänge, Gruppen, Ziel-Regeln, IP-Listen, Proxy-Server |
 | **DNS** | Übersicht, Protokoll, Filterprofile, Blocklisten, SmartDNS, Ohne VPN, Einstellungen |
 | **Statistik** | Verkehr, Live, Ausgänge, DNS |
-| **System** | Zustand, Updates, Ereignisse, Einstellungen, Mein Konto |
+| **System** | Zustand, Was gilt?, Updates, Ereignisse, Einstellungen, Mein Konto |
 
 - Die Seitenleiste lässt sich einklappen (Knopf oben); eingeklappt öffnen die Symbole die Unterseiten als
   kleines Menü. Unten stehen CPU, RAM, Disk und der aktuelle Durchsatz, darunter Konto, **Dichte**
@@ -556,6 +556,24 @@ Login-Sperre**, dazu eine Liste von Adressen/Netzen, die nie gesperrt werden (z.
 100.64.0.0/10 für Tailscale). Unter **Gesperrte Adressen** stehen die aktiven Sperren mit Grund und Ende;
 dort lässt sich entsperren und eine Adresse oder ein Netz von Hand sperren (1 Stunde bis dauerhaft – die
 eigene Adresse lehnt das Panel ab). Jede Sperre landet im Ereignisprotokoll und – falls eingerichtet – per Mail.
+
+## Was gilt? (wirksame Einstellungen)
+
+Viele Einstellungen lassen sich für alle, je Server, je Nutzer oder je Gerät setzen. **System → Was gilt?** zeigt,
+was am Ende wirklich gilt und woher es kommt. Oben einen Nutzer, ein Gerät, einen Server, eine Ausgangsgruppe oder
+ein Gerät ohne VPN suchen; das zweite Suchfeld filtert die angezeigten Einstellungen.
+
+- **Gerät:** Routing in der wirksamen Reihenfolge (welche Ziele über welche Gruppe, aktiver Ausgang, Herkunft:
+  Ziel-Regel mit Ebene, SmartDNS-Profil oder Proxy-Einstellung; „alles andere“ zuletzt), DNS (Filterprofil mit
+  Ebene, Blocklisten, DoH-Sperre, Antwort bei Sperre, SmartDNS), Limits vom Nutzer bzw. Tarif, Zugriff (private
+  Netze, erreichbare Netze, Netzfreigaben, IP-Listen des Servers) und die Einstellungen des Geräts.
+- **Nutzer:** Status, Ablauf, Limits (eigene oder Tarif), alle Geräte mit ihrem Weg, Ziel-Regeln und DNS des Nutzers.
+- **Server:** Zustand, Routing für Server und alle, DNS, IP-Listen, Netzfreigaben (WireGuard), Einstellungen.
+- **Gruppe:** Zustand, Ausgänge in Reihenfolge, aktiver Ausgang, Datenlimit, und wer sie nutzt (Regeln, SmartDNS, Proxy-Server).
+- **Gerät ohne VPN:** Adressen, Filterprofil, SmartDNS und Begrenzung über UDP.
+
+Die Werte stammen aus denselben Daten, mit denen das Panel die Konfiguration erzeugt. Verknüpfte Einträge (Pfeil)
+öffnen deren Übersicht, der Stift die Seite zum Ändern.
 
 ## Updates
 
