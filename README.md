@@ -533,7 +533,7 @@ um – deshalb nach dem Update die Config neu laden.
     freigegebene Adressen und VPN-Geräte. Die IPv6 des Servers bekommt nur, wer auch über IPv6 fragt; sonst würde
     das Gerät über eine unbekannte IPv6-Adresse kommen. Abgewiesene Verbindungen stehen mit Grund auf der
     SmartDNS-Seite („Zuletzt abgewiesen“).
-  - **Statistik je Profil** (Zeile auf jeder Profilkarte, Knopf „Statistik“): Anfragen und Geräte der letzten
+  - **Statistik je Profil** (Zeile auf jeder Profilkarte, Knopf „Statistik“; live, alle 5 Sekunden neu, solange die Seite offen ist): Anfragen und Geräte der letzten
     24 Stunden, Verkehr, zuletzt gegriffen; im Dialog der Verlauf der letzten 7 Tage (Anfragen oder Verkehr je
     Stunde), eine Wochenansicht „Wann wird es genutzt?“ (Wochentag × Stunde), Weiterleitungen im Vergleich, alle
     Domains des Profils mit Anfragen, Verkehr und Fehlern – auch solche, die noch nie gegriffen haben (Tippfehler?) –,

@@ -64,6 +64,8 @@ type smartStats struct {
 	dirty  bool
 	p      map[int64]*SmartProfStat
 	nft    map[string]int64 // letzter Stand der nft-Zähler
+	nftMu  sync.Mutex       // Lesen und Auswerten der nft-Zähler nacheinander (sonst doppelt gezählt)
+	nftAt  time.Time        // zuletzt gelesen
 }
 
 // splitSmartRule: Regel-ID → Profil und Index der Weiterleitung.
@@ -229,12 +231,33 @@ func (e *Engine) smartTraffic(rid int64, up, down int64, now int64) {
 
 // collectSmart: nft-Zähler lesen und die Statistik speichern (beim Einsammeln).
 func (e *Engine) collectSmart(now time.Time) {
-	if !e.Sys.DryRun() {
-		if out, err := e.Sys.Run("nft", "-j", "list", "counters", "table", "inet", nftTable); err == nil {
-			e.smartCounters(out, now.Unix())
-		}
-	}
+	e.readSmartCounters(now)
 	e.saveSmartStats(now)
+}
+
+// readSmartCounters liest die nft-Zähler der SmartDNS-Weiterleitungen (VPN-Verkehr).
+func (e *Engine) readSmartCounters(now time.Time) {
+	if e.Sys.DryRun() {
+		return
+	}
+	s := &e.smartStat
+	s.nftMu.Lock()
+	defer s.nftMu.Unlock()
+	s.nftAt = now
+	if out, err := e.Sys.Run("nft", "-j", "list", "counters", "table", "inet", nftTable); err == nil {
+		e.smartCounters(out, now.Unix())
+	}
+}
+
+// RefreshSmartCounters: VPN-Verkehr für die Live-Ansicht nachlesen (höchstens alle 4 Sekunden).
+func (e *Engine) RefreshSmartCounters() {
+	s := &e.smartStat
+	s.nftMu.Lock()
+	recent := time.Since(s.nftAt) < 4*time.Second
+	s.nftMu.Unlock()
+	if !recent {
+		e.readSmartCounters(time.Now())
+	}
 }
 
 // smartCounters wertet `nft -j list counters` aus. Die Tabelle wird bei Änderungen neu angelegt

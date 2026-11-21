@@ -80,6 +80,7 @@ type smartStatOut struct {
 }
 
 func (a *API) smartStats(w http.ResponseWriter, r *http.Request) {
+	a.E.RefreshSmartCounters() // Live-Ansicht: VPN-Verkehr aktuell
 	stats := a.E.SmartStats()
 	objs, err := a.St.Objects("smartdns")
 	if err != nil {

@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from 'svelte';
   import Icon from '../components/Icon.svelte';
   import ProtoLogo from '../components/ProtoLogo.svelte';
   import PageHead from '../components/PageHead.svelte';
@@ -312,21 +313,36 @@
   function addSmartAssign(it) {
     if (!sm.assign.includes(it.value)) sm.assign = [...sm.assign, it.value];
   }
-  const smartState = $derived(d.smart_state || {});
+  let liveSmart = $state(null); // Proxy-Zustand, live nachgeladen
+  const smartState = $derived(liveSmart || d.smart_state || {});
   // ---------- SmartDNS-Statistik ----------
   let sStats = $state([]);
   let statOpen = $state(false);
   let statID = $state(0);
   const statById = $derived(Object.fromEntries(sStats.map((x) => [x.id, x])));
   const statCur = $derived(statById[statID]);
+  const SMART_LIVE = 5; // Sekunden – der Proxy zählt ebenfalls alle 5 Sekunden
+  let smartAt = $state(0);
+  let smartReq = 0; // Start der letzten Abfrage (gegen doppelte Abfragen)
   async function loadSmartStats() {
-    sStats = await get('/dns/smart/stats').catch(() => sStats);
+    smartReq = Date.now();
+    const [st, tls] = await Promise.all([get('/dns/smart/stats').catch(() => null), get('/dns/tls').catch(() => null)]);
+    if (st) sStats = st;
+    if (tls?.smart) liveSmart = tls.smart;
+    if (st) smartAt = Date.now();
   }
+  // live: alle paar Sekunden neu laden, solange die Seite sichtbar ist
   $effect(() => {
     if (tab !== 'smart') return;
-    loadSmartStats();
-    const t = setInterval(loadSmartStats, 60000);
-    return () => clearInterval(t);
+    untrack(loadSmartStats); // nur von „tab“ abhängig, nicht von dem, was beim Laden gelesen wird
+    const t = setInterval(() => document.visibilityState === 'visible' && loadSmartStats(), SMART_LIVE * 1000);
+    // zurück im Tab → sofort aktuell (nicht öfter als alle 2 Sekunden)
+    const onVis = () => document.visibilityState === 'visible' && Date.now() - smartReq > 2000 && loadSmartStats();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   });
   async function resetSmartStats(id) {
     const name = id ? statById[id]?.name : '';
@@ -1063,7 +1079,7 @@
       {/if}
     </div>
   </div>
-  <Modal bind:open={statOpen} title={statCur ? `Statistik: ${statCur.name}` : 'Statistik'} subtitle={statCur ? `seit ${new Date(statCur.since * 1000).toLocaleDateString('de-DE')} · aktualisiert jede Minute` : ''} width={860}>
+  <Modal bind:open={statOpen} title={statCur ? `Statistik: ${statCur.name}` : 'Statistik'} subtitle={statCur ? `seit ${new Date(statCur.since * 1000).toLocaleDateString('de-DE')} · live, alle ${SMART_LIVE} Sekunden${smartAt ? ` · Stand ${new Date(smartAt).toLocaleTimeString('de-DE')}` : ''}` : ''} width={860}>
     {#if statCur}<SmartStats s={statCur} {groupById} onreset={() => resetSmartStats(statCur.id)} />{/if}
   </Modal>
 {:else if tab === 'external'}
