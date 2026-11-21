@@ -5,7 +5,7 @@
   import Modal from '../components/Modal.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
-  import { ago, fmtNum } from '../lib/format.js';
+  import { ago, fmtNum, bytes } from '../lib/format.js';
   import { go, toast } from '../lib/state.svelte.js';
   import SearchInput from '../components/SearchInput.svelte';
   import Picker from '../components/Picker.svelte';
@@ -32,6 +32,7 @@
     ['log', 'Protokoll', 'list'],
     ['profiles', 'Filterprofile', 'shield'],
     ['lists', 'Blocklisten', 'filter'],
+    ['smart', 'SmartDNS', 'route'],
     ['external', 'Ohne VPN', 'globe'],
     ['settings', 'Einstellungen', 'settings'],
   ];
@@ -181,8 +182,8 @@
   function openProfile(p = null) {
     pCur = p;
     pf = p
-      ? { name: p.name, enabled: p.enabled, lists: [...p.lists], rules: p.rules, assign: [...p.assign], block_doh: p.block_doh, nxdomain: p.nxdomain, smart: (p.smart || []).map((x) => ({ group: x.group, domains: x.domains.join('\n') })) }
-      : { name: d.profiles.length ? '' : 'Standard', enabled: true, lists: d.lists.filter((l) => l.mode === 'block').map((l) => l.id), rules: '', assign: d.profiles.length ? [] : ['global'], block_doh: true, nxdomain: false, smart: [] };
+      ? { name: p.name, enabled: p.enabled, lists: [...p.lists], rules: p.rules, assign: [...p.assign], block_doh: p.block_doh, nxdomain: p.nxdomain }
+      : { name: d.profiles.length ? '' : 'Standard', enabled: true, lists: d.lists.filter((l) => l.mode === 'block').map((l) => l.id), rules: '', assign: d.profiles.length ? [] : ['global'], block_doh: true, nxdomain: false };
     pOpen = true;
   }
   function toggleList(id) {
@@ -223,23 +224,84 @@
     ['ChatGPT', 'openai.com\nchatgpt.com\noaistatic.com\noaiusercontent.com'],
   ];
   const groupOpts = $derived(d.choices.groups || []);
+  const smartProfiles = $derived(d.smart || []);
+  let sOpen = $state(false);
+  let sCur = $state(null);
+  let sm = $state({ name: '', enabled: true, assign: [], routes: [] });
+  function openSmart(p = null) {
+    sCur = p;
+    sm = p
+      ? { name: p.name, enabled: p.enabled, assign: [...p.assign], routes: p.routes.map((x) => ({ group: x.group, domains: x.domains.join('\n') })) }
+      : { name: smartProfiles.length ? '' : 'Streaming', enabled: true, assign: smartProfiles.length ? [] : ['global'], routes: [] };
+    if (!p && groupOpts.length) addSmart(null);
+    sOpen = true;
+  }
   function addSmart(preset) {
     const g = groupOpts.find((x) => x.enabled) || groupOpts[0];
     if (preset) {
-      const row = pf.smart.find((r) => r.group === g?.id);
+      // in die erste Zeile dieser Gruppe einfügen (bzw. die erste leere Zeile füllen)
+      const row = sm.routes.find((r) => r.group === g?.id) || sm.routes.find((r) => !r.domains.trim());
       if (row) {
         const have = new Set(row.domains.split(/\s+/).filter(Boolean));
         row.domains = [...have, ...preset[1].split('\n').filter((x) => !have.has(x))].join('\n');
         return;
       }
     }
-    pf.smart = [...pf.smart, { group: g?.id || 0, domains: preset ? preset[1] : '' }];
+    sm.routes = [...sm.routes, { group: g?.id || 0, domains: preset ? preset[1] : '' }];
   }
   const smartCount = (t) => (t || '').split(/[\s,;]+/).filter((x) => x && !x.startsWith('#')).length;
+  async function saveSmart() {
+    const body = $state.snapshot(sm);
+    body.routes = body.routes.filter((r) => r.domains.trim()).map((r) => ({ group: Number(r.group), domains: r.domains }));
+    const r = sCur ? await run(() => put(`/dns/smart/${sCur.id}`, body), 'SmartDNS-Profil gespeichert') : await run(() => post('/dns/smart', body), 'SmartDNS-Profil angelegt');
+    if (r) {
+      sOpen = false;
+      load();
+    }
+  }
+  async function toggleSmart(p) {
+    if (await run(() => put(`/dns/smart/${p.id}`, { enabled: !p.enabled }), p.enabled ? 'SmartDNS-Profil deaktiviert' : 'SmartDNS-Profil aktiviert')) load();
+  }
+  async function removeSmart(p) {
+    if (!(await confirmDialog({ title: `SmartDNS-Profil ${p.name} löschen?`, text: 'Die Domains laufen danach wieder direkt (oder über ein anderes passendes SmartDNS-Profil).', ok: 'Löschen', danger: true }))) return;
+    if (await run(() => del(`/dns/smart/${p.id}`), 'SmartDNS-Profil gelöscht')) load();
+  }
+  // Zuordnung: alle, alle mit/ohne VPN, Server, Nutzer, Gerät (alle Protokolle), Gerät ohne VPN
+  const SMART_SCOPES = {
+    global: ['globe', 'Alle Geräte', 'mit und ohne VPN'],
+    vpn: ['shield', 'Alle VPN-Geräte', 'WireGuard, OpenVPN, VLESS …'],
+    ext: ['laptop', 'Alle Geräte ohne VPN', 'DNS von außen, DoH/DoT'],
+  };
+  const allPeerPick = $derived(peerItems(d.choices.peers, d.choices.users, d.choices.servers));
+  const allPeerSub = $derived(Object.fromEntries(allPeerPick.map((i) => [i.value, i])));
+  function smartLabel(a) {
+    if (SMART_SCOPES[a]) return [SMART_SCOPES[a][0], SMART_SCOPES[a][1], '', SMART_SCOPES[a][2]];
+    const [k, idText] = a.split(':');
+    const id = Number(idText);
+    if (k === 'client') return ['laptop', extById[id]?.name || `Gerät #${id}`, '', 'ohne VPN'];
+    if (k === 'peer') {
+      const it = allPeerSub[a] || allPeerSub[id];
+      const p = peerById[id];
+      return ['phone', p ? `${userById[p.user_id]?.name || '?'} · ${p.name}` : `Gerät #${id}`, it?.proto || p?.protocol || '', it?.sub || ''];
+    }
+    return assignLabel(a);
+  }
+  const smartPick = $derived(
+    [
+      ...Object.entries(SMART_SCOPES).map(([value, [icon, label, sub]]) => ({ value, label, icon, sub, search: `${label} ${sub} alle global` })),
+      ...(d.ext || []).map((c) => ({ value: `client:${c.id}`, label: c.name, icon: 'laptop', sub: 'Gerät ohne VPN', search: `${c.name} ohne vpn extern doh dot` })),
+      ...serverItems(d.choices.servers, 'server'),
+      ...userItems(d.choices.users, 'user', d.choices.peers),
+      ...peerItems(d.choices.peers, d.choices.users, d.choices.servers, 'peer'),
+    ].filter((i) => !(sm.assign || []).includes(i.value)),
+  );
+  function addSmartAssign(it) {
+    if (!sm.assign.includes(it.value)) sm.assign = [...sm.assign, it.value];
+  }
+  const smartState = $derived(d.smart_state || {});
 
   async function saveProfile() {
     const body = $state.snapshot(pf);
-    body.smart = body.smart.filter((r) => r.domains.trim()).map((r) => ({ group: Number(r.group), domains: r.domains }));
     const r = pCur ? await run(() => put(`/dns/profiles/${pCur.id}`, body), 'Profil gespeichert') : await run(() => post('/dns/profiles', body), 'Profil angelegt');
     if (r) {
       pOpen = false;
@@ -489,6 +551,7 @@
 <PageHead title={tab === 'overview' ? 'DNS' : `DNS · ${TABS.find((t) => t[0] === tab)?.[1]}`} subtitle="Eigener DNS für WireGuard- und OpenVPN-Geräte">
   {#if tab === 'profiles'}<button class="btn primary" onclick={() => openProfile()}><Icon name="plus" size={16} /> Profil anlegen</button>{/if}
   {#if tab === 'lists'}<button class="btn primary" onclick={() => openList()}><Icon name="plus" size={16} /> Liste anlegen</button>{/if}
+  {#if tab === 'smart'}<button class="btn primary" onclick={() => openSmart()} disabled={!groupOpts.length}><Icon name="plus" size={16} /> Profil anlegen</button>{/if}
 </PageHead>
 
 <div class="tabs pagetabs">
@@ -574,7 +637,7 @@
             <span class="warn-t small">noch niemandem zugeordnet</span>
           {/each}
           {#if p.assign.length > 4}<span class="muted small">+{p.assign.length - 4}</span>{/if}
-          <span class="muted small">· {p.lists.length} {p.lists.length === 1 ? 'Liste' : 'Listen'} ({fmtNum(listDomains(p))} Domains) · {ruleCount(p.rules)} eigene Regeln{p.block_doh ? ' · DoH gesperrt' : ''}{p.smart?.length ? ` · SmartDNS: ${p.smart.map((x) => groupById[x.group]?.name || x.group).join(', ')}` : ''}</span>
+          <span class="muted small">· {p.lists.length} {p.lists.length === 1 ? 'Liste' : 'Listen'} ({fmtNum(listDomains(p))} Domains) · {ruleCount(p.rules)} eigene Regeln{p.block_doh ? ' · DoH gesperrt' : ''}</span>
         </div>
       {/each}
       {#if unusedLists.length && activeProfiles.length}
@@ -819,6 +882,94 @@
     </table>
   </div>
   {#if more}<div style="text-align:center;margin-top:10px"><button class="btn" onclick={() => loadLog(true)}>Ältere laden</button></div>{/if}
+{:else if tab === 'smart'}
+  <div class="notice small" style="margin-bottom:14px">
+    <Icon name="route" size={16} />
+    <span
+      >SmartDNS leitet einzelne Dienste über einen Ausgang, z. B. Netflix über „USA“ – der Rest bleibt direkt. <b>VPN-Geräte</b>: wirkt wie eine Ziel-Regel.
+      <b>Geräte ohne VPN</b> (Fernseher, Konsole, DoH/DoT): Der DNS antwortet mit der Adresse des Servers, der die HTTPS-Verbindung über die Ausgangsgruppe weiterreicht.</span
+    >
+  </div>
+  {#if !groupOpts.length}
+    <div class="card empty">
+      <h3>Noch keine Ausgangsgruppe</h3>
+      <p>SmartDNS leitet Domains über eine Ausgangsgruppe. Lege zuerst unter Routing eine Gruppe mit einem Ausgang an.</p>
+      <a class="btn primary" href="#/routing/groups">Zu den Gruppen</a>
+    </div>
+  {:else}
+    <div class="grid cols-2">
+      {#each smartProfiles as p (p.id)}
+        <div class="card lst" class:off={!p.enabled}>
+          <div class="card-head">
+            <div>
+              <h3>{p.name}</h3>
+              <div class="muted tiny">{p.routes.length} {p.routes.length === 1 ? 'Gruppe' : 'Gruppen'} · {fmtNum(p.routes.reduce((n, r) => n + r.domains.length, 0))} Domains</div>
+            </div>
+            {#if !p.enabled}<span class="badge">aus</span>{/if}
+          </div>
+          <div class="card-pad stack" style="gap:10px">
+            <div class="row wrap" style="gap:6px">
+              {#each p.assign as a}
+                {@const [ic, label, proto] = smartLabel(a)}
+                <span class="badge">{#if proto}<ProtoLogo id={proto} size={13} />{:else}<Icon name={ic} size={12} />{/if} {label}</span>
+              {:else}
+                <span class="muted small">Noch keinem Gerät zugeordnet – wirkt nicht</span>
+              {/each}
+            </div>
+            {#each p.routes as r}
+              {@const g = groupById[r.group]}
+              <div class="smartline">
+                <span class="badge accent"><Icon name="route" size={12} /> {g?.name || `Gruppe #${r.group}`}</span>
+                {#if g && !g.enabled}<span class="badge warn">Gruppe deaktiviert</span>{/if}
+                <span class="mono tiny muted ellipsis grow" title={r.domains.join(', ')}>{r.domains.slice(0, 4).join(', ')}{r.domains.length > 4 ? ` +${r.domains.length - 4}` : ''}</span>
+              </div>
+            {/each}
+          </div>
+          <div class="actions">
+            <button class="btn sm" onclick={() => openSmart(p)}><Icon name="edit" size={15} /> Bearbeiten</button>
+            <button class="btn sm ghost" onclick={() => toggleSmart(p)}><Icon name="power" size={15} /> {p.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
+            <span class="grow"></span>
+            <button class="btn sm icon ghost danger" title="Löschen" onclick={() => removeSmart(p)}><Icon name="trash" size={15} /></button>
+          </div>
+        </div>
+      {/each}
+    </div>
+    {#if loaded && !smartProfiles.length}
+      <div class="card empty">
+        <h3>Noch kein SmartDNS-Profil</h3>
+        <p>Lege z. B. ein Profil „Streaming“ an: Netflix, Disney+ &amp; Co. über eine Ausgangsgruppe – für alle Geräte oder nur für ausgewählte.</p>
+        <button class="btn primary" onclick={() => openSmart()}>Profil anlegen</button>
+      </div>
+    {/if}
+    <div class="row infoline"><Info title="Was gilt für ein Gerät?" text="Alle passenden SmartDNS-Profile wirken zusammen. Steht dieselbe Domain in mehreren, gilt die genauere Zuordnung: Gerät vor Nutzer vor Server vor „Alle VPN-Geräte“ bzw. „Alle Geräte ohne VPN“ vor „Alle Geräte“; auf derselben Ebene das ältere Profil." label="Was gilt für ein Gerät?" /></div>
+  {/if}
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-head">
+      <h2>
+        <Icon name="laptop" size={16} /> Weiterleitung für Geräte ohne VPN
+        <Info title="SmartDNS-Proxy" text="Für SmartDNS-Domains antwortet der Panel-DNS Geräten ohne VPN mit der Adresse des Servers. nginx reicht diese HTTPS-Verbindungen (Port 443) an den Proxy, der sie über die Ausgangsgruppe weiterleitet. Zahlen seit dem Start des Dienstes." />
+      </h2>
+      <span class="badge {smartState.running ? 'ok' : ''}">{smartState.running ? 'läuft' : d.dry_run ? 'Testmodus' : 'aus'}</span>
+    </div>
+    <div class="card-pad stack" style="gap:8px">
+      <div class="small muted">
+        {fmtNum(smartState.domains || 0)} Domains · {fmtNum(smartState.total || 0)} Verbindungen ({fmtNum(smartState.active || 0)} offen) · {bytes(smartState.bytes || 0)}{smartState.denied ? ` · ${fmtNum(smartState.denied)} abgewiesen` : ''} · Antwortadresse {smartState.target4 || '–'}{smartState.target6 ? `, ${smartState.target6}` : ''}
+      </div>
+      {#if smartState.domains && !smartState.target4}<div class="notice warn small"><Icon name="alert" size={16} /><span>Die öffentliche IPv4 des Servers ist unbekannt (Einstellung „Server-Adresse“) – SmartDNS antwortet Geräten ohne VPN dann mit den echten Adressen.</span></div>{/if}
+      {#if d.settings.public !== '1' && d.settings.tls !== '1'}<div class="tiny muted">Für Geräte ohne VPN wirkt SmartDNS erst, wenn unter <a href="#/dns/external">Ohne VPN</a> „DNS von außen“ oder DoH/DoT an ist. VPN-Geräte nutzen es ohnehin über die Ziel-Regeln.</div>{/if}
+      {#each (smartState.hits || []).slice(0, 15) as h}
+        <div class="row small" style="gap:8px">
+          <span class="mono tiny grow ellipsis">{h.domain}</span>
+          {#if groupById[h.group]}<span class="badge accent tiny">{groupById[h.group].name}</span>{/if}
+          <span class="tiny muted nowrap">{fmtNum(h.conns)}× · {bytes(h.bytes)} · {when(h.last)}</span>
+          {#if h.err}<span class="tiny warn-t ellipsis" style="max-width:260px" title={h.err}>{h.err}</span>{/if}
+        </div>
+      {:else}
+        <div class="tiny muted">Noch keine Verbindungen über den Proxy.</div>
+      {/each}
+    </div>
+  </div>
 {:else if tab === 'external'}
   <DNSExternal onchange={load} />
 {:else if tab === 'profiles'}
@@ -842,13 +993,6 @@
               <span class="muted small">Noch keinem Gerät zugeordnet</span>
             {/each}
           </div>
-          {#if p.smart?.length}
-            <div class="row wrap" style="gap:6px">
-              {#each p.smart as sr}
-                <span class="badge accent" title={sr.domains.join(', ')}><Icon name="route" size={12} /> {sr.domains.slice(0, 2).join(', ')}{sr.domains.length > 2 ? ` +${sr.domains.length - 2}` : ''} → {groupById[sr.group]?.name || `Gruppe #${sr.group}`}</span>
-              {/each}
-            </div>
-          {/if}
           <div class="row wrap" style="gap:6px">
             {#each p.lists as id}
               {@const l = d.lists.find((x) => x.id === id)}
@@ -1217,39 +1361,6 @@
       </Info></label>
       <textarea id="p-rules" class="input mono" rows="8" bind:value={pf.rules} placeholder={'werbung.de              # sperren\nallow cdn.beispiel.de   # freigeben (geht vor)\nnas.home = 192.168.1.10 # eigene Antwort'}></textarea>
     </div>
-    <div class="field">
-      <span class="label"
-        >SmartDNS – Dienste über eine Ausgangsgruppe <Info title="SmartDNS" wide>
-          <p>Die eingetragenen Domains (samt Unterdomains) laufen über die gewählte Ausgangsgruppe – z. B. Netflix über „USA“, der Rest bleibt direkt.</p>
-          <p><b>VPN-Geräte</b> (WireGuard, OpenVPN, VLESS …): wirkt wie eine Ziel-Regel – der Verkehr zu diesen Zielen geht über den Ausgang der Gruppe, alle Ports.</p>
-          <p><b>Geräte ohne VPN</b> (Fernseher, Konsole, DoH/DoT): Der Panel-DNS antwortet für diese Namen mit der Adresse des Servers; der Server reicht die HTTPS-Verbindung (Port 443) anhand des Namens über die Gruppe weiter. Die Verschlüsselung bleibt Ende-zu-Ende. Unverschlüsseltes HTTP (Port 80) und UDP/QUIC laufen so nicht – Apps weichen dann auf HTTPS aus.</p>
-          <p>Damit Streamingdienste den Standort glauben, braucht es meist mehrere Domains (Anmeldung, Videoserver). Die Vorlagen enthalten die üblichen.</p>
-        </Info></span
-      >
-      {#if !groupOpts.length}
-        <div class="muted small">Noch keine Ausgangsgruppe – unter <a href="#/routing/groups">Routing → Gruppen</a> anlegen.</div>
-      {:else}
-        {#each pf.smart as row, i}
-          <div class="smartrow">
-            <div class="row" style="gap:8px">
-              <Icon name="route" size={15} />
-              <select class="input" style="width:auto" bind:value={row.group}>
-                {#each groupOpts as g}<option value={g.id}>{g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
-              </select>
-              <span class="tiny muted">{smartCount(row.domains)} Domains</span>
-              <span class="grow"></span>
-              <button class="btn sm icon ghost danger" title="Entfernen" onclick={() => (pf.smart = pf.smart.filter((_, j) => j !== i))}><Icon name="trash" size={14} /></button>
-            </div>
-            <textarea class="input mono" rows="3" bind:value={row.domains} placeholder={'netflix.com\nnflxvideo.net'}></textarea>
-          </div>
-        {/each}
-        <div class="row wrap" style="gap:6px">
-          <button class="btn sm" onclick={() => addSmart(null)}><Icon name="plus" size={13} /> Gruppe hinzufügen</button>
-          <span class="tiny muted">Vorlage:</span>
-          {#each SMART_PRESETS as pr}<button class="btn sm ghost" title={pr[1].replaceAll('\n', ', ')} onclick={() => addSmart(pr)}>{pr[0]}</button>{/each}
-        </div>
-      {/if}
-    </div>
     <div class="row" style="gap:6px">
       <label class="switch"><input type="checkbox" bind:checked={pf.block_doh} /><span class="track"></span> Verschlüsseltes DNS der Geräte sperren (DoH/DoT)</label>
       <Info title="Verschlüsseltes DNS" text="Browser und Android („Privates DNS“) gehen sonst am Filter vorbei. Mit fest eingestelltem eigenem Anbieter (z. B. Brave „Sicheres DNS“ = Cloudflare) lädt dann keine Seite mehr – dort „automatisch“ oder „aus“ wählen." />
@@ -1260,6 +1371,62 @@
   {#snippet footer()}
     <button class="btn" onclick={() => (pOpen = false)}>Abbrechen</button>
     <button class="btn primary" onclick={saveProfile} disabled={!pf.name}>{pCur ? 'Speichern' : 'Anlegen'}</button>
+  {/snippet}
+</Modal>
+
+<Modal bind:open={sOpen} title={sCur ? `SmartDNS-Profil ${sCur.name}` : 'SmartDNS-Profil anlegen'} width={720}>
+  <div class="stack">
+    <div class="field"><label for="s-name">Name</label><input id="s-name" class="input" bind:value={sm.name} placeholder="z. B. Streaming, USA-Dienste, Fernseher" /></div>
+    <div class="field">
+      <span class="label">Gilt für <Info title="Zuordnung" text="Alle Geräte, alle VPN-Geräte, alle Geräte ohne VPN – oder gezielt Server, Nutzer, einzelne Geräte (alle Protokolle) und Geräte ohne VPN. Suche nach Name, Dienst oder Server; mehrere Wörter grenzen ein." /></span>
+      <div class="row wrap" style="gap:6px;margin:4px 0 8px">
+        {#each sm.assign as a}
+          {@const [ic, label, proto, sub] = smartLabel(a)}
+          <span class="badge" title={sub}>
+            {#if proto}<ProtoLogo id={proto} size={13} />{:else}<Icon name={ic} size={12} />{/if}
+            {label}{#if sub && (ic === 'phone' || ic === 'laptop')}<span class="muted">&nbsp;· {sub}</span>{/if}
+            <button class="x" title="Entfernen" onclick={() => (sm.assign = sm.assign.filter((x) => x !== a))}><Icon name="x" size={11} /></button>
+          </span>
+        {:else}
+          <span class="muted small">Noch niemandem – unten hinzufügen</span>
+        {/each}
+      </div>
+      <Picker items={smartPick} keep={false} placeholder="Alle, Server, Nutzer, Gerät oder Gerät ohne VPN suchen …" onpick={addSmartAssign} />
+    </div>
+    <div class="field">
+      <span class="label"
+        >Domains und Ausgangsgruppe <Info title="SmartDNS" wide>
+          <p>Die eingetragenen Domains (samt Unterdomains) laufen über die gewählte Ausgangsgruppe – z. B. Netflix über „USA“, der Rest bleibt direkt.</p>
+          <p><b>VPN-Geräte</b> (WireGuard, OpenVPN, VLESS; Hysteria2 nur über Server-Regeln): wirkt wie eine Ziel-Regel – der Verkehr zu diesen Zielen geht über den Ausgang der Gruppe, alle Ports.</p>
+          <p><b>Geräte ohne VPN</b> (Fernseher, Konsole, DoH/DoT): Der Panel-DNS antwortet für diese Namen mit der Adresse des Servers; der Server reicht die HTTPS-Verbindung (Port 443) anhand des Namens über die Gruppe weiter. Die Verschlüsselung bleibt Ende-zu-Ende. Unverschlüsseltes HTTP (Port 80) und UDP/QUIC laufen so nicht – Apps weichen dann auf HTTPS aus.</p>
+          <p>Damit Streamingdienste den Standort glauben, braucht es meist mehrere Domains (Anmeldung, Videoserver). Die Vorlagen enthalten die üblichen.</p>
+        </Info></span
+      >
+      {#each sm.routes as row, i}
+        <div class="smartrow">
+          <div class="row" style="gap:8px">
+            <Icon name="route" size={15} />
+            <select class="input" style="width:auto" bind:value={row.group}>
+              {#each groupOpts as g}<option value={g.id}>{g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
+            </select>
+            <span class="tiny muted">{smartCount(row.domains)} Domains</span>
+            <span class="grow"></span>
+            <button class="btn sm icon ghost danger" title="Entfernen" onclick={() => (sm.routes = sm.routes.filter((_, j) => j !== i))}><Icon name="trash" size={14} /></button>
+          </div>
+          <textarea class="input mono" rows="4" bind:value={row.domains} placeholder={'netflix.com\nnflxvideo.net'}></textarea>
+        </div>
+      {/each}
+      <div class="row wrap" style="gap:6px">
+        <button class="btn sm" onclick={() => addSmart(null)}><Icon name="plus" size={13} /> Weitere Gruppe</button>
+        <span class="tiny muted">Vorlage:</span>
+        {#each SMART_PRESETS as pr}<button class="btn sm ghost" title={pr[1].replaceAll('\n', ', ')} onclick={() => addSmart(pr)}>{pr[0]}</button>{/each}
+      </div>
+    </div>
+    <label class="switch"><input type="checkbox" bind:checked={sm.enabled} /><span class="track"></span> Aktiv</label>
+  </div>
+  {#snippet footer()}
+    <button class="btn" onclick={() => (sOpen = false)}>Abbrechen</button>
+    <button class="btn primary" onclick={saveSmart} disabled={!sm.name || !sm.routes.some((r) => r.domains.trim())}>{sCur ? 'Speichern' : 'Anlegen'}</button>
   {/snippet}
 </Modal>
 
@@ -1317,6 +1484,12 @@
 <DNSListBrowser bind:open={br.open} list={br.list} preset={br.preset} start={br.start} onchange={load} onadd={(pr) => openList(null, pr)} />
 
 <style>
+  .smartline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
   .smartrow {
     border: 1px solid var(--border);
     border-radius: 8px;

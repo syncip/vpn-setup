@@ -15,16 +15,15 @@ import (
 // Panel-DNS: Einstellungen, Filterprofile, Blocklisten, Protokoll und Auswertung.
 
 type dnsProfileRow struct {
-	ID       int64               `json:"id"`
-	Name     string              `json:"name"`
-	Enabled  bool                `json:"enabled"`
-	Lists    []int64             `json:"lists"`
-	Rules    string              `json:"rules"`
-	Assign   []string            `json:"assign"`
-	BlockDoH bool                `json:"block_doh"`
-	NXDomain bool                `json:"nxdomain"`
-	Smart    []engine.SmartRoute `json:"smart"`
-	Error    string              `json:"error,omitempty"` // Fehler in den eigenen Regeln
+	ID       int64    `json:"id"`
+	Name     string   `json:"name"`
+	Enabled  bool     `json:"enabled"`
+	Lists    []int64  `json:"lists"`
+	Rules    string   `json:"rules"`
+	Assign   []string `json:"assign"`
+	BlockDoH bool     `json:"block_doh"`
+	NXDomain bool     `json:"nxdomain"`
+	Error    string   `json:"error,omitempty"` // Fehler in den eigenen Regeln
 }
 
 type dnsListRow struct {
@@ -57,10 +56,7 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 		for _, o := range objs {
 			p := engine.DNSProfileFrom(o)
 			row := &dnsProfileRow{ID: p.ID, Name: p.Name, Enabled: p.Enabled, Lists: orInts(p.Lists), Rules: p.Rules,
-				Assign: orStrings(p.Assign), BlockDoH: p.BlockDoH, NXDomain: p.NXDomain, Smart: p.Smart}
-			if row.Smart == nil {
-				row.Smart = []engine.SmartRoute{}
-			}
+				Assign: orStrings(p.Assign), BlockDoH: p.BlockDoH, NXDomain: p.NXDomain}
 			if _, err := engine.ParseDNSRules(p.Rules); err != nil {
 				row.Error = err.Error()
 			}
@@ -100,7 +96,7 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 		"smart_state": a.E.SmartState(), "tls_state": a.E.EncDNSState(),
 		"unbound_installed": a.E.UnboundInstalled(), "unbound": a.E.UnboundHealth(), "auto_last": a.E.DNSAutoLast(),
 		"upstreams": a.E.DNSServerStats(), "ext": ext,
-		"info": info, "profiles": profiles, "lists": lists, "presets": dnsPresets, "dry_run": a.E.Sys.DryRun(),
+		"info": info, "profiles": profiles, "smart": a.smartRows(), "lists": lists, "presets": dnsPresets, "dry_run": a.E.Sys.DryRun(),
 		"error": strings.TrimSpace(errs["dns"] + " " + errs["dnslog"]), "choices": a.scopeChoices(),
 	})
 }
@@ -262,10 +258,6 @@ func (a *API) saveDNSProfile(w http.ResponseWriter, r *http.Request, o *store.Ob
 		Assign   []string `json:"assign"`
 		BlockDoH *bool    `json:"block_doh"`
 		NXDomain *bool    `json:"nxdomain"`
-		Smart    []struct {
-			Group   int64  `json:"group"`
-			Domains string `json:"domains"` // eine Domain je Zeile (oder durch Komma/Leerzeichen getrennt)
-		} `json:"smart"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -346,46 +338,6 @@ func (a *API) saveDNSProfile(w http.ResponseWriter, r *http.Request, o *store.Ob
 	}
 	if in.NXDomain != nil {
 		o.Data["nxdomain"] = *in.NXDomain
-	}
-	if in.Smart != nil {
-		if len(in.Smart) > 20 {
-			errJSON(w, http.StatusBadRequest, "SmartDNS: höchstens 20 Einträge je Profil")
-			return
-		}
-		out := []any{}
-		for _, sr := range in.Smart {
-			g, err := a.St.Object("group", sr.Group)
-			if err != nil {
-				errJSON(w, http.StatusBadRequest, "SmartDNS: Ausgangsgruppe auswählen")
-				return
-			}
-			var doms []string
-			seen := map[string]bool{}
-			for _, d := range strings.FieldsFunc(sr.Domains, func(r rune) bool { return r == '\n' || r == ',' || r == ' ' || r == ';' || r == '\r' }) {
-				d = strings.TrimSpace(d)
-				if d == "" || strings.HasPrefix(d, "#") {
-					continue
-				}
-				c := engine.CleanDomain(d)
-				if c == "" {
-					errJSON(w, http.StatusBadRequest, "SmartDNS („"+g.Name+"“): „"+d+"“ ist keine gültige Domain")
-					return
-				}
-				if !seen[c] {
-					seen[c] = true
-					doms = append(doms, c)
-				}
-			}
-			if len(doms) == 0 {
-				continue
-			}
-			if len(doms) > 300 {
-				errJSON(w, http.StatusBadRequest, "SmartDNS: höchstens 300 Domains je Gruppe")
-				return
-			}
-			out = append(out, map[string]any{"group": sr.Group, "domains": doms})
-		}
-		o.Data["smart"] = out
 	}
 	if err := a.St.SaveObject(o); err != nil {
 		fail(w, err)

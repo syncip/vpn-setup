@@ -22,7 +22,7 @@ import (
 // SmartDNS-Proxy: Für Geräte ohne VPN antwortet der Panel-DNS bei SmartDNS-Domains mit der Adresse
 // des Servers. nginx reicht HTTPS-Verbindungen mit diesen Namen (SNI) hierher weiter (mit PROXY-Protocol,
 // damit die echte Absenderadresse bekannt ist). Der Proxy prüft, ob der Absender freigegeben ist und
-// der Name in seinem Profil über eine Gruppe läuft, löst ihn über die Gruppe auf und verbindet sich
+// der Name in seinem SmartDNS-Profil über eine Gruppe läuft, löst ihn über die Gruppe auf und verbindet sich
 // über deren Ausgang – die Verschlüsselung bleibt Ende-zu-Ende, der Server sieht nur den Namen.
 
 const smartAddr = "127.0.0.1:8477"
@@ -47,23 +47,6 @@ type SmartHit struct {
 	Bytes  int64  `json:"bytes"`
 	Last   int64  `json:"last"`
 	Err    string `json:"err,omitempty"`
-}
-
-// SmartDomains: alle SmartDNS-Domains aktiver Profile (für nginx).
-func (e *Engine) SmartDomains() []string {
-	_, byID := e.dnsProfileFilters()
-	seen := map[string]bool{}
-	var out []string
-	for _, f := range byID {
-		for d := range f.smart {
-			if !seen[d] {
-				seen[d] = true
-				out = append(out, d)
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // applySmart startet bzw. beendet den Proxy (nur nötig, wenn Geräte ohne VPN den Panel-DNS nutzen).
@@ -162,7 +145,7 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 		p.denied.Add(1)
 		return
 	}
-	gid, dom, ok := s.filt.smartMatch(sni)
+	gid, dom, ok := s.smart.match(sni)
 	if !ok {
 		p.denied.Add(1)
 		return

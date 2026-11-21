@@ -255,15 +255,13 @@ func (e *Engine) compileRoutes(snap *Snapshot) *routing {
 			add(fmt.Sprintf("server:%d", sb.Server.ID), entry{fmt.Sprintf("sg%d-%d", sb.Server.ID, gid), proto.RouteRule{All: true, Group: gid}})
 		}
 	}
-	// SmartDNS aus den Filterprofilen: für jedes Gerät mit Profil wie eine Ziel-Regel am Gerät
-	// (das Profil gilt je Gerät – Gerät vor Nutzer vor Server vor „alle“).
-	filters := e.compileDNSFilters(snap)
-	for pid, f := range filters {
-		for i, sr := range f.Smart {
+	// SmartDNS-Profile: für jedes Gerät wie eine Ziel-Regel am Gerät (siehe smartdns.go).
+	for pid, ss := range e.compileSmart(snap) {
+		for _, sr := range ss.rules {
 			if g, ok := groups[sr.Group]; !ok || !g.Enabled {
 				continue
 			}
-			add(fmt.Sprintf("peer:%d", pid), entry{fmt.Sprintf("s%d-%d", f.ID, i), proto.RouteRule{ID: SmartRuleID(f.ID, i), Group: sr.Group, Domains: sr.Domains}})
+			add(fmt.Sprintf("peer:%d", pid), entry{fmt.Sprintf("s%d", sr.ID), proto.RouteRule{ID: sr.ID, Group: sr.Group, Domains: sr.Domains}})
 		}
 	}
 	for k := range byScope { // Ziel-Regeln vor „alles“, sonst nach ID

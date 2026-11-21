@@ -79,9 +79,8 @@ func ParseClientAddrs(in []string) ([]string, error) {
 				if err != nil {
 					return nil, fmt.Errorf("„%s“ ist kein gültiges Netz", f)
 				}
-				if (p.Addr().Is4() && p.Bits() < 16) || (!p.Addr().Is4() && p.Bits() < 48) {
-					return nil, fmt.Errorf("„%s“ ist zu groß (höchstens /16 bzw. /48)", f)
-				}
+				// große Netze (bis 0.0.0.0/0) sind erlaubt – die Oberfläche warnt (LargeNets),
+				// UDP-Anfragen von außen sind je Absender begrenzt (dnsrate.go)
 				f = p.Masked().String()
 			default:
 				if a, err := netip.ParseAddr(f); err == nil {
@@ -108,6 +107,7 @@ type extSrc struct {
 	id    int64
 	name  string
 	filt  *dnsFilter
+	smart *smartSet
 	token string
 	learn bool
 }
@@ -224,6 +224,7 @@ func (e *Engine) extSources(force bool) []extSrc {
 		return nil
 	}
 	byScope, byID := e.dnsProfileFilters()
+	smartProfiles := e.smartProfiles()
 	var out []extSrc
 	for _, o := range objs {
 		c := DNSClientFrom(o)
@@ -237,8 +238,9 @@ func (e *Engine) extSources(force bool) []extSrc {
 		case c.Profile == 0:
 			filt = byScope["global"]
 		}
+		smart := smartForClient(smartProfiles, c.ID)
 		if c.Token != "" {
-			out = append(out, extSrc{id: c.ID, name: c.Name, filt: filt, token: c.Token, learn: c.Learn})
+			out = append(out, extSrc{id: c.ID, name: c.Name, filt: filt, smart: smart, token: c.Token, learn: c.Learn})
 		}
 		for _, a := range c.Addrs {
 			var pfxs []netip.Prefix
@@ -252,7 +254,7 @@ func (e *Engine) extSources(force bool) []extSrc {
 				}
 			}
 			for _, p := range pfxs {
-				out = append(out, extSrc{pfx: p, id: c.ID, name: c.Name, filt: filt, learn: c.Learn})
+				out = append(out, extSrc{pfx: p, id: c.ID, name: c.Name, filt: filt, smart: smart, learn: c.Learn})
 			}
 		}
 	}
@@ -305,7 +307,7 @@ func (e *Engine) extByToken(token string, src netip.Addr) *srcPolicy {
 			x.learned[src] = learnRec{id: s.id, until: time.Now().Add(24 * time.Hour).Unix()}
 		}
 	}
-	return &srcPolicy{pfx: netip.PrefixFrom(src, src.BitLen()), peer: -s.id, filt: s.filt, dns: true}
+	return &srcPolicy{pfx: netip.PrefixFrom(src, src.BitLen()), peer: -s.id, filt: s.filt, smart: s.smart, dns: true}
 }
 
 // refreshExtHosts löst DynDNS-Namen neu auf (jede Minute geprüft, alle 5 Minuten fällig).
@@ -344,12 +346,12 @@ func (e *Engine) extSource(a netip.Addr, needPublic bool) *srcPolicy {
 	}
 	for _, s := range x.srcs {
 		if s.pfx.Contains(a) {
-			return &srcPolicy{pfx: s.pfx, peer: -s.id, filt: s.filt, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
+			return &srcPolicy{pfx: s.pfx, peer: -s.id, filt: s.filt, smart: s.smart, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
 		}
 	}
 	if l, ok := x.learned[a]; ok && l.until > time.Now().Unix() {
 		if s, ok := x.byID[l.id]; ok && s.learn {
-			return &srcPolicy{pfx: netip.PrefixFrom(a, a.BitLen()), peer: -s.id, filt: s.filt, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
+			return &srcPolicy{pfx: netip.PrefixFrom(a, a.BitLen()), peer: -s.id, filt: s.filt, smart: s.smart, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
 		}
 	}
 	return nil

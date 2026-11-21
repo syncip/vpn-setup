@@ -43,8 +43,9 @@ func TestUnboundGroups(t *testing.T) {
 		"\nEndpoint = 198.51.100.1:51820\nAllowedIPs = 0.0.0.0/0\n"
 	ex := saveObj(t, e, &store.Object{Kind: "exit", Name: "A", Enabled: true, Data: store.M{"type": "wireguard", "slot": 1}, Secrets: store.M{"config": conf}})
 	us := saveObj(t, e, &store.Object{Kind: "group", Name: "USA", Enabled: true, Data: store.M{"slot": 2, "exits": []int64{ex.ID}, "on_fail": "block", "dns": "127.0.0.1"}})
-	saveObj(t, e, &store.Object{Kind: "dnsprofile", Name: "Standard", Enabled: true, Data: store.M{"assign": []string{"global"},
-		"smart": []any{map[string]any{"group": us.ID, "domains": []string{"netflix.com"}}}}})
+	saveObj(t, e, &store.Object{Kind: "dnsprofile", Name: "Standard", Enabled: true, Data: store.M{"assign": []string{"global"}}})
+	saveObj(t, e, &store.Object{Kind: "smartdns", Name: "Streaming", Enabled: true, Data: store.M{"assign": []string{"global"},
+		"routes": []any{map[string]any{"group": us.ID, "domains": []string{"netflix.com"}}}}})
 	if err := e.Apply(); err != nil {
 		t.Fatal(err)
 	}

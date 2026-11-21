@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 
@@ -97,8 +99,24 @@ func TestDNSExternal(t *testing.T) {
 	}
 
 	// Eingaben prüfen
-	if _, err := ParseClientAddrs([]string{"10.0.0.0/8"}); err == nil {
-		t.Error("zu großes Netz angenommen")
+	// große Netze sind erlaubt (Warnhinweis), auch 0.0.0.0/0
+	if l, err := ParseClientAddrs([]string{"0.0.0.0/0, ::/0, 10.1.2.3/8, 192.0.2.0/24"}); err != nil || strings.Join(LargeNets(l), " ") != "0.0.0.0/0 ::/0 10.0.0.0/8" {
+		t.Errorf("große Netze: %v %v", l, err)
+	}
+	// Begrenzung je Absender (IPv6 je /64)
+	var lim extLimiter
+	now := time.Now()
+	n := 0
+	for i := 0; i < 200; i++ {
+		if lim.allow(netip.MustParseAddr(fmt.Sprintf("2001:db8::%x", i+1)), now) {
+			n++
+		}
+	}
+	if n != int(extBurst) || lim.allow(netip.MustParseAddr("2001:db8::ffff"), now) || !lim.allow(netip.MustParseAddr("192.0.2.1"), now) {
+		t.Errorf("Begrenzung: %d durchgelassen", n)
+	}
+	if !lim.allow(netip.MustParseAddr("2001:db8::1"), now.Add(time.Second)) {
+		t.Error("Begrenzung erholt sich nicht")
 	}
 	if l, err := ParseClientAddrs([]string{"Mein.DynDNS.org, 192.0.2.1\n2001:db8::1"}); err != nil || strings.Join(l, " ") != "mein.dyndns.org 192.0.2.1 2001:db8::1" {
 		t.Errorf("Adressen: %v %v", l, err)

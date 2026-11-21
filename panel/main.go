@@ -91,6 +91,7 @@ func open(o *opts) (*engine.Engine, error) {
 	}
 	e := engine.New(st, sys, engine.Config{PanelBackend: o.listen, DataDir: o.dataDir, LockPath: lock, HookAddr: o.hook})
 	e.PinOldDefaults()
+	e.MigrateSmartDNS()
 	return e, nil
 }
 

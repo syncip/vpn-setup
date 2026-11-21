@@ -102,6 +102,7 @@
         ['/dns/log', 'Protokoll'],
         ['/dns/profiles', 'Filterprofile'],
         ['/dns/lists', 'Blocklisten'],
+        ['/dns/smart', 'SmartDNS'],
         ['/dns/external', 'Ohne VPN'],
         ['/dns/settings', 'Einstellungen'],
       ],
@@ -608,7 +609,9 @@
   /* Server-Werte unten */
   .mini-stats {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
+    min-width: 0;
     margin: 0 10px 8px;
     padding: 8px 10px;
     border-radius: 9px;
@@ -669,8 +672,10 @@
   }
   .mrow {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
-    gap: 6px;
+    gap: 2px 6px;
+    min-width: 0;
     font-variant-numeric: tabular-nums;
   }
   .mrow span {

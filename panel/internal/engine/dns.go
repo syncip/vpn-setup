@@ -577,6 +577,15 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 		if es := e.extSourceOf(src); es != nil {
 			es.via = "dns"
 			s = es
+			if !tcp {
+				// Schutz vor Missbrauch für Verstärkungsangriffe (gefälschte Absender, dnsrate.go)
+				if !e.dnsRate.allow(src, time.Now()) {
+					return nil
+				}
+				if queryType(query) == dnsmessage.TypeALL {
+					return refusedReply(query)
+				}
+			}
 		}
 	}
 	if s == nil {
@@ -666,9 +675,9 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 	}
 
 	// SmartDNS für Geräte ohne VPN: Name zeigt auf den Server, der die HTTPS-Verbindung über die
-	// Gruppe weiterreicht (VPN-Geräte leitet stattdessen die Ziel-Regel aus dem Profil).
+	// Gruppe weiterreicht (VPN-Geräte leitet stattdessen die Ziel-Regel aus dem SmartDNS-Profil).
 	if s.peer < 0 {
-		if gid, dom, ok := s.filt.smartMatch(name); ok {
+		if gid, dom, ok := s.smart.match(name); ok {
 			g.mu.Lock()
 			gr, gok := g.groups[gid]
 			g.mu.Unlock()

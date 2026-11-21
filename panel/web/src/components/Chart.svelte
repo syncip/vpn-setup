@@ -96,8 +96,7 @@
 
   // ---------- Geometrie ----------
   let width = $state(600);
-  const PL = 62,
-    PR = 10,
+  const PR = 10,
     PT = 8,
     PB = 22;
   const iw = $derived(Math.max(10, width - PL - PR));
@@ -172,6 +171,8 @@
     return nice(m * 1.05);
   });
   const Y = (v) => PT + ih - (v / yMax) * ih;
+  // linker Rand passend zur längsten Achsenbeschriftung (sonst wird z. B. „40,0 Mbit/s“ abgeschnitten)
+  const PL = $derived(Math.max(40, Math.ceil(Math.max(...[0, 0.5, 1].map((f) => String(fmt(yMax * f)).length)) * 6.6) + 14));
 
   // Pfade für Linie/Fläche (gestapelt: Bänder zwischen den Summen)
   function segments() {

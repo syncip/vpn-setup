@@ -725,6 +725,10 @@ func (a *API) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "Die Gruppe "+msg)
 		return
 	}
+	if names := a.E.SmartUsing(o.ID); len(names) > 0 {
+		errJSON(w, http.StatusBadRequest, "Die Gruppe wird noch von SmartDNS verwendet: "+strings.Join(names, ", "))
+		return
+	}
 	_ = a.St.DeleteGroupTraffic(o.ID)
 	if err := a.St.DeleteObject("group", o.ID); err != nil {
 		fail(w, err)

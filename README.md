@@ -13,7 +13,7 @@ Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
 | **Nutzer** | Nutzer, Tarife |
 | **Server** | Server, WireGuard-Netze (Geräte, Sternkarte, Zugriffsmatrix), Zugriff zwischen Netzen |
 | **Routing** | Übersicht, Karte (Aufbau/Live), Ausgänge, Gruppen, Ziel-Regeln, IP-Listen, Proxy-Server |
-| **DNS** | Übersicht, Protokoll, Filterprofile, Blocklisten, Ohne VPN, Einstellungen |
+| **DNS** | Übersicht, Protokoll, Filterprofile, Blocklisten, SmartDNS, Ohne VPN, Einstellungen |
 | **Statistik** | Verkehr, Live, Ausgänge, DNS |
 | **System** | Zustand, Updates, Ereignisse, Einstellungen, Mein Konto |
 
@@ -472,14 +472,21 @@ um – deshalb nach dem Update die Config neu laden.
 - **Ohne VPN** (Fernseher, Konsole, Router zu Hause): „DNS von außen“ leitet Port 53 der
   Außenschnittstelle an den Panel-DNS. Antworten bekommen nur **freigegebene Geräte** (IP-Adressen,
   Netze oder DynDNS-Namen, die alle 5 Minuten neu aufgelöst werden), jeweils mit eigenem Filterprofil.
-  Alle anderen Anfragen werden verworfen. **„Wer fragt von außen?“** listet jeden Absender als
+  Alle anderen Anfragen werden verworfen. **„Wer fragt von außen?“** (mit Suche, Filter freigegeben/gesperrt,
+  Sortierung nach Aktivität, Anfragen, Gefiltert, IP, Land oder Hostname und Seiten) listet jeden Absender als
   *freigegeben* oder *gesperrt* mit IP, Hostname (Rückwärtsauflösung), Land, Anzahl und Weg (Port 53 an
   die Server-IP, DoH oder DoT – mit oder ohne Kennung); ein Klick auf die Zeile zeigt alle angefragten
   Domains (bis 500 je freigegebenem, 50 je gesperrtem Absender) – so sieht man, ob das eigene Gerät
   ankommt oder Fremde es versuchen; mit einem Klick freigeben. Das Land kommt aus den öffentlichen
   Vergabelisten der fünf Regional-Registries (RIPE, ARIN, APNIC, LACNIC, AFRINIC), die das Panel wöchentlich
   lädt und lokal auswertet – keine IP geht an einen fremden Dienst. Im DNS-Protokoll steht bei Geräten ohne
-  VPN die zugreifende IP und der Weg. Ein offener DNS-Server für alle wird bewusst nicht angeboten (DNS-Verstärkungsangriffe).
+  VPN die zugreifende IP und der Weg.
+  - **Große Netze** bis `0.0.0.0/0` / `::/0` lassen sich freigeben; die Oberfläche warnt ab /23 bzw. /55
+    (bei `0.0.0.0/0` als „offener DNS-Server“). Jeder in dem Netz kann den DNS dann nutzen, SmartDNS leitet
+    auch dessen Verkehr über die Ausgänge, und offene DNS-Server werden gezielt für Verstärkungsangriffe
+    gesucht. Schutz dagegen: Über UDP (Port 53) beantwortet das Panel je Absender (IPv4-Adresse bzw. IPv6-/64)
+    höchstens 20 Anfragen je Sekunde (kurz bis 60) und lehnt ANY-Anfragen ab. TCP, DoH und DoT sind nicht
+    begrenzt, dort ist der Absender echt.
   Auf dem Proxmox-Host UDP und TCP 53 an den Container weiterleiten (die Seite zeigt die Befehle,
   mit der internen IPv6 des Containers und der öffentlichen IPv6 aus der Server-Adresse).
 - **DoH und DoT** (Reiter „Ohne VPN“): Jedes freigegebene Gerät bekommt eine Kennung und damit eigene
@@ -493,11 +500,17 @@ um – deshalb nach dem Update die Config neu laden.
   (ohne Cloudflare-Proxy) legt es an. Das API-Token (Recht „Zone → DNS → Bearbeiten“) lässt sich direkt in
   der DoH/DoT-Karte eintragen, prüfen und entfernen. Es steht nur auf dem Server in `/etc/vpn/secrets.env`
   (`CF_API_TOKEN=…`, Rechte 600) – nicht in der Datenbank – und wird in der Oberfläche nie wieder angezeigt.
-- **SmartDNS** (je Filterprofil): Domains wie `netflix.com` laufen über eine Ausgangsgruppe (Vorlagen für
-  Netflix, Disney+, Prime Video, Max, BBC iPlayer u. a.). Für VPN-Geräte wirkt das wie eine Ziel-Regel.
+- **SmartDNS** (eigene Unterseite **DNS → SmartDNS**, getrennt von den Filterprofilen): SmartDNS-Profile mit
+  eigener Zuordnung – alle Geräte, alle VPN-Geräte, alle Geräte ohne VPN, Server, Nutzer, einzelne Geräte (alle
+  Protokolle) oder einzelne Geräte ohne VPN. Alle passenden Profile wirken zusammen; steht eine Domain in mehreren,
+  gilt die genauere Zuordnung (Gerät vor Nutzer vor Server vor „alle mit/ohne VPN“ vor „alle“). Domains wie
+  `netflix.com` laufen über eine Ausgangsgruppe (Vorlagen für Netflix, Disney+, Prime Video, Max, BBC iPlayer
+  u. a.). Bis v0.30.0 stand SmartDNS im Filterprofil; beim Update übernimmt das Panel diese Einträge in eigene
+  SmartDNS-Profile mit derselben Zuordnung (Geräte ohne VPN, die das Filterprofil nutzten, werden einzeln
+  zugeordnet). Eine Gruppe, die SmartDNS nutzt, lässt sich nicht löschen. Für VPN-Geräte wirkt das wie eine Ziel-Regel.
   Geräte ohne VPN (Port 53, DoH, DoT) bekommen für diese Namen die Adresse des Servers; nginx reicht die
   HTTPS-Verbindungen anhand des Namens an das Panel, das sie über die Gruppe weiterleitet (Ende-zu-Ende
-  verschlüsselt, nur Port 443 – HTTP und QUIC nicht). Die Seite zeigt Verbindungen und Fehler je Domain.
+  verschlüsselt, nur Port 443 – HTTP und QUIC nicht). Die SmartDNS-Seite zeigt Verbindungen und Fehler je Domain.
 - **Live** (DNS-Übersicht und Statistik → DNS): Anfragen je Sekunde der letzten 1–10 Minuten (beantwortet, Speicher, gesperrt),
   aktive Geräte, Antwortzeit und welcher DNS-Server bzw. Unbound wie oft geantwortet hat. Das Protokoll
   vermerkt den antwortenden Server je Anfrage; die Übersicht zeigt die Anteile je Zeitraum.

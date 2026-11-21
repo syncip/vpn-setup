@@ -27,14 +27,15 @@ const (
 
 // srcPolicy: Adressen eines Geräts, dessen Verkehr weitergeleitet wird, mit dem, was für es gilt.
 type srcPolicy struct {
-	pfx  netip.Prefix
-	pol  *proto.Policy // Ziel-Regeln (nil = keine)
-	peer int64
-	user int64
-	filt *dnsFilter // Filterprofil (nil = keins)
-	dns  bool       // DNS-Anfragen an den Panel-DNS umleiten
-	doh  bool       // verschlüsseltes DNS (DoH/DoT) sperren
-	via  string     // Weg ohne VPN: dns | doh | dot | doh-addr | dot-addr ("" = VPN)
+	pfx   netip.Prefix
+	pol   *proto.Policy // Ziel-Regeln (nil = keine)
+	peer  int64
+	user  int64
+	filt  *dnsFilter // Filterprofil (nil = keins)
+	smart *smartSet  // SmartDNS (nil = keins)
+	dns   bool       // DNS-Anfragen an den Panel-DNS umleiten
+	doh   bool       // verschlüsseltes DNS (DoH/DoT) sperren
+	via   string     // Weg ohne VPN: dns | doh | dot | doh-addr | dot-addr ("" = VPN)
 }
 
 // forwardSources: Quelladressen aller Geräte, deren Verkehr weitergeleitet wird und für die
@@ -44,8 +45,10 @@ func (e *Engine) forwardSources(env *proto.Env, snap *Snapshot, rt *routing) []s
 	seen := map[netip.Prefix]bool{}
 	panelDNS := e.Setting("dns_enabled") == "1"
 	filters := map[int64]*dnsFilter{}
+	smart := map[int64]*smartSet{}
 	if panelDNS {
 		filters = e.compileDNSFilters(snap)
+		smart = e.compileSmart(snap)
 	}
 	for _, d := range proto.All() {
 		f, ok := d.(proto.Forwarder)
@@ -61,7 +64,7 @@ func (e *Engine) forwardSources(env *proto.Env, snap *Snapshot, rt *routing) []s
 				if pol == nil && !panelDNS {
 					continue
 				}
-				sp := srcPolicy{pol: pol, peer: id, filt: filters[id], dns: panelDNS || pol.HasDomains()}
+				sp := srcPolicy{pol: pol, peer: id, filt: filters[id], smart: smart[id], dns: panelDNS || pol.HasDomains()}
 				if pb := snap.Peers[id]; pb != nil {
 					sp.user = pb.User.ID
 				}

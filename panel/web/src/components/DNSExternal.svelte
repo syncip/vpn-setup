@@ -181,16 +181,90 @@
     return t ? l.filter((x) => x.name.includes(t)) : l;
   });
 
+  // „Wer fragt von außen?“: Suche, Filter, Sortierung, Seiten (Auswahl bleibt im Browser)
+  const SEEN_SORTS = [
+    ['last', 'Zuletzt aktiv'],
+    ['queries', 'Meiste Anfragen'],
+    ['blocked', 'Meiste gefiltert'],
+    ['first', 'Neueste zuerst'],
+    ['addr', 'Absender (IP)'],
+    ['country', 'Land'],
+    ['host', 'Hostname'],
+  ];
+  const PAGE_SIZES = [25, 50, 100, 250];
+  const pref = (k, def) => {
+    try {
+      return localStorage.getItem('dnsseen.' + k) || def;
+    } catch {
+      return def;
+    }
+  };
+  const keep = (k, v) => {
+    try {
+      localStorage.setItem('dnsseen.' + k, String(v));
+    } catch {}
+  };
   let q = $state('');
-  let showAll = $state(false);
-  const seenShown = $derived.by(() => {
+  let seenFilter = $state(pref('filter', ''));
+  let seenSort = $state(pref('sort', 'last'));
+  let pageSize = $state(Number(pref('size', '25')) || 25);
+  let page = $state(0);
+  const ipKey = (a) => {
+    // IPv4 vor IPv6, numerisch sortierbar
+    if (a.includes('.')) return '0' + a.split('.').map((n) => n.padStart(3, '0')).join('.');
+    return '1' + a;
+  };
+  const seenRows = $derived.by(() => {
     const t = q.trim().toLowerCase();
     let rows = x.seen;
+    if (seenFilter === 'ok') rows = rows.filter((s) => s.client);
+    else if (seenFilter === 'bad') rows = rows.filter((s) => !s.client);
     if (t) rows = rows.filter((s) => [s.addr, s.host, s.client_name, s.name, s.country, land(s.country)].some((v) => (v || '').toLowerCase().includes(t)));
-    return showAll ? rows : rows.slice(0, 50);
+    const by = {
+      last: (a, b) => b.last - a.last,
+      queries: (a, b) => b.queries - a.queries || b.last - a.last,
+      blocked: (a, b) => (b.blocked || 0) - (a.blocked || 0) || b.queries - a.queries,
+      first: (a, b) => b.first - a.first,
+      addr: (a, b) => ipKey(a.addr).localeCompare(ipKey(b.addr)),
+      country: (a, b) => (a.country || 'zz').localeCompare(b.country || 'zz') || b.queries - a.queries,
+      host: (a, b) => (a.host || '~').localeCompare(b.host || '~'),
+    }[seenSort];
+    return by ? [...rows].sort(by) : rows;
   });
+  const pages = $derived(Math.max(1, Math.ceil(seenRows.length / pageSize)));
+  // Suche/Filter/Sortierung ändern → erste Seite
+  $effect(() => {
+    q;
+    seenFilter;
+    seenSort;
+    pageSize;
+    page = 0;
+  });
+  $effect(() => {
+    if (page > pages - 1) page = pages - 1;
+  });
+  const seenShown = $derived(seenRows.slice(page * pageSize, (page + 1) * pageSize));
+  const okCount = $derived(x.seen.filter((s) => s.client).length);
+  function sortBy(k) {
+    seenSort = k;
+    keep('sort', k);
+  }
   const cp = (t) => copy(t).then(() => toast('Kopiert'));
   const valid = $derived(f.name?.trim() && (f.addrs?.trim() || T.on));
+  // große Netze: erlaubt, aber mit Warnung (ab /23 bzw. /55; 0.0.0.0/0 = offener DNS-Server)
+  function largeNets(text) {
+    return (text || '')
+      .split(/[\s,;]+/)
+      .filter((a) => a.includes('/'))
+      .filter((a) => {
+        const [ip, bits] = a.split('/');
+        const n = Number(bits);
+        if (!Number.isInteger(n)) return false;
+        return ip.includes(':') ? n < 56 : n < 24;
+      });
+  }
+  const isOpen = (list) => list.some((a) => /^(0\.0\.0\.0|::)\/0$/.test(a));
+  const fLarge = $derived(largeNets(f.addrs));
 </script>
 
 <div class="grid cols-2 top">
@@ -340,29 +414,10 @@
   </div>
 </div>
 
-{#if d.smart?.domains || d.smart?.hits?.length}
-  <div class="card" style="margin-top:14px">
-    <div class="card-head">
-      <h2>
-        <Icon name="route" size={16} /> SmartDNS-Proxy
-        <Info title="SmartDNS für Geräte ohne VPN" text="Für SmartDNS-Domains der Filterprofile antwortet der Panel-DNS Geräten ohne VPN mit der Adresse des Servers. nginx reicht diese HTTPS-Verbindungen (Port 443) an den Proxy, der sie über die Ausgangsgruppe weiterleitet. Zahlen seit dem Start des Dienstes." />
-      </h2>
-      <span class="badge {d.smart.running ? 'ok' : 'muted'}">{d.smart.running ? 'läuft' : d.dry_run ? 'Testmodus' : 'aus'}</span>
-    </div>
-    <div class="card-pad stack" style="gap:8px;padding-top:0">
-      <div class="small muted">
-        {fmtNum(d.smart.domains)} Domains · {fmtNum(d.smart.total)} Verbindungen ({fmtNum(d.smart.active)} offen) · {bytes(d.smart.bytes)}{d.smart.denied ? ` · ${fmtNum(d.smart.denied)} abgewiesen` : ''} · Antwortadresse {d.smart.target4 || '–'}{d.smart.target6 ? `, ${d.smart.target6}` : ''}
-      </div>
-      {#if !d.smart.target4}<div class="notice warn small"><Icon name="alert" size={16} /><span>Die öffentliche IPv4 des Servers ist unbekannt (Einstellung „Server-Adresse“) – SmartDNS antwortet dann mit den echten Adressen.</span></div>{/if}
-      {#if !x.public && !T.on}<div class="tiny muted">Wirkt erst, wenn „DNS von außen“ oder DoH/DoT an ist – VPN-Geräte nutzen SmartDNS ohnehin über die Ziel-Regeln.</div>{/if}
-      {#each d.smart.hits.slice(0, 12) as h}
-        <div class="row small" style="gap:8px">
-          <span class="mono tiny grow ellipsis">{h.domain}</span>
-          <span class="tiny muted">{fmtNum(h.conns)}× · {bytes(h.bytes)} · {when(h.last)}</span>
-          {#if h.err}<span class="tiny warn-text ellipsis" style="max-width:260px" title={h.err}>{h.err}</span>{/if}
-        </div>
-      {/each}
-    </div>
+{#if d.smart?.domains}
+  <div class="notice small" style="margin-top:14px">
+    <Icon name="route" size={16} />
+    <span>SmartDNS ist für {fmtNum(d.smart.domains)} Domains aktiv{d.smart.total ? ` · ${fmtNum(d.smart.total)} Verbindungen über den Proxy` : ''}. Profile, Zuordnung und Verbindungen: <a href="#/dns/smart">DNS → SmartDNS</a>.</span>
   </div>
 {/if}
 
@@ -381,7 +436,7 @@
           <div class="grow">
             <div class="line">
               <strong>{c.name}</strong>
-              {#each c.addrs as a}<span class="chip mono">{a}</span>{/each}
+              {#each c.addrs as a}<span class="chip mono" class:warnchip={largeNets(a).length} title={largeNets(a).length ? 'Großes Netz – viele fremde Adressen dürfen fragen' : ''}>{a}</span>{/each}
               {#if !c.addrs.length}<span class="chip">nur DoH/DoT</span>{/if}
               {#if c.learn}<span class="chip" title="Wer per DoH/DoT fragt, darf 24 h auch normales DNS">Adresse merken{c.learned.length ? `: ${c.learned.join(', ')}` : ''}</span>{/if}
             </div>
@@ -418,14 +473,43 @@
       <Info title="Absender außerhalb des VPN" text="Alle Adressen außerhalb des VPN, die den Panel-DNS gefragt haben – freigegebene Geräte und gesperrte (nicht freigegeben, ihre Anfragen werden verworfen). Zeile anklicken für alle Details und angefragten Domains. Weg = Port 53 an die Server-IP, DoH oder DoT. Land laut Registrierungsstelle des Adressblocks (lokal ausgewertet, ohne fremden Dienst). Hostname = Rückwärtsauflösung der IP, meist der Anbieter. Die Liste übersteht Neustarts; Einträge älter als 30 Tage verschwinden." />
       <span class="muted small">{x.seen.length}</span>
     </h2>
-    <div class="row" style="gap:8px">
-      {#if x.seen.length > 8}<SearchInput bind:value={q} placeholder="IP, Host, Land, Domain …" width="220px" />{/if}
+    <div class="row wrap" style="gap:8px">
       {#if x.seen.length}<button class="btn sm ghost" onclick={() => forget('')}><Icon name="trash" size={14} /> Leeren</button>{/if}
     </div>
   </div>
+  {#if x.seen.length}
+    <div class="seenbar">
+      <SearchInput bind:value={q} placeholder="IP, Host, Land, Gerät, Domain …" width="240px" />
+      <div class="segmented sm">
+        <button class:active={seenFilter === ''} onclick={() => ((seenFilter = ''), keep('filter', ''))}>Alle {x.seen.length}</button>
+        <button class:active={seenFilter === 'ok'} onclick={() => ((seenFilter = 'ok'), keep('filter', 'ok'))}>Freigegeben {okCount}</button>
+        <button class:active={seenFilter === 'bad'} onclick={() => ((seenFilter = 'bad'), keep('filter', 'bad'))}>Gesperrt {x.seen.length - okCount}</button>
+      </div>
+      <span class="grow"></span>
+      <label class="row small muted" style="gap:6px">
+        Sortieren
+        <select class="input sm" style="width:auto" value={seenSort} onchange={(e) => sortBy(e.currentTarget.value)}>
+          {#each SEEN_SORTS as [k, l]}<option value={k}>{l}</option>{/each}
+        </select>
+      </label>
+    </div>
+  {/if}
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Absender</th><th>Land</th><th>Hostname</th><th>Gerät</th><th>Weg</th><th class="right">Anfragen</th><th>Zuletzt</th><th>Letzte Domain</th><th></th></tr></thead>
+      <thead
+        ><tr
+          ><th class="sortable" class:sorted={seenSort === 'addr'} onclick={() => sortBy('addr')}>Absender</th><th class="sortable" class:sorted={seenSort === 'country'} onclick={() => sortBy('country')}>Land</th><th
+            class="sortable"
+            class:sorted={seenSort === 'host'}
+            onclick={() => sortBy('host')}>Hostname</th
+          ><th>Gerät</th><th>Weg</th><th class="right sortable" class:sorted={seenSort === 'queries' || seenSort === 'blocked'} onclick={() => sortBy(seenSort === 'queries' ? 'blocked' : 'queries')} title="Klick: Anfragen ↔ gefiltert">Anfragen</th><th
+            class="sortable"
+            class:sorted={seenSort === 'last' || seenSort === 'first'}
+            onclick={() => sortBy(seenSort === 'last' ? 'first' : 'last')}
+            title="Klick: zuletzt aktiv ↔ neueste zuerst">Zuletzt</th
+          ><th>Letzte Domain</th><th></th></tr
+        ></thead
+      >
       <tbody>
         {#each seenShown as s (s.addr)}
           <tr class="clickrow" onclick={() => showSeen(s.addr)} title="Details anzeigen">
@@ -449,12 +533,25 @@
             </td>
           </tr>
         {:else}
-          <tr><td colspan="9" class="muted small" style="padding:20px">{x.public ? 'Noch keine Anfragen von außen.' : 'DNS von außen ist aus.'}</td></tr>
+          <tr><td colspan="9" class="muted small" style="padding:20px">{x.seen.length ? `Nichts gefunden${q ? ` für „${q}“` : ''}.` : x.public ? 'Noch keine Anfragen von außen.' : 'DNS von außen ist aus.'}</td></tr>
         {/each}
       </tbody>
     </table>
   </div>
-  {#if !showAll && !q && x.seen.length > 50}<div style="text-align:center;padding:10px"><button class="btn sm" onclick={() => (showAll = true)}>Alle {x.seen.length} zeigen</button></div>{/if}
+  {#if seenRows.length > PAGE_SIZES[0]}
+    <div class="pager">
+      <span class="small muted">{fmtNum(page * pageSize + 1)}–{fmtNum(Math.min((page + 1) * pageSize, seenRows.length))} von {fmtNum(seenRows.length)}</span>
+      <span class="grow"></span>
+      <button class="btn sm icon ghost" title="Erste Seite" disabled={page === 0} onclick={() => (page = 0)}>«</button>
+      <button class="btn sm ghost" disabled={page === 0} onclick={() => (page -= 1)}>‹ Zurück</button>
+      <span class="small nowrap">Seite {page + 1} / {pages}</span>
+      <button class="btn sm ghost" disabled={page >= pages - 1} onclick={() => (page += 1)}>Weiter ›</button>
+      <button class="btn sm icon ghost" title="Letzte Seite" disabled={page >= pages - 1} onclick={() => (page = pages - 1)}>»</button>
+      <select class="input sm" style="width:auto" value={pageSize} onchange={(e) => ((pageSize = Number(e.currentTarget.value)), keep('size', pageSize))} aria-label="Zeilen je Seite">
+        {#each PAGE_SIZES as n}<option value={n}>{n} je Seite</option>{/each}
+      </select>
+    </div>
+  {/if}
 </div>
 
 <Modal bind:open title={f.id ? 'Gerät bearbeiten' : 'Gerät freigeben'} subtitle="Darf den Panel-DNS ohne VPN nutzen" width={560}>
@@ -464,8 +561,17 @@
       <input id="dx-name" class="input" bind:value={f.name} maxlength="48" placeholder="z. B. Fernseher Wohnzimmer" />
     </div>
     <div class="field">
-      <label for="dx-addrs">Adressen{#if T.on}&nbsp;<span class="muted">(optional bei DoH/DoT)</span>{/if} <Info title="Adressen" text="Öffentliche IP-Adressen (IPv4/IPv6), Netze (höchstens /16 bzw. /48 – bei IPv6 am besten das /64 des Anschlusses) oder DynDNS-Namen. Eine pro Zeile. Für normales DNS (Port 53) nötig; Geräte mit DoH/DoT erkennt das Panel an ihrer Kennung." /></label>
+      <label for="dx-addrs">Adressen{#if T.on}&nbsp;<span class="muted">(optional bei DoH/DoT)</span>{/if} <Info title="Adressen" text="Öffentliche IP-Adressen (IPv4/IPv6), Netze (bei IPv6 am besten das /64 des Anschlusses; große Netze bis 0.0.0.0/0 gehen, siehe Warnung) oder DynDNS-Namen. Eine pro Zeile. Für normales DNS (Port 53) nötig; Geräte mit DoH/DoT erkennt das Panel an ihrer Kennung." /></label>
       <textarea id="dx-addrs" class="input mono" rows="3" bind:value={f.addrs} placeholder={'203.0.113.10\n2001:db8:1234:5678::/64\nmeinzuhause.myfritz.net'}></textarea>
+      {#if fLarge.length}
+        <div class="notice warn small" style="margin-top:6px">
+          <Icon name="alert" size={16} />
+          <span
+            >{#if isOpen(fLarge)}<b>Offener DNS-Server:</b> {fLarge.join(', ')} gibt deinen DNS für das ganze Internet frei.{:else}<b>Großes Netz:</b> {fLarge.join(', ')} gibt sehr viele fremde Adressen frei.{/if}
+            Jeder darin kann deinen DNS nutzen, und SmartDNS leitet auch dessen Verkehr über deine Ausgänge. Offene DNS-Server werden gezielt gesucht und für Angriffe missbraucht – das Panel begrenzt deshalb Anfragen über UDP auf 20 je Sekunde und Absender und lehnt ANY-Anfragen ab. Besser: eigene Adressen, das /64 des Anschlusses oder DoH/DoT mit Kennung.</span
+          >
+        </div>
+      {/if}
     </div>
     <div class="field">
       <label for="dx-prof">Filterprofil</label>
@@ -705,5 +811,35 @@
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+  }
+  .warnchip {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  }
+  .seenbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px var(--pad-x, 16px);
+    border-bottom: 1px solid var(--border);
+  }
+  .pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 10px var(--pad-x, 16px);
+    border-top: 1px solid var(--border);
+  }
+  th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  th.sortable:hover {
+    color: var(--text);
+  }
+  th.sorted {
+    color: var(--accent);
   }
 </style>

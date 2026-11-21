@@ -37,7 +37,7 @@ func TestParseSNI(t *testing.T) {
 	}
 }
 
-// TestSmartDNS: SmartDNS im Profil – VPN-Geräte bekommen eine Ziel-Regel, Geräte ohne VPN die
+// TestSmartDNS: SmartDNS-Profil – VPN-Geräte bekommen eine Ziel-Regel, Geräte ohne VPN die
 // Adresse des Servers (und nginx leitet die Namen an den Proxy); DoH/DoT per Kennung.
 func TestSmartDNS(t *testing.T) {
 	e, _ := newTest(t)
@@ -71,19 +71,20 @@ func TestSmartDNS(t *testing.T) {
 		"\nEndpoint = 198.51.100.1:51820\nAllowedIPs = 0.0.0.0/0\n"
 	ex := saveObj(t, e, &store.Object{Kind: "exit", Name: "A", Enabled: true, Data: store.M{"type": "wireguard", "slot": 1}, Secrets: store.M{"config": conf}})
 	us := saveObj(t, e, &store.Object{Kind: "group", Name: "USA", Enabled: true, Data: store.M{"slot": 2, "exits": []int64{ex.ID}, "on_fail": "block"}})
-	prof := saveObj(t, e, &store.Object{Kind: "dnsprofile", Name: "Standard", Enabled: true, Data: store.M{"assign": []string{"global"},
-		"smart": []any{map[string]any{"group": us.ID, "domains": []string{"netflix.com", "NFLXVIDEO.net", "kaputt..x"}}}}})
+	saveObj(t, e, &store.Object{Kind: "dnsprofile", Name: "Standard", Enabled: true, Data: store.M{"assign": []string{"global"}}})
+	prof := saveObj(t, e, &store.Object{Kind: "smartdns", Name: "Streaming", Enabled: true, Data: store.M{"assign": []string{"global"},
+		"routes": []any{map[string]any{"group": us.ID, "domains": []string{"netflix.com", "NFLXVIDEO.net", "kaputt..x"}}}}})
 	tv := saveObj(t, e, &store.Object{Kind: "dnsclient", Name: "TV", Enabled: true, Data: store.M{"addrs": []string{"203.0.113.50"}, "profile": float64(0), "learn": true},
 		Secrets: store.M{"token": "abc123token"}})
 	_ = tv
 
-	if got := DNSProfileFrom(prof).Smart; len(got) != 1 || strings.Join(got[0].Domains, ",") != "netflix.com,nflxvideo.net" {
+	if got := SmartProfileFrom(prof).Routes; len(got) != 1 || strings.Join(got[0].Domains, ",") != "netflix.com,nflxvideo.net" {
 		t.Fatalf("ParseSmart: %+v", got)
 	}
 	if err := e.Apply(); err != nil {
 		t.Fatal(err)
 	}
-	// VPN-Gerät: Ziel-Regel aus dem Profil
+	// VPN-Gerät: Ziel-Regel aus dem SmartDNS-Profil
 	pol := e.routing().Policies[p.ID]
 	if pol == nil || len(pol.Rules) != 1 || pol.Rules[0].ID != SmartRuleID(prof.ID, 0) || pol.Rules[0].Group != us.ID ||
 		strings.Join(pol.Rules[0].Domains, ",") != "netflix.com,nflxvideo.net" {
