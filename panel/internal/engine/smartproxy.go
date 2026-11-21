@@ -162,16 +162,21 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	if s == nil {
 		s = e.extSource(src, false)
 	}
+	sni = strings.ToLower(strings.TrimSuffix(sni, "."))
 	if s == nil || !s.smart.has(sni) {
-		if g := e.smartGrantOf(src); g != nil {
+		if g := e.smartGrantOf(src, sni); g != nil {
 			s = g
 		}
 	}
 	if s == nil {
-		p.deny(src, sni, "Absender unbekannt – Adresse nicht freigegeben und keine SmartDNS-Antwort an diese Adresse")
+		why := "Absender unbekannt – Adresse nicht freigegeben und keine SmartDNS-Antwort für diesen Namen in den letzten 30 Minuten"
+		if !e.smartGrantOn() {
+			why = "Absender unbekannt – Adresse nicht freigegeben (Freigabe über SmartDNS-Antworten ist aus)"
+		}
+		p.deny(src, sni, why)
 		return
 	}
-	rid, gid, dom, ok := s.smart.matchRule(sni)
+	rid, gid, dom, ok := s.smart.matchRuleLabel(sni)
 	if !ok {
 		p.deny(src, sni, "Name steht in keinem SmartDNS-Profil dieses Geräts")
 		return

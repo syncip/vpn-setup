@@ -100,6 +100,10 @@ func ValidateSetting(k, v string) (string, error) {
 		if v != "0" && v != "1" {
 			return "", fmt.Errorf("dns_ext_any: 0 oder 1")
 		}
+	case "dns_smart_grant":
+		if v != "0" && v != "1" {
+			return "", fmt.Errorf("dns_smart_grant: 0 oder 1")
+		}
 	case "dns_cache_size":
 		if n, err := strconv.Atoi(v); err != nil || n < 0 || n > 1000000 {
 			return "", fmt.Errorf("DNS-Zwischenspeicher: 0 (aus) bis 1 000 000 Antworten")

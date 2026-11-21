@@ -677,7 +677,7 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 	// SmartDNS für Geräte ohne VPN: Name zeigt auf den Server, der die HTTPS-Verbindung über die
 	// Gruppe weiterreicht (VPN-Geräte leitet stattdessen die Ziel-Regel aus dem SmartDNS-Profil).
 	if s.peer < 0 {
-		if rid, gid, dom, ok := s.smart.matchRule(name); ok {
+		if rid, gid, dom, ok := s.smart.matchRuleLabel(name); ok {
 			g.mu.Lock()
 			gr, gok := g.groups[gid]
 			g.mu.Unlock()
@@ -687,7 +687,8 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 				}
 				// Wer die Serveradresse bekommt, darf damit auch den Proxy nutzen – wichtig bei DoH/DoT
 				// über die Kennung, wenn die Adresse des Geräts nicht freigegeben ist.
-				e.smartGrant(src, -s.peer)
+				// Nur für diesen Namen und 30 Minuten (jede Antwort verlängert).
+				e.smartGrant(src, -s.peer, name)
 				v4, v6 := e.PublicAddrs()
 				detail := "SmartDNS: " + dom + " über „" + gr.Name + "“"
 				switch q.Type {

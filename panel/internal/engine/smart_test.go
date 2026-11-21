@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 
@@ -119,24 +120,49 @@ func TestSmartDNS(t *testing.T) {
 		st.Devices[-tv.ID] == nil || st.Devices[p.ID] == nil || st.Routes[0].Q != 2 {
 		t.Errorf("SmartDNS-Statistik: %+v", st)
 	}
-	// Proxy: Wer per SmartDNS die Serveradresse bekam, darf den Proxy nutzen; unbekannte Absender nicht
-	if g := e.smartGrantOf(tvIP); g == nil || !g.smart.has("www.netflix.com") {
+	// Proxy: Wer per SmartDNS die Serveradresse bekam, darf den Proxy für genau diesen Namen nutzen;
+	// andere Namen aus dem Profil und unbekannte Absender nicht
+	if g := e.smartGrantOf(tvIP, "www.netflix.com"); g == nil || !g.smart.has("www.netflix.com") {
 		t.Error("SmartDNS-Antwort gibt den Proxy nicht frei")
 	}
-	if e.smartGrantOf(netip.MustParseAddr("198.51.100.200")) != nil {
+	if e.smartGrantOf(tvIP, "api.netflix.com") != nil {
+		t.Error("Freigabe gilt für einen Namen ohne SmartDNS-Antwort")
+	}
+	if e.smartGrantOf(netip.MustParseAddr("198.51.100.200"), "www.netflix.com") != nil {
 		t.Error("fremder Absender für den Proxy freigegeben")
 	}
-	e.smartGrant(netip.MustParseAddr("2001:db8:1:2::5"), tv.ID)
-	if e.smartGrantOf(netip.MustParseAddr("2001:db8:1:2::99")) == nil || e.smartGrantOf(netip.MustParseAddr("2001:db8:1:3::5")) != nil {
+	e.smartGrant(netip.MustParseAddr("2001:db8:1:2::5"), tv.ID, "www.netflix.com")
+	if e.smartGrantOf(netip.MustParseAddr("2001:db8:1:2::99"), "www.netflix.com") == nil || e.smartGrantOf(netip.MustParseAddr("2001:db8:1:3::5"), "www.netflix.com") != nil {
 		t.Error("IPv6: Freigabe je /64")
 	}
-	// Muster: disney*.* passt auf www.disneyplus.com
+	// Ablauf nach 30 Minuten
+	e.dnsx.mu.Lock()
+	e.dnsx.smartOK[tvIP].names["www.netflix.com"] = time.Now().Add(-time.Second).Unix()
+	e.dnsx.mu.Unlock()
+	if e.smartGrantOf(tvIP, "www.netflix.com") != nil {
+		t.Error("abgelaufene Freigabe gilt noch")
+	}
+	// Schalter aus: keine Freigaben
+	_ = e.St.SetSetting("dns_smart_grant", "0")
+	e.smartGrant(tvIP, tv.ID, "www.netflix.com")
+	if e.smartGrantOf(netip.MustParseAddr("2001:db8:1:2::99"), "www.netflix.com") != nil {
+		t.Error("Freigabe trotz ausgeschaltetem Schalter")
+	}
+	_ = e.St.SetSetting("dns_smart_grant", "1")
+	e.smartGrant(tvIP, tv.ID, "www.netflix.com")
+	if e.smartGrantOf(tvIP, "www.netflix.com") == nil {
+		t.Error("Freigabe nach dem Wiedereinschalten")
+	}
+	// Muster: disney*.* passt auf www.disneyplus.com, aber nicht über Punkte hinweg (disney.boese.example)
 	if _, got := answers(t, e.dns.handle(e, tvIP, dnsQuery("www.disneyplus.com.", dnsmessage.TypeA), false)); strings.Join(got, " ") != "198.51.100.77" {
 		t.Errorf("SmartDNS Muster: %v", got)
 	}
+	if _, got := answers(t, e.dns.handle(e, tvIP, dnsQuery("disney.boese.example.", dnsmessage.TypeA), false)); strings.Join(got, " ") == "198.51.100.77" {
+		t.Errorf("SmartDNS Muster über Punkte: %v", got)
+	}
 	// nginx: Namen samt Unterdomains an den Proxy
 	ng, _ := e.Sys.ReadFile(nginxStream)
-	if !strings.Contains(string(ng), `"~^(.+\.)?disney.*\..*$" `+smartAddr+";") {
+	if !strings.Contains(string(ng), `"~^(.+\.)?disney[^.]*\.[^.]*$" `+smartAddr+";") {
 		t.Errorf("nginx Muster:\n%s", ng)
 	}
 	if !strings.Contains(string(ng), "hostnames;") || !strings.Contains(string(ng), ".netflix.com "+smartAddr+";") {

@@ -68,8 +68,22 @@ func (s *smartSet) matchRule(name string) (rid, group int64, domain string, ok b
 	return
 }
 
+// matchRuleLabel: wie matchRule, „*“ in Mustern passt aber nicht über Punkte hinweg
+// (Antworten an Geräte ohne VPN und SmartDNS-Proxy – ein Muster soll ihn nicht für fremde Server öffnen).
+func (s *smartSet) matchRuleLabel(name string) (rid, group int64, domain string, ok bool) {
+	group, domain, ok = s.matchMode(name, true)
+	if ok {
+		rid = s.rid[domain]
+	}
+	return
+}
+
 // match: Läuft der Name per SmartDNS über eine Gruppe? (Unterdomains zählen mit.)
 func (s *smartSet) match(name string) (group int64, domain string, ok bool) {
+	return s.matchMode(name, false)
+}
+
+func (s *smartSet) matchMode(name string, label bool) (group int64, domain string, ok bool) {
 	if s == nil || len(s.m) == 0 {
 		return 0, "", false
 	}
@@ -85,7 +99,7 @@ func (s *smartSet) match(name string) (group int64, domain string, ok bool) {
 	}
 	// Muster erst nach den festen Domains – die sind genauer
 	for _, p := range s.pats {
-		if proto.DomainPatternMatch(p, name) {
+		if (label && proto.DomainPatternMatchLabel(p, name)) || (!label && proto.DomainPatternMatch(p, name)) {
 			return s.m[p], p, true
 		}
 	}

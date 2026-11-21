@@ -40,6 +40,31 @@ func TestDomainPatterns(t *testing.T) {
 			t.Errorf("Regexp %s ~ %s", re, c.host)
 		}
 	}
+	// Proxy: „*“ ohne Punkte
+	for _, c := range []struct {
+		p, host string
+		ok      bool
+	}{
+		{"netflix.*", "netflix.de", true},
+		{"netflix.*", "www.netflix.de", true},
+		{"netflix.*", "netflix.boese-domain.com", false},
+		{"netflix.*", "www.netflix.co.uk", false},
+		{"ipv4-*.nflxvideo.net", "ipv4-c001-fra.nflxvideo.net", true},
+		{"ipv4-*.nflxvideo.net", "ipv4-x.boese.nflxvideo.net", false},
+		{"*nflx*", "occ-0-1.nflxso.net", false}, // „*“ deckt nur einen Namensteil ab
+		{"*nflx*.net", "occ-0-1.nflxso.net", true},
+		{"*nflx*.net", "nflx.boese.com", false},
+		{"disney*.*", "www.disneyplus.com", true},
+		{"disney*.*", "disney.boese.example", false},
+	} {
+		if got := proto.DomainPatternMatchLabel(c.p, c.host); got != c.ok {
+			t.Errorf("Label %s ~ %s = %v", c.p, c.host, got)
+		}
+		re := regexp.MustCompile(proto.DomainPatternRegexpLabel(c.p))
+		if re.MatchString(c.host) != c.ok {
+			t.Errorf("Label-Regexp %s ~ %s", re, c.host)
+		}
+	}
 	// SmartDNS: feste Domain vor Muster, Muster in Reihenfolge
 	prof := []*SmartProfile{{ID: 1, Enabled: true, Assign: []string{"global"}, Routes: []SmartRoute{
 		{Group: 5, Domains: []string{"*nflx*"}}, {Group: 6, Domains: []string{"nflxvideo.net", "netflix.*"}}}}}

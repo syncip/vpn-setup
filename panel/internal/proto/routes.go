@@ -76,9 +76,16 @@ func IsDomainPattern(d string) bool { return strings.IndexByte(d, '*') >= 0 }
 // DomainPatternMatch: passt host – oder eine übergeordnete Domain davon – auf das Muster?
 // „*“ steht für beliebig viele Zeichen (auch Punkte). Wie bei normalen Einträgen zählen
 // Unterdomains mit: netflix.* passt auf netflix.de und www.netflix.de.
-func DomainPatternMatch(pattern, host string) bool {
+func DomainPatternMatch(pattern, host string) bool { return domainPattern(pattern, host, false) }
+
+// DomainPatternMatchLabel: wie DomainPatternMatch, aber „*“ steht nur für Zeichen innerhalb eines
+// Namensteils (keine Punkte): netflix.* passt auf netflix.de und www.netflix.de, nicht aber auf
+// netflix.boese-domain.com. Für den SmartDNS-Proxy, damit ein Muster ihn nicht zu fremden Servern öffnet.
+func DomainPatternMatchLabel(pattern, host string) bool { return domainPattern(pattern, host, true) }
+
+func domainPattern(pattern, host string, label bool) bool {
 	for n := host; ; {
-		if globMatch(pattern, n) {
+		if globMatch(pattern, n, label) {
 			return true
 		}
 		i := strings.IndexByte(n, '.')
@@ -90,7 +97,8 @@ func DomainPatternMatch(pattern, host string) bool {
 }
 
 // globMatch: einfacher Vergleich mit „*“ (ohne Rekursion, linear mit Rücksprung).
-func globMatch(p, s string) bool {
+// label: „*“ passt nicht auf Punkte.
+func globMatch(p, s string, label bool) bool {
 	pi, si, star, mark := 0, 0, -1, 0
 	for si < len(s) {
 		switch {
@@ -100,7 +108,7 @@ func globMatch(p, s string) bool {
 		case pi < len(p) && p[pi] == s[si]:
 			pi++
 			si++
-		case star >= 0:
+		case star >= 0 && !(label && s[mark] == '.'):
 			pi = star + 1
 			mark++
 			si = mark
@@ -114,9 +122,14 @@ func globMatch(p, s string) bool {
 	return pi == len(p)
 }
 
-// DomainPatternRegexp: Muster als regulärer Ausdruck (für Xray und nginx), samt Unterdomains.
+// DomainPatternRegexp: Muster als regulärer Ausdruck (für Xray), samt Unterdomains.
 func DomainPatternRegexp(pattern string) string {
 	return `^(.+\.)?` + strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `.*`) + `$`
+}
+
+// DomainPatternRegexpLabel: wie DomainPatternRegexp, „*“ aber ohne Punkte (nginx → SmartDNS-Proxy).
+func DomainPatternRegexpLabel(pattern string) string {
+	return `^(.+\.)?` + strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `[^.]*`) + `$`
 }
 
 // MatchDomain: erste Regel, deren Domains auf host passen (für die DNS-Auswertung). Eine

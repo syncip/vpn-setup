@@ -176,35 +176,69 @@ type dnsExt struct {
 	tokens  map[string]extSrc
 	byID    map[int64]extSrc
 	learned map[netip.Addr]learnRec
-	smartOK map[netip.Addr]learnRec // SmartDNS-Proxy: Absender, die per SmartDNS die Serveradresse bekamen
+	smartOK map[netip.Addr]*smartGrantRec // SmartDNS-Proxy: Absender, die per SmartDNS die Serveradresse bekamen
 }
 
-// smartGrant: Der Absender hat per SmartDNS die Adresse des Servers bekommen – er darf den
-// SmartDNS-Proxy 6 Stunden nutzen (IPv6 je /64, weil Geräte wechselnde Adressen im Netz nutzen).
-func (e *Engine) smartGrant(a netip.Addr, client int64) {
-	if !a.IsValid() || client <= 0 {
+// smartGrantRec: Freigabe einer Adresse für den SmartDNS-Proxy – nur für die Namen, für die sie
+// die Serveradresse bekommen hat (Name → gültig bis, Unix).
+type smartGrantRec struct {
+	id    int64
+	names map[string]int64
+}
+
+// smartGrantTTL: so lange gilt eine Freigabe; jede neue SmartDNS-Antwort verlängert sie.
+const smartGrantTTL = 30 * time.Minute
+
+// smartGrantOn: Proxy-Freigabe über SmartDNS-Antworten eingeschaltet (Einstellung dns_smart_grant)?
+func (e *Engine) smartGrantOn() bool { return e.Setting("dns_smart_grant") != "0" }
+
+// smartGrant: Der Absender hat per SmartDNS für name die Adresse des Servers bekommen – er darf den
+// SmartDNS-Proxy für genau diesen Namen 30 Minuten nutzen, jede neue Antwort verlängert das
+// (IPv6 je /64, weil Geräte wechselnde Adressen im Netz nutzen).
+func (e *Engine) smartGrant(a netip.Addr, client int64, name string) {
+	if !a.IsValid() || client <= 0 || name == "" || !e.smartGrantOn() {
 		return
 	}
 	k := rateKey(a)
+	now := time.Now()
 	x := &e.dnsx
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	if x.smartOK == nil || len(x.smartOK) > 5000 {
-		x.smartOK = map[netip.Addr]learnRec{}
+		x.smartOK = map[netip.Addr]*smartGrantRec{}
 	}
-	x.smartOK[k] = learnRec{id: client, until: time.Now().Add(6 * time.Hour).Unix()}
+	g := x.smartOK[k]
+	if g == nil || g.id != client {
+		g = &smartGrantRec{id: client, names: map[string]int64{}}
+		x.smartOK[k] = g
+	}
+	if len(g.names) > 500 { // abgelaufene Namen aufräumen
+		for n, until := range g.names {
+			if until < now.Unix() {
+				delete(g.names, n)
+			}
+		}
+		if len(g.names) > 500 {
+			g.names = map[string]int64{}
+		}
+	}
+	g.names[name] = now.Add(smartGrantTTL).Unix()
 }
 
-// smartGrantOf: Richtlinie für einen Absender, der kürzlich SmartDNS-Antworten bekam (nil = keiner).
-func (e *Engine) smartGrantOf(a netip.Addr) *srcPolicy {
+// smartGrantOf: Richtlinie für einen Absender, der kürzlich für name eine SmartDNS-Antwort bekam
+// (nil = keiner oder abgelaufen).
+func (e *Engine) smartGrantOf(a netip.Addr, name string) *srcPolicy {
+	if !e.smartGrantOn() {
+		return nil
+	}
 	x := &e.dnsx
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	l, ok := x.smartOK[rateKey(a)]
-	if !ok || l.until < time.Now().Unix() {
+	g, ok := x.smartOK[rateKey(a)]
+	if !ok || g.names[name] < time.Now().Unix() {
 		return nil
 	}
-	s, ok := x.byID[l.id]
+	s, ok := x.byID[g.id]
 	if !ok {
 		return nil
 	}

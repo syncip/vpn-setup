@@ -92,7 +92,8 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 			"nocache": a.E.Setting("dns_nocache"), "strategy": a.E.Setting("dns_strategy"), "public": a.E.Setting("dns_public"),
 			"resolver": a.E.Setting("dns_resolver"), "candidates": engine.CandidatesText(a.E.DNSCandidateList()), "candidates_custom": a.E.Setting("dns_candidates"),
 			"auto": a.E.Setting("dns_auto"), "auto_hours": a.E.Setting("dns_auto_hours"), "auto_count": a.E.Setting("dns_auto_count"),
-			"tls": a.E.Setting("dns_tls"), "tls_host": a.E.Setting("dns_tls_host"), "dot_port": a.E.Setting("dns_dot_port"), "acme_email": a.E.Setting("dns_acme_email")},
+			"tls": a.E.Setting("dns_tls"), "tls_host": a.E.Setting("dns_tls_host"), "dot_port": a.E.Setting("dns_dot_port"), "acme_email": a.E.Setting("dns_acme_email"),
+			"smart_grant": a.E.Setting("dns_smart_grant")},
 		"smart_state": a.E.SmartState(), "tls_state": a.E.EncDNSState(),
 		"unbound_installed": a.E.UnboundInstalled(), "unbound": a.E.UnboundHealth(), "auto_last": a.E.DNSAutoLast(),
 		"upstreams": a.E.DNSServerStats(), "ext": ext,
@@ -158,6 +159,7 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 		ExtRate  *int    `json:"ext_rate"`
 		ExtBurst *int    `json:"ext_burst"`
 		ExtAny   *bool   `json:"ext_any"`
+		Grant    *bool   `json:"smart_grant"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -205,6 +207,9 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.ExtAny != nil {
 		set["dns_ext_any"] = map[bool]string{true: "1", false: "0"}[*in.ExtAny]
+	}
+	if in.Grant != nil {
+		set["dns_smart_grant"] = map[bool]string{true: "1", false: "0"}[*in.Grant]
 	}
 	if in.TLS != nil && *in.TLS {
 		h := a.E.Setting("dns_tls_host")

@@ -331,6 +331,10 @@
     if (!(await confirmDialog({ title: 'Statistik zurücksetzen?', text: id ? `Alle Zahlen des Profils „${name}“ werden gelöscht.` : 'Alle Zahlen aller SmartDNS-Profile werden gelöscht.', ok: 'Zurücksetzen', danger: true }))) return;
     if (await run(() => post('/dns/smart/stats/reset', { id }), 'Statistik zurückgesetzt')) loadSmartStats();
   }
+
+  async function setSmartGrant(on) {
+    if (await run(() => put('/dns/settings', { smart_grant: on }), on ? 'Proxy-Freigabe eingeschaltet' : 'Proxy-Freigabe ausgeschaltet')) load();
+  }
   const sum24 = $derived(sStats.reduce((a, x) => ({ q: a.q + x.q24, b: a.b + x.bytes24, unused: a.unused + (x.queries ? x.unused.length : 0), err: a.err + x.errors }), { q: 0, b: 0, unused: 0, err: 0 }));
   const sparkPath = (vals, w = 120, h = 26) => {
     const m = Math.max(1, ...vals);
@@ -1027,6 +1031,10 @@
         {fmtNum(smartState.domains || 0)} Domains · {fmtNum(smartState.total || 0)} Verbindungen ({fmtNum(smartState.active || 0)} offen) · {bytes(smartState.bytes || 0)}{smartState.denied ? ` · ${fmtNum(smartState.denied)} abgewiesen` : ''} · Antwortadresse {smartState.target4 || '–'}{smartState.target6 ? `, ${smartState.target6}` : ''}
       </div>
       {#if smartState.domains && !smartState.target4}<div class="notice warn small"><Icon name="alert" size={16} /><span>Die öffentliche IPv4 des Servers ist unbekannt (Einstellung „Server-Adresse“) – SmartDNS antwortet Geräten ohne VPN dann mit den echten Adressen.</span></div>{/if}
+      <div class="row" style="gap:6px">
+        <label class="switch small"><input type="checkbox" checked={d.settings.smart_grant !== '0'} onchange={(ev) => setSmartGrant(ev.currentTarget.checked)} /><span class="track"></span> Proxy-Freigabe über SmartDNS-Antworten</label>
+        <Info title="Proxy-Freigabe über SmartDNS-Antworten" text="Bekommt eine Adresse per SmartDNS (auch über DoH/DoT mit Kennung) die Serveradresse für einen Namen, darf sie den Proxy für genau diesen Namen 30 Minuten nutzen – jede neue Antwort verlängert das, bei IPv6 gilt es für das ganze /64-Netz. Aus: Nur freigegebene Adressen und VPN-Geräte dürfen den Proxy nutzen; Geräte, die nur über DoH/DoT mit Kennung kommen, laden SmartDNS-Seiten dann nicht mehr." />
+      </div>
       {#if d.settings.public !== '1' && d.settings.tls !== '1'}<div class="tiny muted">Für Geräte ohne VPN wirkt SmartDNS erst, wenn unter <a href="#/dns/external">Ohne VPN</a> „DNS von außen“ oder DoH/DoT an ist. VPN-Geräte nutzen es ohnehin über die Ziel-Regeln.</div>{/if}
       {#each (smartState.hits || []).slice(0, 15) as h}
         <div class="row small" style="gap:8px">
@@ -1486,7 +1494,7 @@
           <p><b>VPN-Geräte</b> (WireGuard, OpenVPN, VLESS; Hysteria2 nur über Server-Regeln): wirkt wie eine Ziel-Regel – der Verkehr zu diesen Zielen geht über den Ausgang der Gruppe, alle Ports.</p>
           <p><b>Geräte ohne VPN</b> (Fernseher, Konsole, DoH/DoT): Der Panel-DNS antwortet für diese Namen mit der Adresse des Servers; der Server reicht die HTTPS-Verbindung (Port 443) anhand des Namens über die Gruppe weiter. Die Verschlüsselung bleibt Ende-zu-Ende. Unverschlüsseltes HTTP (Port 80) und UDP/QUIC laufen so nicht – Apps weichen dann auf HTTPS aus.</p>
           <p>Damit Streamingdienste den Standort glauben, braucht es meist mehrere Domains (Anmeldung, Videoserver). Die Vorlagen enthalten die üblichen.</p>
-          <p><b>Platzhalter „*“</b> steht für beliebige Zeichen: <code>netflix.*</code> (alle Länderendungen), <code>ipv4-*.nflxvideo.net</code>, <code>*nflx*</code> (jeder Name mit „nflx“). Unterdomains zählen auch hier mit. <code>*.netflix.com</code> ist dasselbe wie <code>netflix.com</code>. Feste Domains haben Vorrang vor Mustern.</p>
+          <p><b>Platzhalter „*“</b> steht für beliebige Zeichen: <code>netflix.*</code> (alle Länderendungen), <code>ipv4-*.nflxvideo.net</code>, <code>*nflx*</code> (jeder Name mit „nflx“). Unterdomains zählen auch hier mit. <code>*.netflix.com</code> ist dasselbe wie <code>netflix.com</code>. Feste Domains haben Vorrang vor Mustern. Für Geräte ohne VPN steht „*“ nur für Zeichen ohne Punkte (Schutz des Proxys): <code>netflix.*</code> passt dort auf <code>netflix.de</code>, nicht auf <code>netflix.co.uk</code>; statt <code>*nflx*</code> besser <code>*nflx*.net</code>.</p>
         </Info></span
       >
       {#each sm.routes as row, i}

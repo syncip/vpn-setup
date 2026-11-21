@@ -518,9 +518,16 @@ um – deshalb nach dem Update die Config neu laden.
     `ipv4-*.nflxvideo.net`, `*nflx*` (jeder Name mit „nflx“). „*“ steht für beliebige Zeichen, Unterdomains zählen
     mit; `*.netflix.com` ist dasselbe wie `netflix.com`. Feste Domains haben Vorrang vor Mustern. Wirkt im DNS, in
     den Ziel-Regeln (Firewall), bei VLESS (Xray, als regulärer Ausdruck), Hysteria2 und im nginx-Proxy.
-  - **Geräte ohne VPN – wer darf den Proxy nutzen?** Freigegebene Adressen (auch wenn nur DoH/DoT an ist) und jede
-    Adresse, die gerade per SmartDNS die Serveradresse bekommen hat (6 Stunden, IPv6 je /64) – so klappt es auch über
-    DoH/DoT mit der Kennung von unterwegs. Die IPv6 des Servers bekommt nur, wer auch über IPv6 fragt; sonst würde
+    Für **Geräte ohne VPN** (Antwort mit der Serveradresse und Proxy) steht „*“ nur für Zeichen innerhalb eines
+    Namensteils, also ohne Punkte: `netflix.*` passt auf `netflix.de` und `www.netflix.de`, nicht aber auf
+    `netflix.co.uk` oder `netflix.boese-domain.com` – sonst ließe sich der Proxy über ein Muster zu fremden Servern
+    öffnen. `*nflx*` wird dort zu `*nflx*.net` o. ä.
+  - **Geräte ohne VPN – wer darf den Proxy nutzen?** Freigegebene Adressen (auch wenn nur DoH/DoT an ist) und – mit
+    der Einstellung „Proxy-Freigabe über SmartDNS-Antworten“ (Vorgabe an, Schalter auf der SmartDNS-Seite) – jede
+    Adresse, die per SmartDNS die Serveradresse bekommen hat: nur für genau diesen Namen und 30 Minuten, jede neue
+    Antwort verlängert das (IPv6 je /64). So klappt es auch über DoH/DoT mit der Kennung von unterwegs. Wer die
+    Kennung kennt, kann damit den Proxy für die SmartDNS-Domains des Geräts nutzen; ohne den Schalter dürfen nur
+    freigegebene Adressen und VPN-Geräte. Die IPv6 des Servers bekommt nur, wer auch über IPv6 fragt; sonst würde
     das Gerät über eine unbekannte IPv6-Adresse kommen. Abgewiesene Verbindungen stehen mit Grund auf der
     SmartDNS-Seite („Zuletzt abgewiesen“).
   - **Statistik je Profil** (Zeile auf jeder Profilkarte, Knopf „Statistik“): Anfragen und Geräte der letzten

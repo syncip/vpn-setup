@@ -104,6 +104,7 @@ var settingDefaults = map[string]string{
 	"dns_ext_rate":        "20",       // DNS von außen über UDP: Anfragen je Sekunde und Absender, 0 = unbegrenzt
 	"dns_ext_burst":       "60",       // … kurzzeitig bis zu so vielen
 	"dns_ext_any":         "1",        // ANY-Anfragen von außen über UDP ablehnen
+	"dns_smart_grant":     "1",        // SmartDNS-Proxy: wer per SmartDNS die Serveradresse bekam, darf ihn für diesen Namen nutzen
 	"dns_resolver":        "upstream", // upstream (öffentliche DNS-Server) | unbound (selbst auflösen)
 	"dns_candidates":      "",         // Server für Speedtest/automatische Wahl, leer = eingebaute Liste
 	"dns_auto":            "0",        // schnellste DNS-Server regelmäßig selbst wählen
@@ -405,7 +406,7 @@ func (e *Engine) applyNginx(snap *Snapshot) error {
 		}
 		sni := "." + d
 		if proto.IsDomainPattern(d) { // Muster als regulärer Ausdruck (nginx: „~“)
-			sni = "\"~" + proto.DomainPatternRegexp(d) + "\""
+			sni = "\"~" + proto.DomainPatternRegexpLabel(d) + "\""
 		}
 		wild[pub] = append(wild[pub], proto.SNIRoute{Port: pub, SNI: sni, Backend: smartAddr})
 	}
