@@ -66,6 +66,8 @@ type smartStatOut struct {
 	Up        int64           `json:"up"`
 	Down      int64           `json:"down"`
 	Proxy     int64           `json:"proxy"`
+	PUp       int64           `json:"proxy_up"`
+	PDown     int64           `json:"proxy_down"`
 	Conns     int64           `json:"conns"`
 	Devices24 int             `json:"devices24"` // Geräte, die in 24 h gefragt haben
 	Hours     []smartHourOut  `json:"hours"`     // die letzten 7 Tage, jede Stunde
@@ -116,7 +118,7 @@ func (a *API) smartStats(w http.ResponseWriter, r *http.Request) {
 				Names: map[string]*engine.SmartCount{}, Devices: map[int64]*engine.SmartCount{}, Hours: map[int64]*engine.SmartCount{}}
 		}
 		row := smartStatOut{ID: p.ID, Name: p.Name, Enabled: p.Enabled, Since: st.Since, Last: st.Last, Queries: st.Queries,
-			Up: st.Up, Down: st.Down, Proxy: st.Proxy, Conns: st.Conns, Unused: []string{}}
+			Up: st.Up, Down: st.Down, Proxy: st.Proxy, PUp: st.PUp, PDown: st.PDown, Conns: st.Conns, Unused: []string{}}
 		for h := nowH - 7*24 + 1; h <= nowH; h++ {
 			pt := smartHourOut{T: h * 3600}
 			if c := st.Hours[h]; c != nil {

@@ -45,7 +45,7 @@ func TestUnboundGroups(t *testing.T) {
 	us := saveObj(t, e, &store.Object{Kind: "group", Name: "USA", Enabled: true, Data: store.M{"slot": 2, "exits": []int64{ex.ID}, "on_fail": "block", "dns": "127.0.0.1"}})
 	saveObj(t, e, &store.Object{Kind: "dnsprofile", Name: "Standard", Enabled: true, Data: store.M{"assign": []string{"global"}}})
 	saveObj(t, e, &store.Object{Kind: "smartdns", Name: "Streaming", Enabled: true, Data: store.M{"assign": []string{"global"},
-		"routes": []any{map[string]any{"group": us.ID, "domains": []string{"netflix.com"}}}}})
+		"routes": []any{map[string]any{"group": us.ID, "domains": []string{"*.netflix.com"}}}}})
 	if err := e.Apply(); err != nil {
 		t.Fatal(err)
 	}

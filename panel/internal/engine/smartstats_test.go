@@ -19,9 +19,9 @@ func TestSmartStatsCounters(t *testing.T) {
 	e.smartCounters(js(150, 1600), now)
 	e.smartCounters(js(10, 20), now) // Tabelle neu angelegt → zählt ganz
 	e.smartProxied(rid, "netflix.com", -3, -1, "")
-	e.smartProxied(rid, "netflix.com", -3, 5000, "")
+	e.smartProxyBytes(rid, "netflix.com", -3, 1000, 4000)
 	st := e.SmartStats()[7]
-	if st == nil || st.Up != 160 || st.Down != 1620 || st.Proxy != 5000 || st.Conns != 1 || st.Routes[1].Bytes != 160+1620+5000 ||
+	if st == nil || st.Up != 160 || st.Down != 1620 || st.Proxy != 5000 || st.PUp != 1000 || st.PDown != 4000 || st.Conns != 1 || st.Routes[1].Bytes != 160+1620+5000 ||
 		st.Devices[-3].Conns != 1 || st.Domains["netflix.com"].Bytes != 5000 {
 		t.Fatalf("Zähler: %+v", st)
 	}

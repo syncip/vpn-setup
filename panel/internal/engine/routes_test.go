@@ -94,7 +94,7 @@ func TestRoutes(t *testing.T) {
 		return saveObj(t, e, &store.Object{Kind: "route", Enabled: true, Data: d})
 	}
 	// global: Netflix über US; Anna: alles über NL; Annas TV: eine Bank direkt, eine Liste über US
-	rGlobal := route("global", 0, us.ID, store.M{"match": "targets", "domains": []string{"netflix.com", "disney*.*"}, "nets": []string{"203.0.113.0/24"}})
+	rGlobal := route("global", 0, us.ID, store.M{"match": "targets", "domains": []string{"netflix.com", "*.netflix.com", "disney*.*"}, "nets": []string{"203.0.113.0/24"}})
 	rAnna := route("user", anna.ID, nl.ID, nil)
 	rTVBank := route("peer", annaTV.ID, 0, store.M{"match": "targets", "domains": []string{"bank.example"}})
 	rTVList := route("peer", annaTV.ID, us.ID, store.M{"match": "targets", "lists": []int64{tl.ID}})
@@ -185,7 +185,7 @@ func TestRoutes(t *testing.T) {
 
 	// Xray: Anna alles über NL (IPv6 gesperrt), Ben Netflix über US
 	xr, _ := dry.ReadFile("/usr/local/etc/xray/config.json")
-	for _, want := range []string{`"tag": "g` + id64(nl.ID) + `"`, `"mark": 50331648`, `"domainStrategy": "UseIPv4"`, `"domain:netflix.com"`, `"regexp:^(.+\\.)?disney.*\\..*$"`,
+	for _, want := range []string{`"tag": "g` + id64(nl.ID) + `"`, `"mark": 50331648`, `"domainStrategy": "UseIPv4"`, `"full:netflix.com"`, `"regexp:^.*\\.netflix\\.com$"`, `"regexp:^disney.*\\..*$"`,
 		`"203.0.113.0/24"`, `"::/0"`, `"domainStrategy": "IPOnDemand"`, `"p` + id64(annaVL.ID) + `"`, `"p` + id64(benVL.ID) + `"`} {
 		if !strings.Contains(string(xr), want) {
 			t.Errorf("Xray ohne %s", want)
@@ -193,12 +193,12 @@ func TestRoutes(t *testing.T) {
 	}
 	// Hysteria2: nur globale/Server-Regeln; Gruppe hat noch keinen aktiven Ausgang gemeldet → an ex gebunden oder gesperrt
 	hc, _ := os.ReadFile(filepath.Join(dry.Root, "etc/hysteria", "hy"+id64(hy.ID)+".yaml"))
-	for _, want := range []string{`(suffix:netflix.com)`, `(disney*.*)`, `(*.disney*.*)`, `(203.0.113.0/24)`, `"direct(all)"`} {
+	for _, want := range []string{`(netflix.com)`, `(*.netflix.com)`, `(disney*.*)`, `(203.0.113.0/24)`, `"direct(all)"`} {
 		if !strings.Contains(string(hc), want) {
 			t.Errorf("Hysteria2 ohne %s:\n%s", want, hc)
 		}
 	}
-	if !strings.Contains(string(hc), `"bindDevice": "ex`+id64(ex.ID)+`"`) && !strings.Contains(string(hc), `"reject(suffix:netflix.com)"`) {
+	if !strings.Contains(string(hc), `"bindDevice": "ex`+id64(ex.ID)+`"`) && !strings.Contains(string(hc), `"reject(netflix.com)"`) {
 		t.Errorf("Hysteria2: weder gebunden noch gesperrt:\n%s", hc)
 	}
 
@@ -238,7 +238,7 @@ func TestParseRouteDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, " ") != "bbc.co.uk netflix.com nflxvideo.net www.example.org" {
+	if strings.Join(got, " ") != "*.nflxvideo.net bbc.co.uk netflix.com www.example.org" {
 		t.Fatalf("%v", got)
 	}
 	for _, bad := range []string{"localhost", "a b", "exa$mple.com", "-x.com", "1.2.3.4/24"} {
@@ -246,8 +246,9 @@ func TestParseRouteDomains(t *testing.T) {
 			t.Errorf("%q: Fehler erwartet", bad)
 		}
 	}
-	if !proto.DomainMatch([]string{"netflix.com"}, "www.netflix.com") || proto.DomainMatch([]string{"netflix.com"}, "notnetflix.com") {
-		t.Error("Unterdomain-Vergleich falsch")
+	if !proto.DomainMatch([]string{"netflix.com"}, "netflix.com") || proto.DomainMatch([]string{"netflix.com"}, "www.netflix.com") ||
+		!proto.DomainMatch([]string{"*.netflix.com"}, "www.netflix.com") || proto.DomainMatch([]string{"*.netflix.com"}, "notnetflix.com") {
+		t.Error("Domain-Vergleich falsch")
 	}
 	if _, err := ParseRouteNets("10.0.0.0/8\n2001:db8::/32"); err == nil {
 		t.Error("IPv6-Netz in Regel angenommen")
@@ -353,7 +354,7 @@ func TestDNSGate(t *testing.T) {
 	dnsUpstream = []string{up.LocalAddr().String()}
 	defer func() { dnsUpstream = oldUp }()
 
-	pol := &proto.Policy{Key: "x", Rules: []proto.RouteRule{{ID: 7, Domains: []string{"netflix.com"}, Group: 0}, {ID: 8, All: true, Group: 0}}}
+	pol := &proto.Policy{Key: "x", Rules: []proto.RouteRule{{ID: 7, Domains: []string{"netflix.com", "*.netflix.com"}, Group: 0}, {ID: 8, All: true, Group: 0}}}
 	e.dns.configure(e, []srcPolicy{{pfx: netip.MustParsePrefix("10.8.0.2/32"), pol: pol, peer: 1, dns: true, doh: true},
 		{pfx: netip.MustParsePrefix("fd42::2/128"), pol: pol, peer: 1, dns: true, doh: true}}, &routing{})
 	query := func(name string, typ dnsmessage.Type) []byte {

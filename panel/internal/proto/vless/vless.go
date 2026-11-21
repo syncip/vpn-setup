@@ -351,8 +351,8 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 			if len(r.Domains) > 0 {
 				ds := make([]string, len(r.Domains))
 				for i, d := range r.Domains {
-					ds[i] = "domain:" + d
-					if proto.IsDomainPattern(d) { // Muster (netflix.*) als regulärer Ausdruck
+					ds[i] = "full:" + d           // nur genau dieser Name
+					if proto.IsDomainPattern(d) { // *.netflix.com, netflix.* als regulärer Ausdruck
 						ds[i] = "regexp:" + proto.DomainPatternRegexp(d)
 					}
 				}

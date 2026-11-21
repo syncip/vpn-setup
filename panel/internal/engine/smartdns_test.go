@@ -10,8 +10,8 @@ import (
 // SmartDNS-Profile wirken zusammen; die genauere Zuordnung gewinnt je Domain.
 func TestSmartFor(t *testing.T) {
 	ps := []*SmartProfile{
-		{ID: 1, Assign: []string{"global"}, Routes: []SmartRoute{{Group: 10, Domains: []string{"netflix.com", "bbc.co.uk"}}}},
-		{ID: 2, Assign: []string{"user:5"}, Routes: []SmartRoute{{Group: 20, Domains: []string{"netflix.com"}}}},
+		{ID: 1, Assign: []string{"global"}, Routes: []SmartRoute{{Group: 10, Domains: []string{"*.netflix.com", "bbc.co.uk"}}}},
+		{ID: 2, Assign: []string{"user:5"}, Routes: []SmartRoute{{Group: 20, Domains: []string{"*.netflix.com"}}}},
 		{ID: 3, Assign: []string{"ext", "client:7"}, Routes: []SmartRoute{{Group: 30, Domains: []string{"disneyplus.com"}}}},
 		{ID: 4, Assign: []string{"vpn"}, Routes: []SmartRoute{{Group: 40, Domains: []string{"hulu.com"}}}},
 	}

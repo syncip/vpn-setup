@@ -107,18 +107,23 @@ var domainRe = regexp.MustCompile(`^([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a
 
 var patternRe = regexp.MustCompile(`^[a-z0-9_*-]+(\.[a-z0-9_*-]+)*$`)
 
-// CleanDomainEntry: Eintrag für SmartDNS und Ziel-Regeln – eine Domain (samt Unterdomains) oder ein
-// Muster mit „*“ (netflix.*, ipv4-*.nflxvideo.net, *nflx*). „*.“ am Anfang fällt weg, weil
-// Unterdomains ohnehin dazugehören. Leer = ungültig.
+// CleanDomainEntry: Eintrag für SmartDNS und Ziel-Regeln – genau eine Domain (netflix.com) oder ein
+// Muster mit „*“ (*.netflix.com für alle Unterdomains, netflix.*, ipv4-*.nflxvideo.net). Leer = ungültig.
 func CleanDomainEntry(d string) string {
 	d = strings.ToLower(strings.TrimSpace(d))
 	for strings.Contains(d, "**") {
 		d = strings.ReplaceAll(d, "**", "*")
 	}
-	d = strings.TrimPrefix(d, "*.")
 	d = strings.Trim(d, ".")
 	if len(d) > 253 || d == "" {
 		return ""
+	}
+	if strings.HasPrefix(d, "*.") && !proto.IsDomainPattern(d[2:]) {
+		// *.netflix.com: dahinter muss eine echte Domain stehen (nicht *.com)
+		if !domainRe.MatchString(d[2:]) {
+			return ""
+		}
+		return d
 	}
 	if !proto.IsDomainPattern(d) {
 		if !domainRe.MatchString(d) {
@@ -142,9 +147,9 @@ func CleanDomainEntry(d string) string {
 	return d
 }
 
-// ParseRouteDomains: Domains (eine pro Zeile bzw. durch Komma/Leerzeichen getrennt). „*.“ und
-// führende Punkte fallen weg – Unterdomains sind immer eingeschlossen; „*“ an anderer Stelle macht
-// den Eintrag zum Muster (CleanDomainEntry). Auch ganze Adressen
+// ParseRouteDomains: Domains (eine pro Zeile bzw. durch Komma/Leerzeichen getrennt). Ein Eintrag gilt
+// nur für genau diesen Namen; „*“ macht ihn zum Muster, *.domain steht für alle Unterdomains
+// (CleanDomainEntry). Auch ganze Adressen
 // (https://www.beispiel.de/seite) werden auf den Namen gekürzt.
 func ParseRouteDomains(text string) ([]string, error) {
 	seen := map[string]bool{}

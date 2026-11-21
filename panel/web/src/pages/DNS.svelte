@@ -255,12 +255,14 @@
       const row = sm.routes.find((r) => r.group === g?.id) || sm.routes.find((r) => !r.domains.trim());
       if (row) {
         const have = new Set(row.domains.split(/\s+/).filter(Boolean));
-        row.domains = [...have, ...preset[1].split('\n').filter((x) => !have.has(x))].join('\n');
+        row.domains = [...have, ...presetDomains(preset).filter((x) => !have.has(x))].join('\n');
         return;
       }
     }
-    sm.routes = [...sm.routes, { group: g?.id || 0, domains: preset ? preset[1] : '' }];
+    sm.routes = [...sm.routes, { group: g?.id || 0, domains: preset ? presetDomains(preset).join('\n') : '' }];
   }
+  // Vorlage: jede Domain genau und mit allen Unterdomains (*.)
+  const presetDomains = (preset) => preset[1].split('\n').flatMap((x) => [x, '*.' + x]);
   const smartCount = (t) => (t || '').split(/[\s,;]+/).filter((x) => x && !x.startsWith('#')).length;
   async function saveSmart() {
     const body = $state.snapshot(sm);
@@ -1490,11 +1492,11 @@
     <div class="field">
       <span class="label"
         >Domains und Ausgangsgruppe <Info title="SmartDNS" wide>
-          <p>Die eingetragenen Domains (samt Unterdomains) laufen über die gewählte Ausgangsgruppe – z. B. Netflix über „USA“, der Rest bleibt direkt.</p>
+          <p>Die eingetragenen Domains laufen über die gewählte Ausgangsgruppe – z. B. Netflix über „USA“, der Rest bleibt direkt.</p>
           <p><b>VPN-Geräte</b> (WireGuard, OpenVPN, VLESS; Hysteria2 nur über Server-Regeln): wirkt wie eine Ziel-Regel – der Verkehr zu diesen Zielen geht über den Ausgang der Gruppe, alle Ports.</p>
           <p><b>Geräte ohne VPN</b> (Fernseher, Konsole, DoH/DoT): Der Panel-DNS antwortet für diese Namen mit der Adresse des Servers; der Server reicht die HTTPS-Verbindung (Port 443) anhand des Namens über die Gruppe weiter. Die Verschlüsselung bleibt Ende-zu-Ende. Unverschlüsseltes HTTP (Port 80) und UDP/QUIC laufen so nicht – Apps weichen dann auf HTTPS aus.</p>
           <p>Damit Streamingdienste den Standort glauben, braucht es meist mehrere Domains (Anmeldung, Videoserver). Die Vorlagen enthalten die üblichen.</p>
-          <p><b>Platzhalter „*“</b> steht für beliebige Zeichen: <code>netflix.*</code> (alle Länderendungen), <code>ipv4-*.nflxvideo.net</code>, <code>*nflx*</code> (jeder Name mit „nflx“). Unterdomains zählen auch hier mit. <code>*.netflix.com</code> ist dasselbe wie <code>netflix.com</code>. Feste Domains haben Vorrang vor Mustern. Für Geräte ohne VPN steht „*“ nur für Zeichen ohne Punkte (Schutz des Proxys): <code>netflix.*</code> passt dort auf <code>netflix.de</code>, nicht auf <code>netflix.co.uk</code>; statt <code>*nflx*</code> besser <code>*nflx*.net</code>.</p>
+          <p><b>Genau oder mit Platzhalter:</b> <code>netflix.com</code> gilt nur für genau diesen Namen. Platzhalter wirken nur, wo ein „*“ steht: <code>*.netflix.com</code> (alle Unterdomains, nicht netflix.com selbst – daher meist beides eintragen), <code>netflix.*</code> (andere Endungen), <code>ipv4-*.nflxvideo.net</code>. Feste Einträge haben Vorrang vor Mustern. Für Geräte ohne VPN steht „*“ nur für Zeichen ohne Punkte (Schutz des Proxys) – außer <code>*.</code> am Anfang: <code>netflix.*</code> passt dort auf <code>netflix.de</code>, nicht auf <code>netflix.co.uk</code>. Die Vorlagen tragen jede Domain samt <code>*.</code>-Eintrag ein.</p>
         </Info></span
       >
       {#each sm.routes as row, i}
@@ -1508,8 +1510,8 @@
             <span class="grow"></span>
             <button class="btn sm icon ghost danger" title="Entfernen" onclick={() => (sm.routes = sm.routes.filter((_, j) => j !== i))}><Icon name="trash" size={14} /></button>
           </div>
-          <textarea class="input mono" rows="4" bind:value={row.domains} placeholder={'netflix.com\nnflxvideo.net\nnetflix.*'}></textarea>
-          {#if (row.domains || '').includes('*')}<div class="tiny muted">„*“ = beliebige Zeichen, z. B. <code>netflix.*</code> oder <code>ipv4-*.nflxvideo.net</code> – Unterdomains zählen mit.</div>{/if}
+          <textarea class="input mono" rows="4" bind:value={row.domains} placeholder={'netflix.com\n*.netflix.com\n*.nflxvideo.net'}></textarea>
+          <div class="tiny muted">Ein Eintrag gilt nur für genau diesen Namen – Unterdomains mit <code>*.netflix.com</code>, andere Endungen mit <code>netflix.*</code>.</div>
         </div>
       {/each}
       <div class="row wrap" style="gap:6px">

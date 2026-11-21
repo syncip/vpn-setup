@@ -52,13 +52,32 @@ func (p *Policy) AllGroup() (group int64, ok bool) {
 	return 0, false
 }
 
-// DomainMatch: passt host (kleingeschrieben) auf eine der Domains (gleich oder Unterdomain)?
-// Einträge mit „*“ sind Muster (DomainPatternMatch).
+// DomainMatch: passt host (kleingeschrieben) auf einen der Einträge? Ein Eintrag ohne „*“ gilt nur
+// für genau diesen Namen; Platzhalter nur, wo ein „*“ steht: *.netflix.com (alle Unterdomains,
+// nicht netflix.com selbst), netflix.* oder ipv4-*.nflxvideo.net (DomainPatternMatch).
 func DomainMatch(domains []string, host string) bool {
 	host = strings.TrimSuffix(host, ".")
 	for _, d := range domains {
 		if IsDomainPattern(d) {
 			if DomainPatternMatch(d, host) {
+				return true
+			}
+			continue
+		}
+		if host == d {
+			return true
+		}
+	}
+	return false
+}
+
+// DomainSuffixMatch: passt host auf eine der Domains (gleich oder Unterdomain)? Für feste interne
+// Listen (DoH-Anbieter, nie zwischenspeichern), nicht für Einträge in SmartDNS und Ziel-Regeln.
+func DomainSuffixMatch(domains []string, host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	for _, d := range domains {
+		if IsDomainPattern(d) {
+			if DomainPatternMatch(d, host) || DomainPatternMatch("*."+d, host) {
 				return true
 			}
 			continue
@@ -70,29 +89,40 @@ func DomainMatch(domains []string, host string) bool {
 	return false
 }
 
-// IsDomainPattern: Eintrag mit Platzhalter „*“ (z. B. netflix.*, ipv4-*.nflxvideo.net, *nflx*).
+// IsDomainPattern: Eintrag mit Platzhalter „*“ (z. B. *.netflix.com, netflix.*, ipv4-*.nflxvideo.net).
 func IsDomainPattern(d string) bool { return strings.IndexByte(d, '*') >= 0 }
 
-// DomainPatternMatch: passt host – oder eine übergeordnete Domain davon – auf das Muster?
-// „*“ steht für beliebig viele Zeichen (auch Punkte). Wie bei normalen Einträgen zählen
-// Unterdomains mit: netflix.* passt auf netflix.de und www.netflix.de.
-func DomainPatternMatch(pattern, host string) bool { return domainPattern(pattern, host, false) }
+// SubdomainsOf: bei „*.domain“ (ohne weiteren Platzhalter) die Domain, sonst "".
+func SubdomainsOf(d string) string {
+	if strings.HasPrefix(d, "*.") && !IsDomainPattern(d[2:]) {
+		return d[2:]
+	}
+	return ""
+}
+
+// DomainPatternMatch: passt host auf das Muster? „*“ steht für beliebig viele Zeichen (auch Punkte).
+// Unterdomains zählen nur mit, wenn das Muster es sagt: netflix.* passt auf netflix.de, nicht auf
+// www.netflix.de (dafür *.netflix.*).
+func DomainPatternMatch(pattern, host string) bool { return globMatch(pattern, host, false) }
 
 // DomainPatternMatchLabel: wie DomainPatternMatch, aber „*“ steht nur für Zeichen innerhalb eines
-// Namensteils (keine Punkte): netflix.* passt auf netflix.de und www.netflix.de, nicht aber auf
-// netflix.boese-domain.com. Für den SmartDNS-Proxy, damit ein Muster ihn nicht zu fremden Servern öffnet.
-func DomainPatternMatchLabel(pattern, host string) bool { return domainPattern(pattern, host, true) }
-
-func domainPattern(pattern, host string, label bool) bool {
+// Namensteils (keine Punkte) – außer „*.“ am Anfang, das für beliebig viele Unterdomains steht.
+// netflix.* passt auf netflix.de, nicht aber auf netflix.boese-domain.com. Für Geräte ohne VPN und den
+// SmartDNS-Proxy, damit ein Muster ihn nicht zu fremden Servern öffnet.
+func DomainPatternMatchLabel(pattern, host string) bool {
+	if !strings.HasPrefix(pattern, "*.") {
+		return globMatch(pattern, host, true)
+	}
+	rest := pattern[2:]
 	for n := host; ; {
-		if globMatch(pattern, n, label) {
-			return true
-		}
 		i := strings.IndexByte(n, '.')
 		if i < 0 {
 			return false
 		}
 		n = n[i+1:]
+		if globMatch(rest, n, true) {
+			return true
+		}
 	}
 }
 
@@ -122,14 +152,18 @@ func globMatch(p, s string, label bool) bool {
 	return pi == len(p)
 }
 
-// DomainPatternRegexp: Muster als regulärer Ausdruck (für Xray), samt Unterdomains.
+// DomainPatternRegexp: Muster als regulärer Ausdruck (für Xray), „*“ auch über Punkte.
 func DomainPatternRegexp(pattern string) string {
-	return `^(.+\.)?` + strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `.*`) + `$`
+	return `^` + strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `.*`) + `$`
 }
 
-// DomainPatternRegexpLabel: wie DomainPatternRegexp, „*“ aber ohne Punkte (nginx → SmartDNS-Proxy).
+// DomainPatternRegexpLabel: wie DomainPatternMatchLabel als regulärer Ausdruck (nginx → SmartDNS-Proxy).
 func DomainPatternRegexpLabel(pattern string) string {
-	return `^(.+\.)?` + strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `[^.]*`) + `$`
+	pre := `^`
+	if strings.HasPrefix(pattern, "*.") {
+		pre, pattern = `^.+\.`, pattern[2:]
+	}
+	return pre + strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `[^.]*`) + `$`
 }
 
 // MatchDomain: erste Regel, deren Domains auf host passen (für die DNS-Auswertung). Eine

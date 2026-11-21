@@ -670,7 +670,7 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 	// 2. Verschlüsseltes DNS ginge am Panel vorbei. Browser schalten es von selbst ein, wenn der
 	// eingetragene DNS-Server es anbietet (z. B. 1.1.1.1) – finden sie den DoH-Server nicht, nehmen
 	// sie normales DNS.
-	if s.doh && proto.DomainMatch(dohHosts, name) {
+	if s.doh && proto.DomainSuffixMatch(dohHosts, name) {
 		return done(dnsReply(hdr, q, dnsmessage.RCodeNameError, nil, 60), "blocked", "verschlüsseltes DNS (DoH) – würde am Panel vorbeigehen", 0)
 	}
 
@@ -751,7 +751,7 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 
 	key := fmt.Sprintf("%d|%d|%d|%s", group, q.Type, q.Class, name)
 	g.mu.Lock()
-	noCache := proto.DomainMatch(g.nocache, name)
+	noCache := proto.DomainSuffixMatch(g.nocache, name)
 	g.mu.Unlock()
 	var resp []byte
 	cached := false
@@ -1380,7 +1380,7 @@ func (e *Engine) CheckDNS(peerID int64, name string) DNSCheck {
 	} else if detail != "" {
 		out.Detail = detail
 	}
-	if s.doh && proto.DomainMatch(dohHosts, name) {
+	if s.doh && proto.DomainSuffixMatch(dohHosts, name) {
 		out.Action, out.Detail = "blocked", "verschlüsseltes DNS (DoH) – würde am Panel vorbeigehen"
 		return out
 	}

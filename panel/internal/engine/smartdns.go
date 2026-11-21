@@ -87,17 +87,21 @@ func (s *smartSet) matchMode(name string, label bool) (group int64, domain strin
 	if s == nil || len(s.m) == 0 {
 		return 0, "", false
 	}
+	// genau dieser Name, dann *.domain (nächste übergeordnete Domain zuerst)
+	if g, ok := s.m[name]; ok {
+		return g, name, true
+	}
 	for n := name; ; {
-		if g, ok := s.m[n]; ok {
-			return g, n, true
-		}
 		i := strings.IndexByte(n, '.')
 		if i < 0 {
 			break
 		}
 		n = n[i+1:]
+		if g, ok := s.m["*."+n]; ok {
+			return g, "*." + n, true
+		}
 	}
-	// Muster erst nach den festen Domains – die sind genauer
+	// übrige Muster erst danach – feste Einträge sind genauer
 	for _, p := range s.pats {
 		if (label && proto.DomainPatternMatchLabel(p, name)) || (!label && proto.DomainPatternMatch(p, name)) {
 			return s.m[p], p, true
@@ -142,7 +146,7 @@ func smartFor(profiles []*SmartProfile, scopes ...string) *smartSet {
 					if _, taken := s.m[d]; !taken {
 						s.m[d] = r.Group
 						s.rid[d] = SmartRuleID(p.ID, i)
-						if proto.IsDomainPattern(d) {
+						if proto.IsDomainPattern(d) && proto.SubdomainsOf(d) == "" {
 							s.pats = append(s.pats, d)
 						}
 						doms = append(doms, d)
@@ -258,4 +262,64 @@ func (e *Engine) SmartUsing(groupID int64) []string {
 		}
 	}
 	return out
+}
+
+// MigrateExactDomains: Bis v0.32.0 galt ein Eintrag wie netflix.com auch für alle Unterdomains, seit
+// v0.33.0 nur noch für genau diesen Namen (Unterdomains: *.netflix.com). Damit bestehende
+// SmartDNS-Profile und Ziel-Regeln weiter genauso wirken, bekommt jeder Eintrag ohne „*“ einmalig
+// sein *.-Gegenstück dazu.
+func (e *Engine) MigrateExactDomains() {
+	const flag = "state:domains_exact"
+	if e.St.GetSetting(flag, "") == "1" {
+		return
+	}
+	expand := func(v any) ([]any, bool) {
+		ds := strs(v)
+		have := map[string]bool{}
+		for _, d := range ds {
+			have[d] = true
+		}
+		var out []any
+		changed := false
+		for _, d := range ds {
+			out = append(out, d)
+			if !proto.IsDomainPattern(d) && !have["*."+d] {
+				have["*."+d] = true
+				out = append(out, "*."+d)
+				changed = true
+			}
+		}
+		return out, changed
+	}
+	n := 0
+	if objs, err := e.St.Objects("smartdns"); err == nil {
+		for _, o := range objs {
+			arr, _ := o.Data["routes"].([]any)
+			changed := false
+			for _, x := range arr {
+				if m, _ := x.(map[string]any); m != nil {
+					if ds, ch := expand(m["domains"]); ch {
+						m["domains"], changed = ds, true
+					}
+				}
+			}
+			if changed && e.St.SaveObject(o) == nil {
+				n++
+			}
+		}
+	}
+	if objs, err := e.St.Objects("route"); err == nil {
+		for _, o := range objs {
+			if ds, ch := expand(o.Data["domains"]); ch {
+				o.Data["domains"] = ds
+				if e.St.SaveObject(o) == nil {
+					n++
+				}
+			}
+		}
+	}
+	if n > 0 {
+		e.Log("info", fmt.Sprintf("Domains gelten jetzt genau: %d SmartDNS-Profile bzw. Ziel-Regeln um *.-Einträge ergänzt, damit sie weiter für Unterdomains wirken", n))
+	}
+	_ = e.St.SetSetting(flag, "1")
 }

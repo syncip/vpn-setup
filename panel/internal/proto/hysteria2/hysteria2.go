@@ -531,11 +531,8 @@ func applyServer(env *proto.Env, sb *proto.ServerBundle) error {
 				break
 			}
 			for _, d := range r.Domains {
-				if proto.IsDomainPattern(d) { // Muster: Hysterias Platzhalter, auch für Unterdomains
-					acl = append(acl, fmt.Sprintf("%s(%s)", t, d), fmt.Sprintf("%s(*.%s)", t, d))
-					continue
-				}
-				acl = append(acl, fmt.Sprintf("%s(suffix:%s)", t, d))
+				// genau der Name bzw. Hysterias Platzhalter (*.netflix.com, netflix.*)
+				acl = append(acl, fmt.Sprintf("%s(%s)", t, d))
 			}
 			for _, n := range r.Nets {
 				acl = append(acl, fmt.Sprintf("%s(%s)", t, n))

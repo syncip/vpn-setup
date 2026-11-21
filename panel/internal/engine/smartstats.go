@@ -40,9 +40,11 @@ type SmartProfStat struct {
 	Since   int64                  `json:"since"`
 	Queries int64                  `json:"queries"`
 	Last    int64                  `json:"last"`
-	Up      int64                  `json:"up"`    // VPN: zu den Zielen
-	Down    int64                  `json:"down"`  // VPN: von den Zielen
-	Proxy   int64                  `json:"proxy"` // ohne VPN über den Proxy
+	Up      int64                  `json:"up"`         // VPN: zu den Zielen
+	Down    int64                  `json:"down"`       // VPN: von den Zielen
+	Proxy   int64                  `json:"proxy"`      // ohne VPN über den Proxy (beide Richtungen)
+	PUp     int64                  `json:"proxy_up"`   // ohne VPN: vom Gerät zum Ziel
+	PDown   int64                  `json:"proxy_down"` // ohne VPN: vom Ziel zum Gerät
 	Conns   int64                  `json:"conns"`
 	Routes  map[int]*SmartCount    `json:"routes"`  // Weiterleitung (Index im Profil)
 	Domains map[string]*SmartCount `json:"domains"` // Eintrag im Profil
@@ -186,6 +188,25 @@ func (e *Engine) smartProxied(rid int64, dom string, dev int64, n int64, errText
 	}
 	st.Last = now
 	s.dirty = true
+}
+
+// smartProxyBytes: Verkehr eines Geräts ohne VPN über den Proxy, getrennt nach Richtung (läuft während
+// der Verbindung alle paar Sekunden ein, nicht erst am Ende).
+func (e *Engine) smartProxyBytes(rid int64, dom string, dev int64, up, down int64) {
+	if up+down <= 0 {
+		return
+	}
+	e.smartProxied(rid, dom, dev, up+down, "")
+	profile, _, ok := splitSmartRule(rid)
+	if !ok {
+		return
+	}
+	s := &e.smartStat
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.stat(e, profile, time.Now().Unix())
+	st.PUp += up
+	st.PDown += down
 }
 
 // smartTraffic: Verkehr einer Weiterleitung laut nft-Zählern (Zuwachs seit dem letzten Lesen).
@@ -428,6 +449,8 @@ func (e *Engine) DemoSmartStats() {
 					st.Queries += int64(q)
 					if dev < 0 {
 						st.Proxy += bytes
+						st.PUp += bytes / 15
+						st.PDown += bytes - bytes/15
 						st.Conns += int64(q)
 						cnt(st.Devices, dev).Conns += int64(q)
 					} else {

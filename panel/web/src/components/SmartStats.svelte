@@ -58,8 +58,8 @@
 <div class="kpis">
   <div class="kpi"><span class="k">{fmtNum(s.q24)}</span><span class="l">Anfragen in 24 h</span><span class="t">{fmtNum(s.queries)} seit {date(s.since)}</span></div>
   <div class="kpi">
-    <span class="k">{bytes(traffic)}</span><span class="l">Verkehr gesamt <Info title="Wie wird gezählt?" text="VPN-Geräte (WireGuard, OpenVPN): Zähler der Firewall je Weiterleitung – zu den Zielen (↑) und Antworten von den Zieladressen (↓). Geräte ohne VPN: genau über den SmartDNS-Proxy. VLESS und Hysteria2 leiten selbst; dort zählen nur die Anfragen." /></span>
-    <span class="t">VPN ↑ {bytes(s.up)} ↓ {bytes(s.down)} · ohne VPN {bytes(s.proxy)}</span>
+    <span class="k">{bytes(traffic)}</span><span class="l">Verkehr gesamt <Info title="Wie wird gezählt?" text="VPN-Geräte (WireGuard, OpenVPN): Zähler der Firewall je Weiterleitung – zu den Zielen (↑) und Antworten von den Zieladressen (↓). Geräte ohne VPN: genau über den SmartDNS-Proxy, getrennt nach Richtung und laufend alle 5 Sekunden (auch während ein Stream noch läuft). VLESS und Hysteria2 leiten selbst; dort zählen nur die Anfragen." /></span>
+    <span class="t">VPN ↑ {bytes(s.up)} ↓ {bytes(s.down)} · ohne VPN {#if (s.proxy_up || 0) + (s.proxy_down || 0)}↑ {bytes(s.proxy_up)} ↓ {bytes(s.proxy_down)}{:else}{bytes(s.proxy)}{/if}</span>
   </div>
   <div class="kpi"><span class="k">{fmtNum(s.devices24)}</span><span class="l">Geräte in 24 h</span><span class="t">{fmtNum(s.devices.length)} insgesamt (Auswahl)</span></div>
   <div class="kpi">

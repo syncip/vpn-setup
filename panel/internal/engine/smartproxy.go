@@ -231,12 +231,42 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	}
 	p.active.Add(1)
 	defer p.active.Add(-1)
-	done := make(chan int64, 2)
-	go func() { n, _ := io.Copy(up, br); _ = closeWrite(up); done <- n }()
-	go func() { n, _ := io.Copy(c, up); _ = closeWrite(c); done <- n }()
-	n := <-done + <-done
-	p.bytes.Add(n)
-	note(n, "")
+	// Verkehr laufend zählen (alle 5 Sekunden), nicht erst am Ende – Streams halten ihre Verbindung lange
+	var nUp, nDown atomic.Int64
+	flush := func() {
+		u, d := nUp.Swap(0), nDown.Swap(0)
+		if u+d > 0 {
+			p.bytes.Add(u + d)
+			p.note(dom, gid, u+d, "")
+			e.smartProxyBytes(rid, dom, s.peer, u, d)
+		}
+	}
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(countWriter{up, &nUp}, br); _ = closeWrite(up); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(countWriter{c, &nDown}, up); _ = closeWrite(c); done <- struct{}{} }()
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for open := 2; open > 0; {
+		select {
+		case <-done:
+			open--
+		case <-tick.C:
+			flush()
+		}
+	}
+	flush()
+}
+
+// countWriter zählt geschriebene Bytes mit.
+type countWriter struct {
+	w io.Writer
+	n *atomic.Int64
+}
+
+func (c countWriter) Write(b []byte) (int, error) {
+	n, err := c.w.Write(b)
+	c.n.Add(int64(n))
+	return n, err
 }
 
 func closeWrite(c net.Conn) error {

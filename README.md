@@ -282,7 +282,7 @@ Unter **Routing → Ziel-Regeln** legen **Ziel-Regeln** fest, welcher Verkehr ü
 Ausgangsgruppe läuft – nicht nur beim Proxy, sondern auch bei WireGuard, OpenVPN, VLESS und Hysteria2.
 
 - **Gilt für:** alle, einen Server, einen Nutzer (alle seine Zugänge) oder ein einzelnes Gerät.
-- **Ziele:** alles – oder nur bestimmte Ziele: Domains (samt Unterdomains), IPv4-Netze und Ziellisten
+- **Ziele:** alles – oder nur bestimmte Ziele: Domains (genau, Unterdomains mit `*.domain`), IPv4-Netze und Ziellisten
   (IP-Listen der Art „Zielliste“, auch als Online-Liste).
 - **Über:** eine Ausgangsgruppe – oder „direkt über den Server“ als Ausnahme (z. B. alles über Mullvad,
   nur die Bank direkt).
@@ -514,14 +514,17 @@ um – deshalb nach dem Update die Config neu laden.
   Geräte ohne VPN (Port 53, DoH, DoT) bekommen für diese Namen die Adresse des Servers; nginx reicht die
   HTTPS-Verbindungen anhand des Namens an das Panel, das sie über die Gruppe weiterleitet (Ende-zu-Ende
   verschlüsselt, nur Port 443 – HTTP und QUIC nicht). Die SmartDNS-Seite zeigt Verbindungen und Fehler je Domain.
-  - **Platzhalter „*“** in SmartDNS-Profilen und Ziel-Regeln: `netflix.*` (alle Länderendungen),
-    `ipv4-*.nflxvideo.net`, `*nflx*` (jeder Name mit „nflx“). „*“ steht für beliebige Zeichen, Unterdomains zählen
-    mit; `*.netflix.com` ist dasselbe wie `netflix.com`. Feste Domains haben Vorrang vor Mustern. Wirkt im DNS, in
-    den Ziel-Regeln (Firewall), bei VLESS (Xray, als regulärer Ausdruck), Hysteria2 und im nginx-Proxy.
+  - **Genau oder mit Platzhalter** (SmartDNS-Profile und Ziel-Regeln, seit v0.33.0): `netflix.com` gilt nur für
+    genau diesen Namen. Platzhalter wirken nur, wo ein „*“ steht: `*.netflix.com` (alle Unterdomains, nicht
+    netflix.com selbst – meist trägt man beides ein), `netflix.*` (andere Endungen), `ipv4-*.nflxvideo.net`.
+    „*“ steht für beliebige Zeichen. Feste Einträge haben Vorrang vor `*.domain`, das vor anderen Mustern. Wirkt im
+    DNS, in den Ziel-Regeln (Firewall), bei VLESS (Xray: `full:` bzw. regulärer Ausdruck), Hysteria2 und im
+    nginx-Proxy. Die Vorlagen tragen jede Domain samt `*.`-Eintrag ein. **Beim Update** bekommt jeder bestehende
+    Eintrag ohne „*“ einmalig sein `*.`-Gegenstück dazu – bisherige Profile und Regeln wirken also unverändert.
     Für **Geräte ohne VPN** (Antwort mit der Serveradresse und Proxy) steht „*“ nur für Zeichen innerhalb eines
-    Namensteils, also ohne Punkte: `netflix.*` passt auf `netflix.de` und `www.netflix.de`, nicht aber auf
+    Namensteils, also ohne Punkte – außer `*.` am Anfang: `netflix.*` passt auf `netflix.de`, nicht aber auf
     `netflix.co.uk` oder `netflix.boese-domain.com` – sonst ließe sich der Proxy über ein Muster zu fremden Servern
-    öffnen. `*nflx*` wird dort zu `*nflx*.net` o. ä.
+    öffnen.
   - **Geräte ohne VPN – wer darf den Proxy nutzen?** Freigegebene Adressen (auch wenn nur DoH/DoT an ist) und – mit
     der Einstellung „Proxy-Freigabe über SmartDNS-Antworten“ (Vorgabe an, Schalter auf der SmartDNS-Seite) – jede
     Adresse, die per SmartDNS die Serveradresse bekommen hat: nur für genau diesen Namen und 30 Minuten, jede neue
@@ -536,7 +539,7 @@ um – deshalb nach dem Update die Config neu laden.
     Domains des Profils mit Anfragen, Verkehr und Fehlern – auch solche, die noch nie gegriffen haben (Tippfehler?) –,
     die meistgefragten Namen und die aktivsten Geräte (mit Link zu „Was gilt?“). Gezählt werden A-Anfragen, die
     SmartDNS über eine Gruppe geleitet hat. Verkehr: VPN-Geräte (WireGuard, OpenVPN) über Zähler der Firewall je
-    Weiterleitung (zu den Zielen bzw. Antworten von den Zieladressen), Geräte ohne VPN genau über den Proxy; VLESS
+    Weiterleitung (zu den Zielen bzw. Antworten von den Zieladressen), Geräte ohne VPN genau über den Proxy (↑/↓ getrennt, laufend alle 5 Sekunden); VLESS
     und Hysteria2 leiten selbst, dort zählen nur die Anfragen. Gespeichert in `smartstats.json` im Datenordner
     (7 Tage Verlauf), je Profil oder für alle zurücksetzbar.
 - **Live** (DNS-Übersicht und Statistik → DNS): Anfragen je Sekunde der letzten 1–10 Minuten (beantwortet, Speicher, gesperrt),

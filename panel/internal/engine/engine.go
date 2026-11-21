@@ -404,8 +404,8 @@ func (e *Engine) applyNginx(snap *Snapshot) error {
 		if exact[d] || d == e.encDNSHost() {
 			continue
 		}
-		sni := "." + d
-		if proto.IsDomainPattern(d) { // Muster als regulärer Ausdruck (nginx: „~“)
+		sni := d                                                     // genau dieser Name; *.domain versteht nginx selbst (alle Unterdomains)
+		if proto.IsDomainPattern(d) && proto.SubdomainsOf(d) == "" { // Muster als regulärer Ausdruck (nginx: „~“)
 			sni = "\"~" + proto.DomainPatternRegexpLabel(d) + "\""
 		}
 		wild[pub] = append(wild[pub], proto.SNIRoute{Port: pub, SNI: sni, Backend: smartAddr})
