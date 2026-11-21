@@ -645,7 +645,7 @@
     const f = from ? groupById[from] : null;
     const ok = await confirmDialog({
       title: f ? `„${e.name}“ nach „${g.name}“ verschieben?` : `„${e.name}“ in „${g.name}“ aufnehmen?`,
-      text: `„${e.name}“ wird letzter Ausweich-Ausgang der Gruppe „${g.name}“${f ? ` und verlässt „${f.name}“` : ''}. Die Reihenfolge änderst du unter „Proxy & Ausgänge“ → Gruppen.`,
+      text: `„${e.name}“ wird letzter Ausweich-Ausgang der Gruppe „${g.name}“${f ? ` und verlässt „${f.name}“` : ''}. Die Reihenfolge änderst du unter „Routing“ → Gruppen.`,
       ok: f ? 'Verschieben' : 'Aufnehmen',
     });
     if (!ok) return;
@@ -674,11 +674,11 @@
       intent.via = t.kind === 'exit' ? t.id : 0;
       intent.group = t.kind === 'group' ? t.id : 0;
       intent.create = 'exit';
-      go('/proxy/exits');
+      go('/routing/exits');
     } else if (kind === 'group') {
       intent.exits = t.kind === 'exit' ? [t.id] : [];
       intent.create = 'group';
-      go('/proxy/groups');
+      go('/routing/groups');
     } else {
       intent.create = 'server';
       go('/servers');
@@ -947,7 +947,7 @@
     {#if hint}<span class="hint"><Icon name="info" size={13} /> {hint}</span>
     {:else}
       Klicken = Details · Server, Nutzer oder Gerät ziehen = Weg festlegen · „+“ am Ende eines gewählten Wegs = Stufe anhängen · Ausgang auf Ausgang = dahinter schalten (höchstens 3 Stufen)
-      {#if personalRules} · Außerdem {personalRules} {personalRules === 1 ? 'Regel' : 'Regeln'} für bestimmte Ziele einzelner Nutzer oder Geräte – <button class="linkbtn" onclick={() => go('/proxy/rules')}>Ziel-Regeln</button>{/if}
+      {#if personalRules} · Außerdem {personalRules} {personalRules === 1 ? 'Regel' : 'Regeln'} für bestimmte Ziele einzelner Nutzer oder Geräte – <button class="linkbtn" onclick={() => go('/routing/rules')}>Ziel-Regeln</button>{/if}
     {/if}
   </div>
 </div>
@@ -968,7 +968,7 @@
       <div class="help">{x.sr ? (x.sr.own ? 'Eigene Ziel-Regel dieses Servers.' : 'Folgt der Regel für alle – eine Änderung legt eine eigene Regel für diesen Server an.') : 'Keine Regel – direkt.'} Regeln für bestimmte Ziele, Nutzer und Geräte gehen vor.</div>
     </div>
     <div class="row wrap" style="margin-top:10px">
-      <button class="btn sm" onclick={() => go('/proxy/rules')}><Icon name="route" size={14} /> Ziel-Regeln</button>
+      <button class="btn sm" onclick={() => go('/routing/rules')}><Icon name="route" size={14} /> Ziel-Regeln</button>
       <button class="btn sm" onclick={() => go('/servers')}><Icon name="server" size={14} /> Server</button>
     </div>
   </div>
@@ -994,7 +994,7 @@
     <div class="row wrap" style="margin-top:10px">
       <button class="btn sm danger" onclick={() => removeOwn({ kind: x.kind, id: x.id })}><Icon name="trash" size={14} /> Eigenen Weg entfernen</button>
       {#if uid}<button class="btn sm" onclick={() => go(`/users/${uid}/peers`)}><Icon name="user" size={14} /> Nutzer öffnen</button>{/if}
-      <button class="btn sm" onclick={() => go('/proxy/rules')}><Icon name="route" size={14} /> Ziel-Regeln</button>
+      <button class="btn sm" onclick={() => go('/routing/rules')}><Icon name="route" size={14} /> Ziel-Regeln</button>
     </div>
   </div>
 {:else if selExit}

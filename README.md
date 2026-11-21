@@ -3,6 +3,41 @@
 WireGuard-Netze (Stern, Geräte mit Netzen dahinter), VLESS/Reality, Hysteria2 und OpenVPN mit Webinterface:
 Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
 
+## Oberfläche
+
+**Menü** (Seitenleiste, links): sieben Bereiche, jeder mit seinen Unterseiten.
+
+| Bereich | Unterseiten |
+|---|---|
+| **Übersicht** | Startseite mit Fenstern (frei anpassbar) |
+| **Nutzer** | Nutzer, Tarife |
+| **Server** | Server, WireGuard-Netze (Geräte, Sternkarte, Zugriffsmatrix), Zugriff zwischen Netzen |
+| **Routing** | Übersicht, Karte (Aufbau/Live), Ausgänge, Gruppen, Ziel-Regeln, IP-Listen, Proxy-Server |
+| **DNS** | Übersicht, Protokoll, Filterprofile, Blocklisten, Ohne VPN, Einstellungen |
+| **Statistik** | Verkehr, Live, Ausgänge, DNS |
+| **System** | Zustand, Updates, Ereignisse, Einstellungen, Mein Konto |
+
+- Die Seitenleiste lässt sich einklappen (Knopf oben); eingeklappt öffnen die Symbole die Unterseiten als
+  kleines Menü. Unten stehen CPU, RAM, Disk und der aktuelle Durchsatz, darunter Konto, **Dichte**
+  (normal/kompakt), hell/dunkel und Abmelden. Auf dem Handy öffnet ☰ das Menü.
+- Alte Adressen (Lesezeichen wie `#/proxy` oder `#/network`) leiten auf die neuen Seiten weiter.
+
+**Fenster anpassen:** Auf der Übersicht, den Statistik-Seiten und der Nutzer-Seite ordnet **Anpassen** die
+Fenster: verschieben (ziehen oder Pfeile), Breite (¼ ⅓ ½ ⅔ ganz), ausblenden und über **Fenster hinzufügen**
+weitere einblenden (z. B. verbundene Geräte, Ausgänge live, DNS live, Schnellaktionen, Updates).
+**Zurücksetzen** stellt die Vorgabe wieder her. Gespeichert wird je Admin auf dem Server.
+
+**Grafiken** (Verkehr, Live, Ausgänge, DNS) sind überall gleich aufgebaut und bedienbar:
+
+- **Zeitraum** über die Knöpfe oben (live: 2–30 Minuten, Verlauf: 24 Stunden bis 90 Tage).
+- **Zoom:** Bereich mit der Maus aufziehen, Strg+Mausrad, Knöpfe +/−; Umschalt+Ziehen verschiebt,
+  Doppelklick setzt zurück. Beim Verlauf lädt der Zoom feinere Daten nach.
+- **Anhalten** friert die Live-Anzeige ein, **Vergrößern** zeigt die Grafik groß.
+- **Menü (…):** Darstellung (Fläche, Linie, Balken), Einheit bit/s oder Byte/s, Höhe (S/M/L), Reihen ein-
+  und ausblenden, als **CSV** herunterladen, Einstellungen zurücksetzen.
+- Ein Klick auf einen Eintrag der Legende blendet die Reihe aus.
+- Die Einstellungen jeder Grafik werden je Admin gespeichert.
+
 ## Installation
 
 Läuft auf jedem Server mit **Debian 13**: VPS, eigene Hardware oder Container (z. B. Proxmox-LXC).
@@ -107,10 +142,11 @@ iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 1194 -j DNAT --to-destinat
 
 ## Proxy und Ausgänge (externe VPNs)
 
-Die Seite **Proxy & Ausgänge** hat Reiter: **Übersicht** (Ziel-Regeln → Gruppen → Ausgänge mit Zahlen,
-Störungen und dem aktiven Ausgang je Gruppe), **Ausgänge**, **Gruppen**, **Ziel-Regeln** und **Proxy-Server**.
+Der Bereich **Routing** hat die Unterseiten **Übersicht** (Ziel-Regeln → Gruppen → Ausgänge mit Zahlen,
+Störungen und dem aktiven Ausgang je Gruppe), **Karte**, **Ausgänge**, **Gruppen**, **Ziel-Regeln**, **IP-Listen** und
+**Proxy-Server**. Den Verkehr je Ausgang (Summe oder gestapelt je Ausgang) zeigt **Statistik → Ausgänge**.
 
-Menü **Proxy & Ausgänge**: SOCKS5- und HTTP-Proxy mit Benutzername und Passwort, z. B. für Fernseher und Apps.
+**Routing → Proxy-Server**: SOCKS5- und HTTP-Proxy mit Benutzername und Passwort, z. B. für Fernseher und Apps.
 Der Verkehr läuft direkt über den Server oder über eine **Ausgangsgruppe** – also über externe
 VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anbieter) hochgeladen wird.
 
@@ -142,7 +178,7 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   Ausgänge hintereinander, keine Kreise; die MTU wird je Stufe um 80 verkleinert. Vorgänger werden
   mit verbunden (auch in Bereitschaft). Ist ein Vorgänger abgeschaltet oder weg, bleibt der Ausgang
   getrennt – nie direkt. Ein Ausgang, über den ein anderer läuft, lässt sich erst löschen, wenn dort
-  „Verbunden über“ geändert ist. **Netzwerk → Karte:** Vorgänger (und Ausgänge ohne Gruppe) stehen
+  „Verbunden über“ geändert ist. **Routing → Karte:** Vorgänger (und Ausgänge ohne Gruppe) stehen
   in einer eigenen Spalte zwischen den Gruppen und dem Internet; einen Ausgang auf einen anderen
   ziehen = darüber verbinden, auf „Direkt“ ziehen = ohne Vorgänger.
 - **Tor-Ausgang** („Ausgang anlegen“ → *Tor*): eine eigene Tor-Instanz je Ausgang (Dienst
@@ -181,7 +217,7 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
 - **Zustand** je Ausgang als farbiges Abzeichen: *Verbunden*, *Instabil*, *Gestört*, *Getrennt*,
   *Bereitschaft*, *Wird geprüft*, *Abgeschaltet* (Limit), *Deaktiviert*, dazu *gedrosselt*; darunter
   der Grund. Gruppen zeigen ihre Mitglieder genauso.
-- **Live-Anzeige** (Übersicht und Ausgänge): Durchsatz je Ausgang und Gruppe alle 2 Sekunden,
+- **Live-Anzeige** (Routing-Übersicht, Ausgänge, Statistik → Live): Durchsatz je Ausgang und Gruppe alle 2 Sekunden,
   Diagramm der letzten 2–30 Minuten (gesammelt, solange die Seite offen ist); Zeile anklicken = nur
   dieser Ausgang bzw. diese Gruppe.
 - **Gruppen:** mehrere Ausgänge in fester Reihenfolge. Alle 30 Sekunden prüft der Server jeden Ausgang
@@ -221,7 +257,7 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   Adressen des Servers selbst und Port 25 (Mailversand) gesperrt. Eine Sperre nach Fehlversuchen gibt es
   nicht (sie traf vor allem die eigenen Geräte); die zufälligen 24-stelligen Passwörter sind nicht zu erraten.
 - Abgelehnte Verbindungen und Anmeldungen stehen mit Grund unter **Ereignisse** (Übersicht bzw.
-  Einstellungen → Ereignisse): IP-Liste, falsches Passwort, Zugang gesperrt, Verbindungsgrenze, Ziel nicht
+  System → Ereignisse): IP-Liste, falsches Passwort, Zugang gesperrt, Verbindungsgrenze, Ziel nicht
   erreichbar (mit Fehler, auch bei 502/SOCKS-Fehlern) … – je Adresse und Grund höchstens alle 10 Minuten.
   Der Grund steht auch im Text der Fehlerantwort (`curl -v`).
 - Ziele: **direkt** über den Server IPv4 und IPv6, über eine **Ausgangsgruppe** nur IPv4. Die Zugangsdaten
@@ -242,7 +278,7 @@ OpenVPN-Ausgänge brauchen wie der OpenVPN-Server `/dev/net/tun` (siehe oben).
 
 ## Ziel-Regeln: Verkehr über Ausgänge leiten (alle Protokolle)
 
-Auf der Seite **Proxy & Ausgänge** legen **Ziel-Regeln** fest, welcher Verkehr über welche
+Unter **Routing → Ziel-Regeln** legen **Ziel-Regeln** fest, welcher Verkehr über welche
 Ausgangsgruppe läuft – nicht nur beim Proxy, sondern auch bei WireGuard, OpenVPN, VLESS und Hysteria2.
 
 - **Gilt für:** alle, einen Server, einen Nutzer (alle seine Zugänge) oder ein einzelnes Gerät.
@@ -279,9 +315,9 @@ So wird es je Protokoll umgesetzt:
 - **Drosselung:** Tempo-Limits von VLESS-Nutzern wirken nicht für Verkehr, der über Ausgänge läuft.
 - Fällt die Gruppe aus, gilt ihre Einstellung „sperren“ oder „direkt“ wie beim Proxy.
 
-## Netzwerk-Übersicht
+## Netzwerk-Karte
 
-Menü **Netzwerk** → **Übersicht** hat zwei Ansichten: **Aufbau** (Vorgabe) und **Live**.
+**Routing → Karte** hat zwei Ansichten: **Aufbau** (Vorgabe) und **Live**.
 
 ### Aufbau
 
@@ -335,13 +371,13 @@ dann die Server, die Ausgänge („Direkt“ und die Ausgangsgruppen mit ihren A
   darüber; auf „Direkt“ ziehen → wieder direkt über den Server. Dahinter steht eine „alles“-Ziel-Regel der
   jeweiligen Ebene (ersetzt die bisherige; Regeln für bestimmte Ziele bleiben). Erbt das Gerät sonst eine
   weiter gefasste Regel, entsteht beim Ziehen auf „Direkt“ eine Ausnahme. Alles lässt sich danach unter
-  „Proxy & Ausgänge“ → Ziel-Regeln ansehen und ändern. Hysteria2-Geräte lassen sich nicht einzeln zuweisen
+  „Routing“ → Ziel-Regeln ansehen und ändern. Hysteria2-Geräte lassen sich nicht einzeln zuweisen
   (den Server ziehen).
 - **Ziehen – Zugriff:** Ein WireGuard-Gerät auf ein anderes Gerät desselben Servers ziehen erlaubt den
   Zugriff bzw. entzieht ihn, wenn er schon besteht. Der Zugriff des Geräts wird dabei auf „Ausgewählte
   Geräte“ umgestellt (bisher erreichbare Geräte bleiben erreichbar). Vor jeder Änderung fragt die Seite nach.
 
-Die Reiter daneben zeigen je WireGuard-Server die Geräte (nach Nutzer gruppiert, mit Filter und Suche),
+**Server → WireGuard-Netze** zeigt je WireGuard-Server die Geräte (nach Nutzer gruppiert, mit Filter und Suche),
 die Sternkarte und die Zugriffsmatrix (bis 40 Geräte).
 
 ### Zugriff zwischen Netzen
@@ -385,6 +421,15 @@ um – deshalb nach dem Update die Config neu laden.
 - **Blocklisten:** eigene Domains und/oder Online-Listen mit Aktualisierung (Hosts-Dateien,
   Adblock-Format `||domain^` mit Ausnahmen `@@`, eine Domain pro Zeile; bis 1 Mio. Einträge). Bekannte
   Listen (HaGeZi, OISD, AdGuard, StevenBlack) lassen sich mit einem Klick hinzufügen.
+- **Blocklisten durchsuchen und anpassen:** „Durchsuchen“ an jeder Liste zeigt ihren Inhalt seitenweise
+  mit Suche und Filter (eigene Einträge, Online-Liste, Ausnahmen `@@`, herausgenommen).
+  - **Herausnehmen:** Eine Domain der Online-Liste wird nicht mehr gesperrt und bleibt auch nach dem
+    Neuladen der Liste draußen; „Wieder aufnehmen“ macht das rückgängig.
+  - Eigene Einträge lassen sich ergänzen (mehrere auf einmal) und löschen.
+  - **Bekannte Listen** lassen sich vor dem Hinzufügen ansehen (die Vorschau lädt die Liste einmal und
+    hält sie 15 Minuten im Speicher).
+  - **In allen Listen suchen** zeigt, welche Liste eine Domain enthält – auch wenn sie nur über einen
+    übergeordneten Namen erfasst ist (z. B. `ads.example.com` über `example.com`).
 - **Verschlüsseltes DNS sperren** (je Profil, für Geräte mit Domain-Regeln immer): DNS über TLS
   (Port 853), DoH per Adresse (1.1.1.1, 8.8.8.8, 9.9.9.9 …) und die Namen bekannter DoH-Server werden
   abgewiesen. Browser in der Einstellung „automatisch“ fallen auf normales DNS zurück; ist dagegen ein
@@ -453,14 +498,14 @@ um – deshalb nach dem Update die Config neu laden.
   Geräte ohne VPN (Port 53, DoH, DoT) bekommen für diese Namen die Adresse des Servers; nginx reicht die
   HTTPS-Verbindungen anhand des Namens an das Panel, das sie über die Gruppe weiterleitet (Ende-zu-Ende
   verschlüsselt, nur Port 443 – HTTP und QUIC nicht). Die Seite zeigt Verbindungen und Fehler je Domain.
-- **Live** (Übersicht): Anfragen je Sekunde der letzten 1–10 Minuten (beantwortet, Speicher, gesperrt),
+- **Live** (DNS-Übersicht und Statistik → DNS): Anfragen je Sekunde der letzten 1–10 Minuten (beantwortet, Speicher, gesperrt),
   aktive Geräte, Antwortzeit und welcher DNS-Server bzw. Unbound wie oft geantwortet hat. Das Protokoll
   vermerkt den antwortenden Server je Anfrage; die Übersicht zeigt die Anteile je Zeitraum.
 - VLESS, Hysteria2 und Proxy nutzen den Panel-DNS (noch) nicht.
 
 ## IP-Listen
 
-Menü **IP-Listen**: Sperrlisten (diese Adressen nie) und Freigabelisten (nur diese Adressen), je Liste
+**Routing → IP-Listen**: Sperrlisten (diese Adressen nie) und Freigabelisten (nur diese Adressen), je Liste
 für alle Dienste oder ausgewählte Server. Gibt es für einen Dienst eine Freigabeliste, kommen nur deren
 Adressen hinein; Sperrlisten gelten zusätzlich. Dazu **Ziellisten** für Ziel-Regeln (siehe oben).
 
@@ -490,7 +535,7 @@ Bei fehlgeschlagenen Anmeldungen kann man die Adresse direkt sperren (Schloss ne
 Gesperrt wird immer nur die **Adresse**, nie der Benutzername – wer den Namen kennt, kann den Admin also
 nicht aussperren. Vorgabe: 8 Fehlversuche (auch falsche 2FA-Codes) in 15 Minuten sperren die Adresse für
 15 Minuten; kommt sie innerhalb eines Tages wieder in die Sperre, verdoppelt sich die Dauer (höchstens
-24 Stunden). IPv4 zählt je Adresse, IPv6 je /64-Netz. Alles einstellbar unter **Einstellungen → Sicherheit →
+24 Stunden). IPv4 zählt je Adresse, IPv6 je /64-Netz. Alles einstellbar unter **System → Einstellungen → Sicherheit →
 Login-Sperre**, dazu eine Liste von Adressen/Netzen, die nie gesperrt werden (z. B. das eigene Zuhause oder
 100.64.0.0/10 für Tailscale). Unter **Gesperrte Adressen** stehen die aktiven Sperren mit Grund und Ende;
 dort lässt sich entsperren und eine Adresse oder ein Netz von Hand sperren (1 Stunde bis dauerhaft – die
@@ -498,12 +543,12 @@ eigene Adresse lehnt das Panel ab). Jede Sperre landet im Ereignisprotokoll und 
 
 ## Updates
 
-**Zustand → Updates** zeigt neue Versionen von Panel, Xray, Hysteria2 und den Debian-Paketen
+**System → Updates** zeigt neue Versionen von Panel, Xray, Hysteria2 und den Debian-Paketen
 (Sicherheitsupdates und vom Panel genutzte Pakete hervorgehoben); die Übersicht hat dazu ein Fenster und
 „Braucht Aufmerksamkeit“ meldet Sicherheitsupdates. **Installiert wird nichts automatisch:** Panel wie unten
 beschrieben, Xray und Hysteria2 mit `bash vpn-setup.sh`, Debian-Pakete mit `apt full-upgrade` im Container.
 Geprüft wird alle 12 Stunden (Panel, Xray und Hysteria2 per GitHub, abschaltbar mit der Update-Prüfung unter
-Einstellungen → Allgemein); die Debian-Prüfung ist eine Simulation (`apt-get -s dist-upgrade`) und sieht, was
+System → Einstellungen → Allgemein); die Debian-Prüfung ist eine Simulation (`apt-get -s dist-upgrade`) und sieht, was
 in den Paketlisten steht. Die Listen aktualisiert Debian meist selbst; sonst „Paketlisten aktualisieren“ oder
 den Schalter für tägliches `apt-get update`. Das WireGuard-Kernelmodul liegt auf dem Proxmox-Host und lässt
 sich aus dem Container nicht prüfen.
@@ -516,7 +561,7 @@ Pfeiltasten wählen, Enter öffnet.
 
 ## Benachrichtigungen per E-Mail
 
-Unter **Einstellungen → Benachrichtigungen** den Mailserver eintragen (SMTP mit STARTTLS oder TLS,
+Unter **System → Einstellungen → Benachrichtigungen** den Mailserver eintragen (SMTP mit STARTTLS oder TLS,
 Benutzer, Absender) und eine Testmail schicken. Das Passwort des Mailservers liegt nur in
 `/etc/vpn/secrets.env` (`SMTP_PASSWORD`, Rechte 600) und wird nie angezeigt. Empfänger ist jeder
 Administrator, der in „Mein Konto“ eine Adresse einträgt und Benachrichtigungen einschaltet.
@@ -532,7 +577,7 @@ SPF, DKIM und einen DMARC-Eintrag setzen (z. B. TXT `_dmarc` = `v=DMARC1; p=none
 
 ## Alarme
 
-**Einstellungen → Alarme**: eigene Regeln, die jede Minute geprüft und per E-Mail gemeldet werden –
+**System → Einstellungen → Alarme**: eigene Regeln, die jede Minute geprüft und per E-Mail gemeldet werden –
 unabhängig von den Anlässen unter „Benachrichtigungen“ (nur der Mailserver muss eingerichtet sein).
 
 - **Arten:** CPU, Arbeitsspeicher, Speicherplatz (%), Durchsatz (Mbit/s), Fehler beim Anwenden,
@@ -550,7 +595,7 @@ unabhängig von den Anlässen unter „Benachrichtigungen“ (nur der Mailserver
 
 ## Sicherung
 
-**Einstellungen → Sicherung** lädt eine verschlüsselte Sicherung herunter (`.vpnbak`: AES-256-GCM, Schlüssel
+**System → Einstellungen → Sicherung** lädt eine verschlüsselte Sicherung herunter (`.vpnbak`: AES-256-GCM, Schlüssel
 per scrypt aus einem eigenen Passwort mit mindestens 12 Zeichen). Enthalten sind die Datenbank (als
 konsistente Kopie im laufenden Betrieb), `secrets.env`, `panel.env`, Zertifikate und die übrigen Dateien
 aus `/etc/vpn` – nicht enthalten sind neu ladbare Listen und Zwischenspeicher. DNS- und Anmeldeprotokoll
@@ -571,7 +616,7 @@ Panel-Version lässt sich erst nach einem Update einspielen.
 
 ## Portweiterleitungen prüfen
 
-**Zustand → Portweiterleitungen auf dem Host → Prüfen** testet jeden Port der aktiven Server
+**System → Zustand → Portweiterleitungen auf dem Host → Prüfen** testet jeden Port der aktiven Server
 von außen, ohne fremden Prüfdienst: Das Panel spricht die eigene öffentliche Adresse (aus der Server-Adresse)
 über einen verbundenen **Ausgang** an. Die Pakete kommen so wie von einem fremden Gerät aus dem Internet und
 laufen über die Weiterleitung auf dem Host. Eine vorübergehende nft-Tabelle `vpnpanel_portcheck` zählt nur

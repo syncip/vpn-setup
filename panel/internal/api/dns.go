@@ -28,16 +28,17 @@ type dnsProfileRow struct {
 }
 
 type dnsListRow struct {
-	ID      int64              `json:"id"`
-	Name    string             `json:"name"`
-	Enabled bool               `json:"enabled"`
-	Mode    string             `json:"mode"`
-	URL     string             `json:"url"`
-	Refresh int                `json:"refresh"`
-	Entries []string           `json:"entries"`
-	Total   int                `json:"total"`
-	Status  *engine.ListStatus `json:"status,omitempty"`
-	UsedBy  []string           `json:"used_by"`
+	ID       int64              `json:"id"`
+	Name     string             `json:"name"`
+	Enabled  bool               `json:"enabled"`
+	Mode     string             `json:"mode"`
+	URL      string             `json:"url"`
+	Refresh  int                `json:"refresh"`
+	Entries  []string           `json:"entries"`
+	Total    int                `json:"total"`
+	Excluded int                `json:"excluded"` // aus der Online-Liste herausgenommen
+	Status   *engine.ListStatus `json:"status,omitempty"`
+	UsedBy   []string           `json:"used_by"`
 }
 
 // dnsPresets: bekannte Blocklisten zum schnellen Hinzufügen.
@@ -71,7 +72,7 @@ func (a *API) dnsOverview(w http.ResponseWriter, r *http.Request) {
 		for _, o := range objs {
 			l := engine.DNSListFrom(o)
 			row := &dnsListRow{ID: l.ID, Name: l.Name, Enabled: l.Enabled, Mode: l.Mode, URL: l.URL, Refresh: l.Refresh,
-				Entries: orStrings(l.Entries), UsedBy: orStrings(a.E.ProfilesUsing(l.ID))}
+				Entries: orStrings(l.Entries), Excluded: len(l.Excluded), UsedBy: orStrings(a.E.ProfilesUsing(l.ID))}
 			st, total := a.E.DNSListInfo(o)
 			row.Total = total
 			if l.URL != "" {
@@ -573,6 +574,79 @@ func (a *API) refreshDNSList(w http.ResponseWriter, r *http.Request) {
 	a.E.RequestApply()
 	st := a.E.DNSListStatus(id)
 	writeJSON(w, map[string]any{"ok": true, "count": st.Count, "skipped": st.Skipped})
+}
+
+// ---------- Blocklisten durchsuchen und anpassen ----------
+
+// clipQ kürzt einen Suchtext.
+func clipQ(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+func (a *API) dnsListEntries(w http.ResponseWriter, r *http.Request) {
+	o, err := a.St.Object("dnslist", pathID(r))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	q := r.URL.Query()
+	src := q.Get("src")
+	switch src {
+	case "", "own", "url", "allow", "excluded":
+	default:
+		src = ""
+	}
+	writeJSON(w, a.E.DNSListEntries(o, clipQ(q.Get("q"), 100), src, int(qInt(r, "offset")), int(qInt(r, "limit"))))
+}
+
+func (a *API) editDNSListEntries(w http.ResponseWriter, r *http.Request) {
+	o, err := a.St.Object("dnslist", pathID(r))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	var in struct {
+		Add     []string `json:"add"`
+		Remove  []string `json:"remove"`
+		Restore []string `json:"restore"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		fail(w, err)
+		return
+	}
+	if len(in.Add)+len(in.Remove)+len(in.Restore) > 5000 {
+		errJSON(w, http.StatusBadRequest, "Höchstens 5000 Domains auf einmal")
+		return
+	}
+	msg, err := a.E.EditDNSList(o, in.Add, in.Remove, in.Restore)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "msg": msg})
+}
+
+func (a *API) searchDNSLists(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"lists": a.E.SearchDNSLists(clipQ(r.URL.Query().Get("q"), 100))})
+}
+
+// previewDNSPreset: bekannte Liste vor dem Hinzufügen ansehen (nur die Listen aus dnsPresets).
+func (a *API) previewDNSPreset(w http.ResponseWriter, r *http.Request) {
+	i, err := strconv.Atoi(r.PathValue("i"))
+	if err != nil || i < 0 || i >= len(dnsPresets) {
+		errJSON(w, http.StatusNotFound, "Unbekannte Liste")
+		return
+	}
+	p, err := a.E.PreviewDNSList(dnsPresets[i]["url"], clipQ(r.URL.Query().Get("q"), 100), int(qInt(r, "offset")), int(qInt(r, "limit")))
+	if err != nil {
+		errJSON(w, http.StatusBadGateway, "Liste nicht ladbar: "+err.Error())
+		return
+	}
+	writeJSON(w, p)
 }
 
 // ---------- Protokoll & Auswertung ----------

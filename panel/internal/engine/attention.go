@@ -25,11 +25,11 @@ var attentionRank = map[string]int{"error": 0, "warn": 1, "info": 2}
 func errLink(key string) string {
 	switch k, _, _ := strings.Cut(key, ":"); k {
 	case "exit", "group", "exits":
-		return "#/proxy/exits"
+		return "#/routing/exits"
 	case "dns", "dnslog", "dnslist", "unbound", "encdns", "acme":
 		return "#/dns/settings"
 	}
-	return "#/health/events"
+	return "#/system/events"
 }
 
 func (e *Engine) Attention(version string) []AttentionItem {
@@ -38,7 +38,7 @@ func (e *Engine) Attention(version string) []AttentionItem {
 		out = append(out, AttentionItem{Key: key, Level: level, Title: title, Detail: detail, Link: link})
 	}
 	if e.Setting("server_host") == "" {
-		add("server_host", "error", "Server-Adresse fehlt", "Sie steht in allen Links und Konfigurationen.", "#/settings/general")
+		add("server_host", "error", "Server-Adresse fehlt", "Sie steht in allen Links und Konfigurationen.", "#/system/settings/general")
 	}
 	for k, v := range e.Errors() {
 		first, rest, _ := strings.Cut(v, "\n")
@@ -54,9 +54,9 @@ func (e *Engine) Attention(version string) []AttentionItem {
 			id := strconv.FormatInt(x.ID, 10)
 			switch l := lim[x.ID]; l.Status {
 			case "blocked":
-				add("exitlimit:"+id, "warn", "Ausgang „"+x.Name+"“ abgeschaltet", l.Reason+" – bis zum nächsten Zeitraum. Limit erhöhen oder Verbrauch zurücksetzen.", "#/proxy/exits")
+				add("exitlimit:"+id, "warn", "Ausgang „"+x.Name+"“ abgeschaltet", l.Reason+" – bis zum nächsten Zeitraum. Limit erhöhen oder Verbrauch zurücksetzen.", "#/routing/exits")
 			case "throttled":
-				add("exitlimit:"+id, "info", "Ausgang „"+x.Name+"“ gedrosselt", l.Reason, "#/proxy/exits")
+				add("exitlimit:"+id, "info", "Ausgang „"+x.Name+"“ gedrosselt", l.Reason, "#/routing/exits")
 			}
 		}
 		for _, x := range xs {
@@ -64,7 +64,7 @@ func (e *Engine) Attention(version string) []AttentionItem {
 			if !x.Enabled || !ok || s.Error == "" || (s.Standby && !s.Connected) {
 				continue
 			}
-			add("exit:"+strconv.FormatInt(x.ID, 10), "warn", "Ausgang „"+x.Name+"“ gestört", clip(s.Error, 160), "#/proxy/exits")
+			add("exit:"+strconv.FormatInt(x.ID, 10), "warn", "Ausgang „"+x.Name+"“ gestört", clip(s.Error, 160), "#/routing/exits")
 		}
 		if groups, err := e.St.Objects("group"); err == nil {
 			glim := e.savedGroupLimits()
@@ -72,9 +72,9 @@ func (e *Engine) Attention(version string) []AttentionItem {
 				id := strconv.FormatInt(g.ID, 10)
 				switch l := glim[g.ID]; l.Status {
 				case "blocked":
-					add("grouplimit:"+id, "warn", "Gruppe „"+g.Name+"“ gesperrt", l.Reason+" – bis zum nächsten Zeitraum. Limit erhöhen oder Verbrauch zurücksetzen.", "#/proxy/groups")
+					add("grouplimit:"+id, "warn", "Gruppe „"+g.Name+"“ gesperrt", l.Reason+" – bis zum nächsten Zeitraum. Limit erhöhen oder Verbrauch zurücksetzen.", "#/routing/groups")
 				case "throttled":
-					add("grouplimit:"+id, "info", "Gruppe „"+g.Name+"“ gedrosselt", l.Reason, "#/proxy/groups")
+					add("grouplimit:"+id, "info", "Gruppe „"+g.Name+"“ gedrosselt", l.Reason, "#/routing/groups")
 				}
 			}
 			for _, g := range groups {
@@ -83,7 +83,7 @@ func (e *Engine) Attention(version string) []AttentionItem {
 					continue
 				}
 				what := map[string]string{"blocked": "Verkehr gesperrt", "direct": "Verkehr läuft direkt über den Server"}[st.State]
-				add("group:"+strconv.FormatInt(g.ID, 10), "warn", "Ausgangsgruppe „"+g.Name+"“ ohne Ausgang", what+" – "+clip(st.Reason, 140), "#/proxy/groups")
+				add("group:"+strconv.FormatInt(g.ID, 10), "warn", "Ausgangsgruppe „"+g.Name+"“ ohne Ausgang", what+" – "+clip(st.Reason, 140), "#/routing/groups")
 			}
 		}
 	}
@@ -120,7 +120,7 @@ func (e *Engine) Attention(version string) []AttentionItem {
 			if it.State == "arrived" {
 				title = fmt.Sprintf("%s %d (%s): kein Dienst nimmt an", strings.ToUpper(it.Proto), it.Port.Port, it.Server)
 			}
-			add(fmt.Sprintf("port:%s:%d", it.Proto, it.Port.Port), "warn", title, it.Detail, "#/health")
+			add(fmt.Sprintf("port:%s:%d", it.Proto, it.Port.Port), "warn", title, it.Detail, "#/system")
 		}
 	}
 
@@ -129,16 +129,16 @@ func (e *Engine) Attention(version string) []AttentionItem {
 	hs := e.host.last
 	e.host.mu.Unlock()
 	if hs.DiskSize > 0 && float64(hs.DiskUsed) > 0.9*float64(hs.DiskSize) {
-		add("disk", "warn", fmt.Sprintf("Datenträger zu %d %% belegt", int(100*float64(hs.DiskUsed)/float64(hs.DiskSize))), "Protokolle und Verlauf brauchen Platz – Aufbewahrung verkürzen oder Platz schaffen.", "#/health")
+		add("disk", "warn", fmt.Sprintf("Datenträger zu %d %% belegt", int(100*float64(hs.DiskUsed)/float64(hs.DiskSize))), "Protokolle und Verlauf brauchen Platz – Aufbewahrung verkürzen oder Platz schaffen.", "#/system")
 	}
 	if hs.MemTotal > 0 && float64(hs.MemUsed) > 0.92*float64(hs.MemTotal) {
-		add("mem", "warn", fmt.Sprintf("Arbeitsspeicher zu %d %% belegt", int(100*float64(hs.MemUsed)/float64(hs.MemTotal))), "", "#/health")
+		add("mem", "warn", fmt.Sprintf("Arbeitsspeicher zu %d %% belegt", int(100*float64(hs.MemUsed)/float64(hs.MemTotal))), "", "#/system")
 	}
 
 	// bestehende Alarme (Einstellungen → Alarme)
 	for _, a := range e.ActiveAlarms() {
 		if a.Active && !alarmOwnAttention[a.Type] {
-			add("alarm:"+a.Key, "warn", a.Title, clip(a.Detail, 300), "#/settings/alarms")
+			add("alarm:"+a.Key, "warn", a.Title, clip(a.Detail, 300), "#/system/settings/alarms")
 		}
 	}
 
@@ -149,9 +149,9 @@ func (e *Engine) Attention(version string) []AttentionItem {
 	pk := e.pkg.state
 	e.pkg.mu.Unlock()
 	if pk.Security > 0 {
-		add("pkg:security", "warn", fmt.Sprintf("%d Sicherheitsupdates für Debian-Pakete", pk.Security), fmt.Sprintf("Insgesamt %d Paket-Updates – einspielen mit „apt full-upgrade“ im Container.", pk.Debian), "#/health/updates")
+		add("pkg:security", "warn", fmt.Sprintf("%d Sicherheitsupdates für Debian-Pakete", pk.Security), fmt.Sprintf("Insgesamt %d Paket-Updates – einspielen mit „apt full-upgrade“ im Container.", pk.Debian), "#/system/updates")
 	} else if pk.Debian > 0 {
-		add("pkg:debian", "info", fmt.Sprintf("%d Debian-Pakete aktualisierbar", pk.Debian), "Einspielen mit „apt full-upgrade“ im Container.", "#/health/updates")
+		add("pkg:debian", "info", fmt.Sprintf("%d Debian-Pakete aktualisierbar", pk.Debian), "Einspielen mit „apt full-upgrade“ im Container.", "#/system/updates")
 	}
 	if pk.Binaries > 0 {
 		var names []string
@@ -160,7 +160,7 @@ func (e *Engine) Attention(version string) []AttentionItem {
 				names = append(names, it.Name+" "+it.Latest)
 			}
 		}
-		add("pkg:binary", "info", "Neue Version: "+strings.Join(names, ", "), "Einspielen mit „bash vpn-setup.sh“ im Container.", "#/health/updates")
+		add("pkg:binary", "info", "Neue Version: "+strings.Join(names, ", "), "Einspielen mit „bash vpn-setup.sh“ im Container.", "#/system/updates")
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if attentionRank[out[i].Level] != attentionRank[out[j].Level] {

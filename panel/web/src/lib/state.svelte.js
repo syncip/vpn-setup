@@ -14,8 +14,40 @@ window.addEventListener('hashchange', () => {
   route.path = location.hash.slice(1) || '/';
 });
 
-export function go(path) {
-  location.hash = path;
+// replace: Adresse ersetzen statt neuen Eintrag im Verlauf anlegen (Weiterleitungen)
+export function go(path, replace = false) {
+  if (!replace) {
+    location.hash = path;
+    return;
+  }
+  history.replaceState(null, '', '#' + path);
+  route.path = path;
+}
+
+// Alte Adressen (vor dem Umbau auf 7 Bereiche) → neue, damit Lesezeichen und Links weiter funktionieren
+const MOVED = [
+  [/^\/plans$/, '/users/plans'],
+  [/^\/network$/, '/routing/map'],
+  [/^\/network\/live$/, '/routing/live'],
+  [/^\/network\/access$/, '/servers/access'],
+  [/^\/network\/(\d+)(\/matrix)?$/, (m) => `/servers/wg/${m[1]}${m[2] || ''}`],
+  [/^\/proxy(\/overview)?$/, '/routing'],
+  [/^\/proxy\/(exits|groups|rules|proxy)$/, (m) => `/routing/${m[1]}`],
+  [/^\/iplists$/, '/routing/iplists'],
+  [/^\/settings\/system$/, '/system'],
+  [/^\/settings\/events$/, '/system/events'],
+  [/^\/health(\/overview)?$/, '/system'],
+  [/^\/health\/(updates|events)$/, (m) => `/system/${m[1]}`],
+  [/^\/settings$/, '/system/settings'],
+  [/^\/settings\/(\w+)$/, (m) => `/system/settings/${m[1]}`],
+  [/^\/account$/, '/system/account'],
+];
+export function moved(path) {
+  for (const [re, to] of MOVED) {
+    const m = path.match(re);
+    if (m) return typeof to === 'function' ? to(m) : to;
+  }
+  return '';
 }
 
 let toastId = 0;

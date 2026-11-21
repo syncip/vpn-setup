@@ -8,10 +8,10 @@
   import Info from '../components/Info.svelte';
   import PortHelp from '../components/PortHelp.svelte';
   import RouteRules from '../components/RouteRules.svelte';
-  import TimeChart from '../components/TimeChart.svelte';
   import LimitsForm from '../components/LimitsForm.svelte';
   import Usage from '../components/Usage.svelte';
   import ExitLive from '../components/ExitLive.svelte';
+  import ExitTraffic from '../components/ExitTraffic.svelte';
   import StateBadge from '../components/StateBadge.svelte';
   import { exitState, toneClass } from '../lib/exitstate.js';
   import { confirmDialog } from '../components/Confirm.svelte';
@@ -28,9 +28,16 @@
     ['rules', 'Ziel-Regeln', 'route'],
     ['proxy', 'Proxy-Server', 'server'],
   ];
+  const SUB = {
+    overview: 'Wohin der Verkehr geht: Ziel-Regeln → Gruppen → Ausgänge',
+    exits: 'Externe VPNs (WireGuard, OpenVPN) und Tor als Weg ins Internet',
+    groups: 'Ausgänge mit Reihenfolge und automatischem Ausweichen',
+    rules: 'Welcher Verkehr über welche Gruppe läuft',
+    proxy: 'SOCKS5/HTTP-Zugänge für Geräte ohne VPN-App',
+  };
   // unbekannter Tab in der Adresse → erster Tab statt leerer Seite
   $effect(() => {
-    if (!TABS.some((t) => t[0] === tab)) go('/proxy');
+    if (!TABS.some((t) => t[0] === tab)) go('/routing');
   });
 
   let d = $state({ exits: [], groups: [], error: '' });
@@ -144,32 +151,6 @@
     return m < 90 ? `in ${m} Min.` : `in ${Math.round(m / 60)} Std.`;
   };
 
-  // ---------- Verkehr ----------
-  let trDays = $state(7);
-  let trExit = $state(0);
-  let tr = $state(null);
-  async function loadTraffic() {
-    tr = await get(`/exits/traffic?days=${trDays}`).catch(() => null);
-  }
-  $effect(() => {
-    if (tab !== 'exits') return;
-    trDays;
-    loadTraffic();
-  });
-  const trData = $derived.by(() => {
-    if (!tr) return null;
-    const by = new Map();
-    for (const [b, id, up, down] of tr.series) {
-      if (trExit && id !== trExit) continue;
-      const p = by.get(b) || { ts: b * 1000, up: 0, down: 0 };
-      p.up += up;
-      p.down += down;
-      by.set(b, p);
-    }
-    const to = Date.now();
-    return { points: [...by.values()], bucket: tr.bucket * 1000, from: to - tr.days * 86400000, to };
-  });
-  const trSum = $derived((trData?.points || []).reduce((a, p) => a + p.up + p.down, 0));
   let exBusy = $state(false);
   let removedInfo = $state(null);
   const exType = $derived(ex.config.toLowerCase().includes('[interface]') ? 'wireguard' : ex.config.trim() ? 'openvpn' : exCur?.type || '');
@@ -515,7 +496,7 @@
   }
 </script>
 
-<PageHead title="Proxy & Ausgänge" subtitle="Proxy, Ausgänge über externe VPNs und Ziel-Regeln" helpTitle="Proxy & Ausgänge">
+<PageHead title={tab === 'overview' ? 'Routing' : TABS.find((t) => t[0] === tab)?.[1]} subtitle={SUB[tab]} helpTitle="Routing">
   {#snippet help()}
     <p><b>Proxy:</b> SOCKS5/HTTP-Zugänge für Geräte ohne VPN-App (z. B. Fernseher). Zugänge legst du beim Nutzer an (Zugang hinzufügen → Proxy).</p>
     <p><b>Ausgänge:</b> WireGuard- oder OpenVPN-Konfigurationen externer Anbieter. Hochgeladene Konfigurationen werden bereinigt: Skripte (PostUp, up/down), Routen, DNS-Änderungen und Dateiverweise fallen weg.</p>
@@ -532,9 +513,9 @@
   {#if tab === 'proxy'}<button class="btn primary" onclick={() => openServer()}><Icon name="plus" size={16} /> Proxy anlegen</button>{/if}
 </PageHead>
 
-<div class="tabs">
+<div class="tabs pagetabs">
   {#each TABS as [id, label, icon]}
-    <button class:active={tab === id} onclick={() => go(id === 'overview' ? '/proxy' : `/proxy/${id}`)}><Icon name={icon} size={14} /> {label}</button>
+    <button class:active={tab === id} onclick={() => go(id === 'overview' ? '/routing' : `/routing/${id}`)}><Icon name={icon} size={14} /> {label}</button>
   {/each}
 </div>
 
@@ -544,25 +525,25 @@
   {#snippet w_flow()}
     <div>
     <div class="flow">
-      <button class="tile" onclick={() => go('/proxy/rules')}>
+      <button class="tile" onclick={() => go('/routing/rules')}>
         <span class="tl"><Icon name="route" size={16} /> Ziel-Regeln</span>
         <span class="big">{ruleCount ? ruleCount.on : '…'}</span>
         <span class="tiny muted">{ruleCount ? `aktiv${ruleCount.all > ruleCount.on ? `, ${ruleCount.all - ruleCount.on} aus` : ''}` : ''} · welcher Verkehr über welche Gruppe läuft</span>
       </button>
       <span class="arrow"><Icon name="chevron" size={18} /></span>
-      <button class="tile" onclick={() => go('/proxy/groups')}>
+      <button class="tile" onclick={() => go('/routing/groups')}>
         <span class="tl"><Icon name="layers" size={16} /> Gruppen</span>
         <span class="big">{d.groups.length}</span>
         <span class="tiny muted">{groupIssues.length ? `${groupIssues.length} mit Störung` : 'alle auf dem bevorzugten Ausgang'} · Reihenfolge mit Ausweich-Ausgängen</span>
       </button>
       <span class="arrow"><Icon name="chevron" size={18} /></span>
-      <button class="tile" onclick={() => go('/proxy/exits')}>
+      <button class="tile" onclick={() => go('/routing/exits')}>
         <span class="tl"><Icon name="globe" size={16} /> Ausgänge</span>
         <span class="big">{d.exits.length}</span>
         <span class="tiny"><span class="ok-text">{exitHealth.ok} verbunden</span>{#if exitHealth.warn}&nbsp;· <span class="warn-text">{exitHealth.warn} instabil</span>{/if}{#if exitHealth.bad}&nbsp;· <span class="bad-text">{exitHealth.bad} gestört</span>{/if}</span>
       </button>
     </div>
-    <div class="muted small" style="margin-top:6px">Daneben gibt es <button class="linkbtn" onclick={() => go('/proxy/proxy')}>{servers.length} Proxy-Server</button> (SOCKS5/HTTP) für Geräte ohne VPN-App – sie nutzen ebenfalls eine Gruppe als Ausgang.</div>
+    <div class="muted small" style="margin-top:6px">Daneben gibt es <button class="linkbtn" onclick={() => go('/routing/proxy')}>{servers.length} Proxy-Server</button> (SOCKS5/HTTP) für Geräte ohne VPN-App – sie nutzen ebenfalls eine Gruppe als Ausgang.</div>
 
     {#if badExits.length || groupIssues.length}
       <div class="notice warn small" style="margin-top:10px">
@@ -582,7 +563,7 @@
       {#each d.groups as g}
         {@const st = groupState(g)}
         {@const act = exitById[g.status?.active]}
-        <button class="item linkitem" onclick={() => go('/proxy/groups')}>
+        <button class="item linkitem" onclick={() => go('/routing/groups')}>
           <Icon name="layers" size={18} />
           <div class="grow">
             <div class="strong">{g.name}</div>
@@ -833,38 +814,7 @@
   </div>
   {/snippet}
   {#snippet w_live()}<ExitLive exits={d.exits} groups={d.groups} />{/snippet}
-  {#snippet w_traffic()}
-  <div class="card">
-    <div class="card-head">
-      <h3>Verkehr über die Ausgänge <Info title="Verkehr" text="Gezählt an den Schnittstellen der Ausgänge: alles, was Nutzer über Gruppen ins Internet schicken bzw. von dort laden (inkl. Prüfungen). Runter = vom Anbieter empfangen." /> <span class="muted small">{bytes(trSum)}</span></h3>
-      <div class="row wrap" style="gap:8px">
-        <select class="input" style="width:auto" bind:value={trExit}>
-          <option value={0}>Alle Ausgänge</option>
-          {#each d.exits as e}<option value={e.id}>{e.name}</option>{/each}
-        </select>
-        <div class="segmented">
-          {#each [[1, '24 h'], [7, '7 Tage'], [30, '30 Tage'], [90, '90 Tage']] as [n, l]}<button class:active={trDays === n} onclick={() => (trDays = n)}>{l}</button>{/each}
-        </div>
-      </div>
-    </div>
-    <div class="card-pad" style="padding-top:0">
-      {#if trData}
-        <TimeChart mode="bars" points={trData.points} bucket={trData.bucket} from={trData.from} to={trData.to} format={bytes} binary height={180} />
-      {/if}
-      <div class="trgrid">
-        {#each [...d.exits].sort((a, b) => (b.traffic?.month?.down || 0) + (b.traffic?.month?.up || 0) - (a.traffic?.month?.down || 0) - (a.traffic?.month?.up || 0)) as e}
-          {@const m = (e.traffic?.month?.up || 0) + (e.traffic?.month?.down || 0)}
-          {@const all = d.exits.reduce((a, x) => a + (x.traffic?.month?.up || 0) + (x.traffic?.month?.down || 0), 0)}
-          <button class="trrow" class:sel={trExit === e.id} onclick={() => (trExit = trExit === e.id ? 0 : e.id)}>
-            <span class="small ellipsis grow">{e.name}</span>
-            <span class="share"><span style="width:{all ? (m / all) * 100 : 0}%"></span></span>
-            <span class="tiny muted nowrap">{bytes(m)} · 30 T.</span>
-          </button>
-        {/each}
-      </div>
-    </div>
-  </div>
-  {/snippet}
+  {#snippet w_traffic()}<ExitTraffic exits={d.exits} />{/snippet}
   <Board
     id="proxy-exits"
     widgets={[
@@ -1282,43 +1232,6 @@
   }
   tr.off {
     opacity: 0.6;
-  }
-  .trgrid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 4px 14px;
-    margin-top: 10px;
-  }
-  .trrow {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    border: 0;
-    background: none;
-    font: inherit;
-    color: inherit;
-    padding: 4px 6px;
-    border-radius: 6px;
-    cursor: pointer;
-    text-align: left;
-    min-width: 0;
-  }
-  .trrow:hover,
-  .trrow.sel {
-    background: var(--accent-soft);
-  }
-  .share {
-    width: 70px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--border);
-    overflow: hidden;
-    flex: none;
-  }
-  .share span {
-    display: block;
-    height: 100%;
-    background: var(--accent);
   }
   .flow {
     display: flex;

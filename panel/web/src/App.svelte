@@ -15,12 +15,29 @@
   import IPLists from './pages/IPLists.svelte';
   import DNS from './pages/DNS.svelte';
   import Health from './pages/Health.svelte';
-  import { session, meta, toasts, route, go, status } from './lib/state.svelte.js';
+  import Stats from './pages/Stats.svelte';
+  import { session, meta, toasts, route, go, moved, status } from './lib/state.svelte.js';
   import { get, post } from './lib/api.js';
   import { bytes, speed } from './lib/format.js';
 
-  let navOpen = $state(false);
+  let navOpen = $state(false); // Handy: Menü offen
   let theme = $state(document.documentElement.dataset.theme || '');
+  const pref = (k, d) => {
+    try {
+      return localStorage.getItem(k) || d;
+    } catch {
+      return d;
+    }
+  };
+  const setPref = (k, v) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      /* egal */
+    }
+  };
+  let mini = $state(pref('sidebar', '') === 'mini'); // Seitenleiste nur mit Symbolen
+  let density = $state(document.documentElement.dataset.density || '');
 
   async function boot() {
     try {
@@ -37,24 +54,82 @@
     if (session.user && !meta.protocols.length) get('/meta').then((m) => Object.assign(meta, m));
   });
 
-  // Menü in Gruppen (gleiche Seiten und Adressen wie bisher; „Zustand“ bündelt System und Ereignisse)
-  const nav = [
-    { items: [{ path: '/', label: 'Übersicht', icon: 'home', count: true }] },
-    { title: 'Verwalten', items: [
-      { path: '/users', label: 'Nutzer', icon: 'users' },
-      { path: '/servers', label: 'Server', icon: 'server' },
-      { path: '/plans', label: 'Tarife & Limits', icon: 'tag' },
-    ] },
-    { title: 'Netz', items: [
-      { path: '/network', label: 'Netzwerk', icon: 'network' },
-      { path: '/proxy', label: 'Proxy & Ausgänge', icon: 'route', keys: ['exit:', 'exitlimit:', 'group:', 'grouplimit:'] },
-      { path: '/dns', label: 'DNS', icon: 'globe', keys: ['unbound', 'cert:'] },
-      { path: '/iplists', label: 'IP-Listen', icon: 'filter' },
-    ] },
-    { title: 'System', items: [
-      { path: '/health', label: 'Zustand', icon: 'activity', keys: ['err:', 'port:', 'disk', 'mem', 'server_host', 'pkg:'] },
-      { path: '/settings', label: 'Einstellungen', icon: 'settings', keys: ['alarm:'] },
-    ] },
+  // Menü: 7 Bereiche, Unterpunkte klappen beim aktiven Bereich auf.
+  // keys: Schlüssel der Hinweise („Braucht Aufmerksamkeit“), die einen Punkt am Bereich zeigen.
+  const NAV = [
+    { path: '/', label: 'Übersicht', icon: 'home', count: true },
+    {
+      path: '/users',
+      label: 'Nutzer',
+      icon: 'users',
+      subs: [
+        ['/users', 'Alle Nutzer'],
+        ['/users/plans', 'Tarife & Limits'],
+      ],
+    },
+    {
+      path: '/servers',
+      label: 'Server',
+      icon: 'server',
+      subs: [
+        ['/servers', 'Alle Server'],
+        ['/servers/wg', 'WireGuard-Netz'],
+        ['/servers/access', 'Zugriff'],
+      ],
+    },
+    {
+      path: '/routing',
+      label: 'Routing',
+      icon: 'route',
+      keys: ['exit:', 'exitlimit:', 'group:', 'grouplimit:'],
+      subs: [
+        ['/routing', 'Übersicht'],
+        ['/routing/map', 'Karte', ['/routing/live']],
+        ['/routing/exits', 'Ausgänge'],
+        ['/routing/groups', 'Gruppen'],
+        ['/routing/rules', 'Ziel-Regeln'],
+        ['/routing/iplists', 'IP-Listen'],
+        ['/routing/proxy', 'Proxy-Server'],
+      ],
+    },
+    {
+      path: '/dns',
+      label: 'DNS',
+      icon: 'globe',
+      keys: ['unbound', 'cert:'],
+      subs: [
+        ['/dns', 'Übersicht'],
+        ['/dns/log', 'Protokoll'],
+        ['/dns/profiles', 'Filterprofile'],
+        ['/dns/lists', 'Blocklisten'],
+        ['/dns/external', 'Ohne VPN'],
+        ['/dns/settings', 'Einstellungen'],
+      ],
+    },
+    {
+      path: '/stats',
+      label: 'Statistik',
+      icon: 'stats',
+      subs: [
+        ['/stats', 'Verkehr'],
+        ['/stats/live', 'Live'],
+        ['/stats/exits', 'Ausgänge'],
+        ['/stats/dns', 'DNS'],
+      ],
+    },
+    {
+      path: '/system',
+      label: 'System',
+      icon: 'settings',
+      keys: ['err:', 'port:', 'disk', 'mem', 'server_host', 'pkg:', 'alarm:'],
+      subs: [
+        ['/system', 'Zustand'],
+        ['/system/updates', 'Updates'],
+        ['/system/events', 'Ereignisse'],
+        ['/system/settings', 'Einstellungen'],
+        ['/system/account', 'Mein Konto'],
+      ],
+    },
   ];
 
   // Zustand alle 5 s (nur sichtbar und angemeldet)
@@ -78,7 +153,7 @@
     };
   });
   const issues = $derived(status.attention.filter((a) => a.level !== 'info'));
-  // schlimmster Zustand je Menüpunkt (Punkt rechts)
+  // schlimmster Zustand je Bereich (Punkt rechts)
   function navTone(n) {
     if (!n.keys) return '';
     const hit = issues.filter((a) => n.keys.some((k) => a.key.startsWith(k)));
@@ -88,20 +163,29 @@
   const memPct = $derived(pct(status.host?.mem_used, status.host?.mem_total));
   const diskPct = $derived(pct(status.host?.disk_used, status.host?.disk_size));
 
-  // alte Adressen von System und Ereignissen (jetzt unter „Zustand“)
+  // alte Adressen → neue (Lesezeichen, Links in E-Mails)
   $effect(() => {
-    if (route.path === '/settings/system') go('/health');
-    else if (route.path === '/settings/events') go('/health/events');
+    const to = moved(route.path);
+    if (to) go(to, true);
   });
 
   const parts = $derived(route.path.split('/').filter(Boolean));
   const section = $derived('/' + (parts[0] || ''));
-
-  const pageLabel = $derived(section === '/account' ? 'Mein Konto' : nav.flatMap((g) => g.items).find((n) => active(n.path))?.label || 'VPN-Panel');
-
-  function active(p) {
-    return p === '/' ? section === '/' : section === p;
-  }
+  const cur = $derived(NAV.find((n) => n.path === section));
+  // aktiver Unterpunkt: genauester Treffer (z. B. /servers/wg/3/matrix → WireGuard-Netz)
+  const under = (path, p) => path === p || path.startsWith(p + '/');
+  const curSub = $derived.by(() => {
+    let best = null;
+    for (const s of cur?.subs || []) {
+      const hit = [s[0], ...(s[2] || [])].some((p) => under(route.path, p));
+      if (hit && (!best || s[0].length > best[0].length)) best = s;
+    }
+    return best;
+  });
+  const pageLabel = $derived(cur ? (curSub && curSub[0] !== cur.path ? `${cur.label} · ${curSub[1]}` : cur.label) : 'VPN-Panel');
+  $effect(() => {
+    document.title = cur ? `${curSub && curSub[0] !== cur.path ? curSub[1] : cur.label} – VPN-Panel` : 'VPN-Panel';
+  });
 
   async function logout() {
     await post('/auth/logout').catch(() => {});
@@ -112,11 +196,17 @@
     const dark = theme === 'dark' || (!theme && matchMedia('(prefers-color-scheme: dark)').matches);
     theme = dark ? 'light' : 'dark';
     document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem('theme', theme);
-    } catch {
-      /* egal */
-    }
+    setPref('theme', theme);
+  }
+  function toggleDensity() {
+    density = density === 'compact' ? '' : 'compact';
+    if (density) document.documentElement.dataset.density = density;
+    else delete document.documentElement.dataset.density;
+    setPref('density', density);
+  }
+  function toggleMini() {
+    mini = !mini;
+    setPref('sidebar', mini ? 'mini' : '');
   }
 
   $effect(() => {
@@ -131,58 +221,71 @@
   <Login onlogin={boot} />
 {:else}
   <Search />
-  <div class="layout">
+  <div class="layout" class:mini>
     <aside class="sidebar" class:open={navOpen}>
       <div class="brand">
-        <span class="logo"><Icon name="shield" size={20} /></span>
-        <div>
+        <span class="logo"><Icon name="shield" size={18} /></span>
+        <div class="brand-text">
           <div class="strong">VPN-Panel</div>
-          <div class="tiny host">{meta.server_host}</div>
-          <div class="tiny ver">
-            v{meta.version}
-            {#if meta.update?.available}<a class="upd" href={meta.update.url} target="_blank" rel="noopener noreferrer" title="Neue Version {meta.update.latest}">Update {meta.update.latest}</a>{/if}
+          <div class="tiny muted ellipsis">
+            {meta.server_host} · v{meta.version}
+            {#if meta.update?.available}<a class="upd" href={meta.update.url} target="_blank" rel="noopener noreferrer" title="Neue Version {meta.update.latest}">Update</a>{/if}
           </div>
         </div>
+        <button class="ib collapse" onclick={toggleMini} title={mini ? 'Seitenleiste ausklappen' : 'Seitenleiste einklappen'} aria-label="Seitenleiste umschalten"><Icon name="sidebar" size={16} /></button>
       </div>
+
       <div class="side-scroll">
-      <a class="mini" href="#/health" title="Zustand des Servers – Details unter „Zustand“">
+        <button class="sbtn" onclick={() => (search.open = true)} title="Schnellsuche (Strg+K)"><Icon name="search" size={15} /><span class="grow lbl">Suchen …</span><kbd class="lbl">Strg K</kbd></button>
+        <nav>
+          {#each NAV as n}
+            {@const tone = navTone(n)}
+            {@const on = n.path === section}
+            <div class="sec" class:on>
+              <a href="#{n.subs ? n.subs[0][0] : n.path}" class="top" class:active={on} title={mini ? n.label : ''}>
+                <Icon name={n.icon} size={17} />
+                <span class="grow lbl">{n.label}</span>
+                {#if n.count && issues.length}<span class="nav-count" class:bad={issues.some((a) => a.level === 'error')} title="Braucht Aufmerksamkeit">{issues.length}</span>{/if}
+                {#if tone}<span class="nav-dot {tone}" title="Braucht Aufmerksamkeit"></span>{/if}
+                {#if n.subs && !mini}<span class="chev" class:open={on}><Icon name="chevron" size={13} /></span>{/if}
+              </a>
+              {#if n.subs}
+                <div class="subs" class:fly={mini}>
+                  {#if mini}<div class="fly-title">{n.label}</div>{/if}
+                  {#each n.subs as s}
+                    <a href="#{s[0]}" class:active={on && curSub?.[0] === s[0]}>{s[1]}</a>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </nav>
+      </div>
+
+      <a class="mini-stats" href="#/system" title="Zustand des Servers">
         {#if status.host}
           {@const h = status.host}
           <div class="gauges">
-            <div title="CPU"><div class="mrow"><span>CPU</span><span>{Math.round(h.cpu)} %</span></div><div class="bar"><i style="width:{Math.min(100, h.cpu)}%" class:hot={h.cpu > 85}></i></div></div>
-            <div title="{bytes(h.mem_used)} von {bytes(h.mem_total)}"><div class="mrow"><span>RAM</span><span>{memPct} %</span></div><div class="bar"><i style="width:{memPct}%" class:hot={memPct > 90}></i></div></div>
-            {#if h.disk_size}<div title="Speicher: {bytes(h.disk_used)} von {bytes(h.disk_size)}"><div class="mrow"><span>Disk</span><span>{diskPct} %</span></div><div class="bar"><i style="width:{diskPct}%" class:hot={diskPct > 90}></i></div></div>{/if}
+            <div title="CPU {Math.round(h.cpu)} %"><span class="lbl">CPU</span><b>{Math.round(h.cpu)}%</b><i class="bar"><i style="width:{Math.min(100, h.cpu)}%" class:hot={h.cpu > 85}></i></i></div>
+            <div title="RAM: {bytes(h.mem_used)} von {bytes(h.mem_total)}"><span class="lbl">RAM</span><b>{memPct}%</b><i class="bar"><i style="width:{memPct}%" class:hot={memPct > 90}></i></i></div>
+            {#if h.disk_size}<div title="Speicher: {bytes(h.disk_used)} von {bytes(h.disk_size)}"><span class="lbl">Disk</span><b>{diskPct}%</b><i class="bar"><i style="width:{diskPct}%" class:hot={diskPct > 90}></i></i></div>{/if}
           </div>
-          <div class="mrow" title="Durchsatz auf {h.iface}"><span>Traffic</span><span class="nowrap"><Icon name="down" size={11} />{speed(h.rx)} <Icon name="up" size={11} />{speed(h.tx)}</span></div>
-          <div class="mrow"><span>Geräte online</span><span>{status.peers_online} / {status.peers}</span></div>
+          <div class="mrow lbl" title="Durchsatz auf {h.iface}"><span><Icon name="down" size={11} />{speed(h.rx)} <Icon name="up" size={11} />{speed(h.tx)}</span><span>{status.peers_online}/{status.peers} online</span></div>
         {:else}
-          <div class="mrow"><span>Lade Zustand …</span></div>
+          <div class="mrow lbl"><span>Lade Zustand …</span></div>
         {/if}
       </a>
-      <button class="sbtn" onclick={() => (search.open = true)} title="Schnellsuche (Strg+K)"><Icon name="search" size={15} /><span class="grow">Suchen …</span><kbd>Strg K</kbd></button>
-      <nav>
-        {#each nav as g}
-          {#if g.title}<div class="nav-title">{g.title}</div>{/if}
-          {#each g.items as n}
-            {@const tone = navTone(n)}
-            <a href="#{n.path}" class:active={active(n.path)}>
-              <Icon name={n.icon} /> <span class="grow">{n.label}</span>
-              {#if n.count && issues.length}<span class="nav-count" class:bad={issues.some((a) => a.level === 'error')} title="Braucht Aufmerksamkeit">{issues.length}</span>{/if}
-              {#if tone}<span class="nav-dot {tone}" title="Braucht Aufmerksamkeit"></span>{/if}
-            </a>
-          {/each}
-        {/each}
-      </nav>
-      </div>
+
       <div class="side-foot">
-        {#if meta.dry_run}<div class="badge warn" style="margin:0 8px 10px;height:auto;padding:4px 8px;white-space:normal">Testmodus – keine Systemänderungen</div>{/if}
+        {#if meta.dry_run}<div class="badge warn dry lbl">Testmodus – keine Systemänderungen</div>{/if}
         <div class="me">
-          <a class="me-link grow" href="#/account" class:active={section === '/account'} title="Mein Konto">
+          <a class="me-link grow" href="#/system/account" title="Mein Konto">
             <span class="avatar">{session.user.username.slice(0, 1).toUpperCase()}</span>
-            <span class="ellipsis">{session.user.username}</span>
+            <span class="ellipsis lbl">{session.user.username}</span>
           </a>
-          <button class="icon-btn" onclick={toggleTheme} title="Hell/Dunkel"><Icon name="moon" size={16} /></button>
-          <button class="icon-btn" onclick={logout} title="Abmelden"><Icon name="logout" size={16} /></button>
+          <button class="ib" onclick={toggleDensity} title={density ? 'Normale Abstände' : 'Kompakte Darstellung'} aria-label="Dichte umschalten" class:on={!!density}><Icon name="list" size={15} /></button>
+          <button class="ib" onclick={toggleTheme} title="Hell/Dunkel" aria-label="Hell/Dunkel"><Icon name="moon" size={15} /></button>
+          <button class="ib" onclick={logout} title="Abmelden" aria-label="Abmelden"><Icon name="logout" size={15} /></button>
         </div>
       </div>
     </aside>
@@ -192,35 +295,42 @@
       <!-- Handy: Kopfzeile mit Menü, Seitenname und Warnungen -->
       <div class="topbar">
         <button class="btn icon ghost" onclick={() => (navOpen = true)} aria-label="Menü"><Icon name="menu" /></button>
-        <span class="logo sm"><Icon name="shield" size={15} /></span>
         <span class="strong grow ellipsis">{pageLabel}</span>
         {#if issues.length}<a class="nav-count" class:bad={issues.some((a) => a.level === 'error')} href="#/" title="Braucht Aufmerksamkeit">{issues.length}</a>{/if}
         <button class="btn icon ghost" onclick={() => (search.open = true)} aria-label="Suchen"><Icon name="search" size={18} /></button>
       </div>
       {#if section === '/'}
         <Overview />
+      {:else if section === '/users' && parts[1] === 'plans'}
+        <Plans />
       {:else if section === '/users' && parts[1]}
         {#key parts[1]}<UserDetail id={Number(parts[1])} tab={parts[2] || 'overview'} />{/key}
       {:else if section === '/users'}
         <Users />
-      {:else if section === '/network'}
-        <Network id={Number(parts[1]) || 0} view={parts[2] || 'map'} tab={parts[1] === 'access' || parts[1] === 'live' ? parts[1] : ''} />
+      {:else if section === '/servers' && parts[1] === 'access'}
+        <Network tab="access" />
+      {:else if section === '/servers' && parts[1] === 'wg'}
+        <Network tab="wg" id={Number(parts[2]) || 0} view={parts[3] || 'map'} />
       {:else if section === '/servers'}
         <Servers />
-      {:else if section === '/proxy'}
+      {:else if section === '/routing' && (parts[1] === 'map' || parts[1] === 'live')}
+        <Network tab={parts[1] === 'live' ? 'live' : ''} />
+      {:else if section === '/routing' && parts[1] === 'iplists'}
+        <IPLists />
+      {:else if section === '/routing'}
         <Proxy tab={parts[1] || 'overview'} />
       {:else if section === '/dns'}
         <DNS tab={parts[1] || 'overview'} />
-      {:else if section === '/iplists'}
-        <IPLists />
-      {:else if section === '/plans'}
-        <Plans />
-      {:else if section === '/health'}
-        <Health tab={parts[1] || 'overview'} />
-      {:else if section === '/settings'}
-        <Settings tab={parts[1] || 'general'} />
-      {:else if section === '/account'}
+      {:else if section === '/stats'}
+        <Stats tab={parts[1] || 'traffic'} />
+      {:else if section === '/system' && parts[1] === 'settings'}
+        <Settings tab={parts[2] || 'general'} />
+      {:else if section === '/system' && parts[1] === 'account'}
         <Account />
+      {:else if section === '/system'}
+        <Health tab={parts[1] || 'overview'} />
+      {:else if moved(route.path)}
+        <div class="boot"></div>
       {:else}
         <div class="empty"><h3>Seite nicht gefunden</h3><button class="btn" onclick={() => go('/')}>Zur Übersicht</button></div>
       {/if}
@@ -239,30 +349,16 @@
   .boot {
     min-height: 100vh;
   }
-  .ver {
-    opacity: 0.7;
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-  .upd {
-    background: var(--accent);
-    color: #fff;
-    border-radius: 999px;
-    padding: 0 7px;
-    font-weight: 600;
-    opacity: 1;
-    text-decoration: none;
-  }
   .layout {
     display: flex;
     min-height: 100vh;
   }
+  /* ---------- Seitenleiste (folgt hell/dunkel) ---------- */
   .sidebar {
-    width: 236px;
+    width: 228px;
     flex: none;
-    background: var(--sidebar);
-    color: var(--sidebar-text);
+    background: var(--panel);
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     position: sticky;
@@ -270,226 +366,408 @@
     height: 100vh;
     height: 100dvh;
     z-index: 30;
-    overflow: hidden;
+    transition: width 0.15s;
   }
-  .side-scroll {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    padding-bottom: 8px;
+  .mini .sidebar {
+    width: 60px;
   }
-  .gauges {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-  }
-  .gauges .mrow {
-    flex-direction: column;
-    gap: 0;
-  }
-  .gauges .bar {
-    margin: 3px 0 4px;
+  .mini .lbl,
+  .mini .brand-text,
+  .mini .chev,
+  .mini .dry {
+    display: none !important;
   }
   .brand {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 18px 18px 14px;
-    color: #fff;
+    padding: 14px 10px 10px 14px;
+    min-width: 0;
   }
-  .host {
-    color: var(--sidebar-text);
-    opacity: 0.8;
+  .mini .brand {
+    flex-direction: column;
+    padding: 12px 0 8px;
+  }
+  .brand-text {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.3;
   }
   .logo {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border-radius: 9px;
     display: grid;
     place-items: center;
     background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
     color: #fff;
   }
+  .upd {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 999px;
+    padding: 0 6px;
+    font-weight: 600;
+    margin-left: 2px;
+  }
+  .ib {
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    width: 28px;
+    height: 28px;
+    flex: none;
+    border-radius: 7px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+  }
+  .ib:hover {
+    background: var(--panel-2);
+    color: var(--text);
+  }
+  .ib.on {
+    color: var(--accent);
+  }
+  .side-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    padding-bottom: 8px;
+  }
+  .mini .side-scroll {
+    overflow: visible;
+  }
+  .sbtn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: calc(100% - 20px);
+    margin: 2px 10px 10px;
+    padding: 6px 9px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-md);
+    cursor: pointer;
+    text-align: left;
+  }
+  .mini .sbtn {
+    width: 40px;
+    justify-content: center;
+    padding: 7px 0;
+  }
+  .sbtn:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .sbtn kbd {
+    font: inherit;
+    font-size: var(--fs-xs);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+  }
   nav {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 0 10px;
+    gap: 1px;
+    padding: 0 8px;
+  }
+  .sec {
+    position: relative;
   }
   nav a {
     display: flex;
     align-items: center;
-    gap: 11px;
-    padding: 9px 12px;
-    border-radius: 8px;
-    color: var(--sidebar-text);
+    gap: 10px;
+    border-radius: 7px;
+    color: var(--text-2);
+  }
+  .top {
+    padding: 7px 10px;
     font-weight: 550;
   }
-  nav a:hover {
-    background: var(--sidebar-hover);
-    color: #fff;
+  .mini .top {
+    justify-content: center;
+    padding: 9px 0;
   }
-  nav a.active {
-    background: var(--sidebar-hover);
-    color: var(--sidebar-active);
-    box-shadow: inset 3px 0 0 var(--side-accent);
+  .top:hover {
+    background: var(--panel-2);
+    color: var(--text);
   }
-  .mini {
-    display: grid;
-    gap: 4px;
-    margin: 0 12px 12px;
-    padding: 10px 12px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    color: var(--sidebar-text);
-    font-size: var(--fs-sm);
+  .top.active {
+    color: var(--text);
+    font-weight: 650;
   }
-  .mini:hover {
-    background: var(--sidebar-hover);
+  .top.active :global(svg) {
+    color: var(--accent);
   }
-  .mrow {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
+  .mini .top.active {
+    background: var(--accent-soft);
   }
-  .mrow span:last-child {
-    color: #fff;
-    font-variant-numeric: tabular-nums;
+  .chev {
     display: inline-flex;
-    align-items: center;
-    gap: 2px;
+    color: var(--muted);
+    transition: transform 0.15s;
   }
-  .bar {
-    height: 4px;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.08);
-    margin-bottom: 3px;
-    overflow: hidden;
+  .chev.open {
+    transform: rotate(90deg);
   }
-  .bar i {
-    display: block;
-    height: 100%;
-    border-radius: 2px;
-    background: var(--side-accent);
-    transition: width 0.6s;
+  .subs {
+    display: none;
+    flex-direction: column;
+    gap: 1px;
+    margin: 1px 0 6px 19px;
+    padding-left: 10px;
+    border-left: 1px solid var(--border);
   }
-  .bar i.hot {
-    background: var(--side-warn);
+  .sec.on .subs:not(.fly) {
+    display: flex;
   }
-  .nav-title {
-    font-size: var(--fs-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--sidebar-text);
-    opacity: 0.55;
-    padding: 12px 12px 4px;
+  .subs a {
+    padding: 5px 10px;
+    font-size: var(--fs-md);
+    color: var(--muted);
+  }
+  .subs a:hover {
+    color: var(--text);
+    background: var(--panel-2);
+  }
+  .subs a.active {
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-weight: 600;
+  }
+  /* eingeklappt: Unterpunkte als Menü neben dem Symbol */
+  .subs.fly {
+    position: absolute;
+    left: 48px;
+    top: -4px;
+    margin: 0;
+    padding: 6px;
+    min-width: 180px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    z-index: 40;
+  }
+  .sec:hover .subs.fly,
+  .sec:focus-within .subs.fly {
+    display: flex;
+  }
+  .fly-title {
+    font-weight: 650;
+    font-size: var(--fs-md);
+    padding: 4px 10px 6px;
   }
   .nav-count {
     min-width: 20px;
     height: 18px;
     padding: 0 6px;
     border-radius: 9px;
-    background: var(--side-warn);
-    color: #1b1f2a;
+    background: var(--warn);
+    color: #fff;
     font-size: var(--fs-xs);
     font-weight: 650;
     display: grid;
     place-items: center;
   }
   .nav-count.bad {
-    background: var(--side-bad);
-    color: #fff;
+    background: var(--bad);
   }
   .nav-dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    background: var(--side-warn);
+    background: var(--warn);
+    flex: none;
   }
   .nav-dot.bad {
-    background: var(--side-bad);
+    background: var(--bad);
+  }
+  .mini .nav-count,
+  .mini .nav-dot {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+  }
+  .mini .nav-count {
+    min-width: 16px;
+    height: 14px;
+    padding: 0 3px;
+    font-size: 9px;
+  }
+  /* Server-Werte unten */
+  .mini-stats {
+    display: grid;
+    gap: 6px;
+    margin: 0 10px 8px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text-2);
+    font-size: var(--fs-xs);
+  }
+  .mini-stats:hover {
+    border-color: var(--border-strong);
+  }
+  .mini .mini-stats {
+    margin: 0 6px 8px;
+    padding: 6px 4px;
+  }
+  .gauges {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .mini .gauges {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .gauges > div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0 4px;
+  }
+  .gauges b {
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .mini .gauges b {
+    width: 100%;
+    text-align: center;
+  }
+  i.bar {
+    display: block;
+    width: 100%;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+    margin-top: 2px;
+  }
+  i.bar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.6s;
+  }
+  i.bar i.hot {
+    background: var(--warn);
+  }
+  .mrow {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .mrow span {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    white-space: nowrap;
   }
   .side-foot {
     flex: none;
-    padding: 10px 10px 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 6px 8px 10px;
+    border-top: 1px solid var(--border);
+  }
+  .dry {
+    display: block;
+    margin: 4px 2px 8px;
+    height: auto;
+    padding: 4px 8px;
+    white-space: normal;
   }
   .me {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 6px 8px;
-    color: #fff;
+    gap: 2px;
+  }
+  .mini .me {
+    flex-direction: column;
+    gap: 4px;
   }
   .me-link {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     min-width: 0;
-    color: #fff;
+    color: var(--text);
     border-radius: 8px;
-    padding: 2px 4px;
-    margin: -2px -4px;
+    padding: 4px 6px;
+    font-weight: 550;
   }
-  .me-link:hover,
-  .me-link.active {
-    background: var(--sidebar-hover);
+  .mini .me-link {
+    flex: none;
+    padding: 2px;
+  }
+  .me-link:hover {
+    background: var(--panel-2);
   }
   .avatar {
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
+    flex: none;
     border-radius: 50%;
     display: grid;
     place-items: center;
-    background: #2a3350;
-    font-weight: 650;
-    font-size: var(--fs-md);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: var(--fs-sm);
   }
-  .icon-btn {
-    border: none;
-    background: none;
-    color: var(--sidebar-text);
-    cursor: pointer;
-    padding: 6px;
-    border-radius: 7px;
-    display: grid;
-    place-items: center;
-  }
-  .icon-btn:hover {
-    background: var(--sidebar-hover);
-    color: #fff;
-  }
+  /* ---------- Inhalt ---------- */
   main {
     flex: 1;
     min-width: 0;
-    padding: 28px 32px 48px;
-    max-width: none;
+    padding: var(--main-pad, 22px 28px 48px);
   }
   .topbar {
     display: none;
   }
-  .logo.sm {
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
-  }
   .scrim {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: rgba(0, 0, 0, 0.35);
     z-index: 25;
   }
   @media (max-width: 900px) {
-    .sidebar {
+    .sidebar,
+    .mini .sidebar {
       position: fixed;
       left: 0;
+      width: 260px;
       transform: translateX(-100%);
       transition: transform 0.2s;
+      box-shadow: var(--shadow-lg);
     }
     .sidebar.open {
       transform: none;
+    }
+    .collapse {
+      display: none;
+    }
+    /* auf dem Handy immer ausgeklappt */
+    .mini .lbl,
+    .mini .brand-text,
+    .mini .chev {
+      display: revert !important;
+    }
+    .mini .subs.fly {
+      display: none;
     }
     .topbar {
       display: flex;
@@ -498,8 +776,8 @@
       position: sticky;
       top: 0;
       z-index: 20;
-      margin: -16px -16px 14px;
-      padding: 8px 10px;
+      margin: -14px -14px 12px;
+      padding: 6px 8px;
       background: var(--panel);
       border-bottom: 1px solid var(--border);
     }
@@ -507,7 +785,7 @@
       text-decoration: none;
     }
     main {
-      padding: 16px 16px 40px;
+      padding: 14px 14px 40px;
     }
   }
   .toasts {
@@ -546,31 +824,5 @@
       transform: translateY(10px);
       opacity: 0;
     }
-  }
-  .sbtn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0 12px 10px;
-    padding: 7px 10px;
-    border-radius: 8px;
-    border: 1px solid var(--sidebar-hover);
-    background: transparent;
-    color: var(--sidebar-text);
-    font: inherit;
-    font-size: var(--fs-md);
-    cursor: pointer;
-    text-align: left;
-  }
-  .sbtn:hover {
-    background: var(--sidebar-hover);
-    color: #fff;
-  }
-  .sbtn kbd {
-    font: inherit;
-    font-size: var(--fs-xs);
-    border: 1px solid var(--sidebar-hover);
-    border-radius: 4px;
-    padding: 0 4px;
   }
 </style>

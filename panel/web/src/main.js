@@ -5,6 +5,7 @@ import App from './App.svelte';
 try {
   const t = localStorage.getItem('theme');
   if (t) document.documentElement.dataset.theme = t;
+  if (localStorage.getItem('density') === 'compact') document.documentElement.dataset.density = 'compact';
 } catch {
   /* kein Speicher */
 }

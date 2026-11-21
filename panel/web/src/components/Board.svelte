@@ -1,13 +1,22 @@
 <script>
-  // Anordenbare Fenster: 12-Spalten-Raster, Reihenfolge per Ziehen (oder Pfeilen), Breite per −/+,
+  // Anpassbare Fenster: 12-Spalten-Raster, Reihenfolge per Ziehen (oder Pfeilen), Breite ¼ … ganz,
   // Ausblenden per Auge. Gespeichert pro Admin (lib/layout.svelte.js).
-  //   widgets: [{ id, title, w (1–12), body: Snippet, show?: false = gerade nicht vorhanden }]
-  // Ausgeblendete Fenster lassen sich im Anordnen-Modus jederzeit wieder einblenden – es geht nichts verloren.
+  //   widgets: [{ id, title, w (1–12), body: Snippet, show?: false = gerade nicht vorhanden,
+  //               off?: true = anfangs ausgeblendet (nur über „Fenster hinzufügen“), desc?: Text im Katalog }]
+  // Ausgeblendete Fenster lassen sich im Anpassen-Modus jederzeit wieder hinzufügen – es geht nichts verloren.
   import Icon from './Icon.svelte';
   import { layout, loadLayout, saveLayout, resetLayout } from '../lib/layout.svelte.js';
 
   let { id, widgets = [] } = $props();
-  const STEPS = [3, 4, 6, 8, 9, 12];
+  const SIZES = [
+    [3, '¼', 'Viertel'],
+    [4, '⅓', 'Drittel'],
+    [6, '½', 'Halb'],
+    [8, '⅔', 'Zwei Drittel'],
+    [12, '1', 'Ganze Breite'],
+  ];
+  const near = (n) => SIZES.reduce((a, s) => (Math.abs(s[0] - n) < Math.abs(a[0] - n) ? s : a))[0];
+  let catalog = $state(false);
 
   loadLayout();
   $effect(() => {
@@ -40,14 +49,17 @@
     });
     return out;
   });
-  const hidden = $derived(new Set((saved.hidden || []).filter((x) => byId[x])));
+  // ausgeblendet = selbst ausgeblendet + anfangs ausgeblendete, die nie hinzugefügt wurden
+  const hidden = $derived(
+    new Set([...(saved.hidden || []), ...widgets.filter((w) => w.off && !(saved.shown || []).includes(w.id)).map((w) => w.id)].filter((x) => byId[x])),
+  );
   const width = (wid) => Math.min(12, Math.max(1, saved.w?.[wid] || byId[wid]?.w || 6));
   const visible = $derived(order.filter((x) => byId[x] && byId[x].show !== false && !hidden.has(x)));
-  const hiddenList = $derived(order.filter((x) => hidden.has(x)));
+  const hiddenList = $derived(order.filter((x) => hidden.has(x) && byId[x].show !== false));
 
   function store(patch) {
     const cur = layout.data[id] || {};
-    layout.data[id] = { order: [...order], hidden: [...hidden], w: { ...(cur.w || {}) }, ...patch };
+    layout.data[id] = { order: [...order], hidden: [...hidden], shown: [...(cur.shown || [])], w: { ...(cur.w || {}) }, ...patch };
     saveLayout();
   }
   function move(wid, to) {
@@ -65,17 +77,16 @@
     o.splice(dir > 0 ? k + 1 : k, 0, wid);
     store({ order: o });
   }
-  function resize(wid, dir) {
-    const cur = width(wid);
-    const next = dir > 0 ? STEPS.find((s) => s > cur) : [...STEPS].reverse().find((s) => s < cur);
-    if (!next) return;
-    store({ w: { ...(layout.data[id]?.w || {}), [wid]: next } });
-  }
   function hide(wid) {
     store({ hidden: [...hidden, wid] });
   }
   function unhide(wid) {
-    store({ hidden: [...hidden].filter((x) => x !== wid) });
+    const shown = new Set(layout.data[id]?.shown || []);
+    shown.add(wid);
+    store({ hidden: [...hidden].filter((x) => x !== wid), shown: [...shown] });
+  }
+  function setSize(wid, n) {
+    store({ w: { ...(layout.data[id]?.w || {}), [wid]: n } });
   }
 
   // Ziehen am Griff mit Zeiger-Ereignissen (Maus, Finger, Stift)
@@ -113,19 +124,22 @@
 {#if editing}
   <div class="board-bar">
     <Icon name="grid" size={16} />
-    <div class="grow small">
-      <b>Fenster anordnen</b> – am Griff ziehen (oder Pfeile), Breite mit <b>−</b>/<b>+</b>, Auge blendet aus.
-      {#if hiddenList.length}
-        <div class="row wrap hidden-row">
-          <span class="muted">Ausgeblendet:</span>
-          {#each hiddenList as h}
-            <button class="chip" onclick={() => unhide(h)} title="Wieder einblenden"><Icon name="eye" size={13} /> {byId[h].title}</button>
+    <div class="grow small"><b>Seite anpassen</b> <span class="muted hide-sm">– am Griff ziehen, Breite wählen, Auge blendet aus</span></div>
+    <div class="cat-wrap">
+      <button class="btn sm" class:primary={catalog} onclick={() => (catalog = !catalog)} disabled={!hiddenList.length} title={hiddenList.length ? 'Ausgeblendete oder weitere Fenster hinzufügen' : 'Alle Fenster sind sichtbar'}><Icon name="plus" size={14} /> Fenster hinzufügen{hiddenList.length ? ` (${hiddenList.length})` : ''}</button>
+      {#if catalog && hiddenList.length}
+        <div class="cat">
+          {#each hiddenList as h (h)}
+            <button class="cat-item" onclick={() => (unhide(h), hiddenList.length <= 1 && (catalog = false))}>
+              <Icon name="plus" size={14} />
+              <span class="grow"><span class="strong">{byId[h].title}</span>{#if byId[h].desc}<span class="tiny muted"><br />{byId[h].desc}</span>{/if}</span>
+            </button>
           {/each}
         </div>
       {/if}
     </div>
-    <button class="btn sm ghost" onclick={() => resetLayout(id)} title="Reihenfolge, Breiten und Sichtbarkeit auf die Vorgabe zurücksetzen"><Icon name="refresh" size={14} /> Zurücksetzen</button>
-    <button class="btn sm primary" onclick={() => (layout.editing = '')}><Icon name="check" size={14} /> Fertig</button>
+    <button class="btn sm ghost" onclick={() => resetLayout(id)} title="Reihenfolge, Breiten und Sichtbarkeit auf die Vorgabe zurücksetzen"><Icon name="reset" size={14} /> Zurücksetzen</button>
+    <button class="btn sm primary" onclick={() => ((layout.editing = ''), (catalog = false))}><Icon name="check" size={14} /> Fertig</button>
   </div>
 {/if}
 
@@ -151,11 +165,11 @@
           <span class="grip" title="Ziehen zum Verschieben" role="button" tabindex="-1" aria-label="Verschieben" onpointerdown={(e) => onGripDown(e, wid)} onpointermove={onGripMove} onpointerup={onGripUp} onpointercancel={onGripUp}><Icon name="grip" size={16} /></span>
           <span class="bw-title">{w.title}</span>
           <span class="grow"></span>
-          <button class="tb" onclick={() => step(wid, -1)} title="Nach vorn" disabled={visible[0] === wid}><Icon name="arrow-left" size={14} /></button>
-          <button class="tb" onclick={() => step(wid, 1)} title="Nach hinten" disabled={visible.at(-1) === wid}><Icon name="arrow-right" size={14} /></button>
-          <button class="tb" onclick={() => resize(wid, -1)} title="Schmaler" disabled={span <= STEPS[0]}><Icon name="minus" size={14} /></button>
-          <span class="tiny muted nowrap">{span}/12</span>
-          <button class="tb" onclick={() => resize(wid, 1)} title="Breiter" disabled={span >= 12}><Icon name="plus" size={14} /></button>
+          <button class="tb arrow" onclick={() => step(wid, -1)} title="Nach vorn" disabled={visible[0] === wid}><Icon name="arrow-left" size={14} /></button>
+          <button class="tb arrow" onclick={() => step(wid, 1)} title="Nach hinten" disabled={visible.at(-1) === wid}><Icon name="arrow-right" size={14} /></button>
+          <span class="sizes" role="group" aria-label="Breite">
+            {#each SIZES as [n, l, t]}<button class:active={near(span) === n} onclick={() => setSize(wid, n)} title={t}>{l}</button>{/each}
+          </span>
           <button class="tb" onclick={() => hide(wid)} title="Ausblenden"><Icon name="eye-off" size={14} /></button>
         </div>
       {/if}
@@ -163,7 +177,7 @@
     </div>
   {/each}
   {#if !visible.length}
-    <div class="card card-pad muted small" style="grid-column:1/-1">Alle Fenster sind ausgeblendet. <button class="btn sm" onclick={() => (layout.editing = id)}>Anordnen</button></div>
+    <div class="card card-pad muted small" style="grid-column:1/-1">Alle Fenster sind ausgeblendet. <button class="btn sm" onclick={() => (layout.editing = id)}>Anpassen</button></div>
   {/if}
 </div>
 
@@ -172,7 +186,7 @@
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
     grid-auto-flow: row dense;
-    gap: 16px;
+    gap: var(--gap, 14px);
     align-items: stretch;
   }
   .bw {
@@ -237,6 +251,7 @@
   }
   .bw-tools {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 4px;
     padding: 4px 6px;
@@ -245,6 +260,13 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     font-size: var(--fs-sm);
+  }
+  /* schmale Fenster: Pfeile weg (Ziehen am Griff geht), Titel kürzen */
+  .bw.xs .tb.arrow {
+    display: none;
+  }
+  .bw.xs .bw-title {
+    flex: 1 1 40px;
   }
   .grip {
     cursor: grab;
@@ -281,7 +303,8 @@
   }
   .board-bar {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 10px 14px;
     margin-bottom: 14px;
@@ -293,24 +316,74 @@
     z-index: 5;
     box-shadow: var(--shadow);
   }
-  .hidden-row {
-    margin-top: 6px;
-    gap: 6px;
-  }
-  .chip {
+  .sizes {
     display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    border: 1px solid var(--border);
-    background: var(--panel-2);
-    color: var(--text);
-    border-radius: 999px;
-    padding: 2px 10px;
+    gap: 1px;
+    background: var(--panel);
+    border-radius: 6px;
+    padding: 1px;
+  }
+  .sizes button {
+    border: none;
+    background: none;
+    color: var(--muted);
     font: inherit;
-    font-size: var(--fs-sm);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 5px;
     cursor: pointer;
   }
-  .chip:hover {
-    border-color: var(--accent);
+  .sizes button:hover {
+    color: var(--text);
+  }
+  .sizes button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .cat-wrap {
+    position: relative;
+  }
+  .cat {
+    position: absolute;
+    right: 0;
+    top: 34px;
+    z-index: 10;
+    width: 280px;
+    max-height: 60vh;
+    overflow: auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    padding: 6px;
+  }
+  .cat-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    border: none;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+    text-align: left;
+    padding: 7px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .cat-item:hover {
+    background: var(--panel-2);
+  }
+  .cat-item :global(svg) {
+    margin-top: 2px;
+    color: var(--accent);
+  }
+  @media (max-width: 700px) {
+    .hide-sm {
+      display: none;
+    }
   }
 </style>

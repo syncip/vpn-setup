@@ -62,7 +62,7 @@
   <div class="card">
     <div class="card-head">
       <h3><Icon name="route" size={16} /> Weg ins Internet</h3>
-      <button class="btn sm ghost" onclick={() => go('/proxy/rules')}>Ziel-Regeln <Icon name="arrow-right" size={14} /></button>
+      <button class="btn sm ghost" onclick={() => go('/routing/rules')}>Ziel-Regeln <Icon name="arrow-right" size={14} /></button>
     </div>
     <div class="list">
       {#each peers as p (p.id)}
@@ -70,7 +70,7 @@
           <div class="who"><ProtoLogo id={p.protocol} size={18} /> <span class="strong ellipsis">{p.name}</span> <span class="muted tiny">{serverById[p.server_id]?.name || ''}</span></div>
           <div class="steps">
             {#each path(p) as s}
-              <button class="step" class:direct={s.via === 'direkt'} disabled={!s.r} onclick={() => go('/proxy/rules')} title={s.r ? `Regel ${s.r.name || '#' + s.r.id} (${s.level})` : 'Keine Regel – direkt über den Server'}>
+              <button class="step" class:direct={s.via === 'direkt'} disabled={!s.r} onclick={() => go('/routing/rules')} title={s.r ? `Regel ${s.r.name || '#' + s.r.id} (${s.level})` : 'Keine Regel – direkt über den Server'}>
                 <span class="muted">{s.what}</span> <Icon name="arrow-right" size={12} /> <span class="strong">{s.via}</span>{#if s.level}<span class="lvl">{s.level}</span>{/if}
               </button>
             {/each}

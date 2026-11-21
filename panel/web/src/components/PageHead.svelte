@@ -9,7 +9,7 @@
 <div class="page-head">
   <div class="grow">
     <h1>{title}{#if help}&nbsp;<Info title={helpTitle || title} wide={helpWide}>{@render help()}</Info>{/if}</h1>
-    {#if subtitle}<div class="muted">{subtitle}</div>{/if}
+    {#if subtitle}<div class="muted small">{subtitle}</div>{/if}
   </div>
   {#if children || layout.active}
     <div class="row wrap">
@@ -23,8 +23,8 @@
   .page-head {
     display: flex;
     align-items: flex-end;
-    gap: 16px;
-    margin-bottom: 22px;
+    gap: 8px 16px;
+    margin-bottom: 16px;
     flex-wrap: wrap;
   }
   h1 :global(.info-btn) {

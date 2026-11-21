@@ -6,12 +6,14 @@
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run } from '../lib/api.js';
   import { ago, fmtNum } from '../lib/format.js';
-  import { go } from '../lib/state.svelte.js';
+  import { go, toast } from '../lib/state.svelte.js';
+  import SearchInput from '../components/SearchInput.svelte';
   import Picker from '../components/Picker.svelte';
   import Info from '../components/Info.svelte';
   import { peerItems, userItems, serverItems } from '../lib/pick.js';
   import DNSExternal from '../components/DNSExternal.svelte';
   import DNSLive from '../components/DNSLive.svelte';
+  import DNSListBrowser from '../components/DNSListBrowser.svelte';
   import Board from '../components/Board.svelte';
 
   let { tab = 'overview' } = $props();
@@ -320,6 +322,36 @@
     if (await run(() => del(`/dns/lists/${l.id}`), 'Liste gelöscht')) load();
   }
   const usedPresets = $derived(new Set(d.lists.map((l) => l.url)));
+
+  // ---------- Blocklisten durchsuchen und anpassen ----------
+  let br = $state({ open: false, list: null, preset: null, start: '' });
+  const browse = (list, start = '') => (br = { open: true, list, preset: null, start });
+  const preview = (preset) => (br = { open: true, list: null, preset, start: '' });
+  let gq = $state('');
+  let gres = $state(null);
+  let gbusy = $state(false);
+  let gtimer = 0;
+  $effect(() => {
+    const q = gq.trim();
+    clearTimeout(gtimer);
+    if (q.length < 2) {
+      gres = null;
+      return;
+    }
+    gtimer = setTimeout(async () => {
+      gbusy = true;
+      try {
+        const r = await get(`/dns/lists/search?q=${encodeURIComponent(q)}`);
+        if (gq.trim() === q) gres = r.lists;
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        gbusy = false;
+      }
+    }, 300);
+    return () => clearTimeout(gtimer);
+  });
+  const listById = $derived(Object.fromEntries(d.lists.map((l) => [l.id, l])));
   $effect(() => {
     if (tab !== 'lists') return;
     const t = setInterval(() => !lOpen && load(), 15000);
@@ -454,12 +486,12 @@
   }
 </script>
 
-<PageHead title="DNS" subtitle="Eigener DNS für WireGuard- und OpenVPN-Geräte">
+<PageHead title={tab === 'overview' ? 'DNS' : `DNS · ${TABS.find((t) => t[0] === tab)?.[1]}`} subtitle="Eigener DNS für WireGuard- und OpenVPN-Geräte">
   {#if tab === 'profiles'}<button class="btn primary" onclick={() => openProfile()}><Icon name="plus" size={16} /> Profil anlegen</button>{/if}
   {#if tab === 'lists'}<button class="btn primary" onclick={() => openList()}><Icon name="plus" size={16} /> Liste anlegen</button>{/if}
 </PageHead>
 
-<div class="tabs">
+<div class="tabs pagetabs">
   {#each TABS as [id, label, icon]}
     <button class:active={tab === id} onclick={() => go(id === 'overview' ? '/dns' : `/dns/${id}`)}><Icon name={icon} size={14} /> {label}</button>
   {/each}
@@ -842,13 +874,39 @@
   {/if}
   <div class="row infoline"><Info title="Welches Profil gilt?" text="Für jedes Gerät gilt genau ein Profil: das am Gerät, sonst das des Nutzers, sonst das des Servers, sonst das für alle Geräte. Gelten auf einer Ebene mehrere, gewinnt das ältere." label="Welches Profil gilt?" /></div>
 {:else if tab === 'lists'}
+  <div class="card gsearch">
+    <div class="card-pad stack" style="gap:8px">
+      <div class="row wrap" style="gap:10px">
+        <strong class="small">In allen Listen suchen</strong>
+        <Info title="Suche über alle Listen"><p>Findet Domains in allen angelegten Listen (eigene Einträge und Online-Listen). Bei einem vollständigen Namen wie <code>ads.beispiel.de</code> zeigt die Suche auch, wenn eine Liste ihn über einen übergeordneten Namen (<code>beispiel.de</code>) sperrt.</p><p>„Öffnen“ zeigt die Treffer der Liste – dort kannst du Domains herausnehmen, wieder aufnehmen oder ergänzen.</p></Info>
+        <span class="grow"></span>
+        <SearchInput bind:value={gq} placeholder="Domain, z. B. doubleclick.net" width="320px" />
+      </div>
+      {#if gq.trim().length >= 2}
+        {#if gres && !gres.length}
+          <div class="muted small">{gbusy ? 'Sucht …' : `In keiner Liste – „${gq.trim()}“ wird von den Listen nicht gesperrt.`}</div>
+        {/if}
+        {#each gres || [] as h (h.id)}
+          <div class="ghit">
+            <span class="badge {h.mode === 'allow' ? 'ok' : 'bad'}" title={h.mode === 'allow' ? 'Freigaben' : 'Sperren'}><Icon name={h.mode === 'allow' ? 'check' : 'lock'} size={12} /></span>
+            <div class="grow" style="min-width:0">
+              <div class="small"><b>{h.name}</b>{#if !h.enabled}&nbsp;<span class="badge muted">aus</span>{/if} <span class="muted">· {fmtNum(h.matched)} {h.matched === 1 ? 'Treffer' : 'Treffer'}</span></div>
+              {#if h.via}<div class="tiny {h.mode === 'allow' ? 'ok-text' : 'bad-text'}">{h.mode === 'allow' ? 'Gibt' : 'Sperrt'} „{gq.trim()}“{h.via !== gq.trim().toLowerCase() ? ` über „${h.via}“` : ''}</div>{/if}
+              <div class="gitems">{#each h.items as it}<span class="mono tiny" class:strike={it.src === 'excluded'}>{it.d}</span>{/each}{#if h.matched > h.items.length}<span class="tiny muted">…</span>{/if}</div>
+            </div>
+            <button class="btn sm" onclick={() => browse(listById[h.id] || { id: h.id, name: h.name, mode: h.mode }, h.matched ? gq.trim() : h.via)}><Icon name="search" size={14} /> Öffnen</button>
+          </div>
+        {/each}
+      {/if}
+    </div>
+  </div>
   <div class="grid cols-2">
     {#each d.lists as l}
       <div class="card lst" class:off={!l.enabled}>
         <div class="card-head">
           <div>
             <h3>{l.name}</h3>
-            <div class="muted tiny">{fmtNum(l.total)} Domains{#if l.url && l.entries.length}&nbsp;({fmtNum(l.entries.length)} eigene){/if}</div>
+            <div class="muted tiny">{fmtNum(l.total)} Domains{#if l.url && l.entries.length}&nbsp;({fmtNum(l.entries.length)} eigene){/if}{#if l.excluded}&nbsp;· {fmtNum(l.excluded)} herausgenommen{/if}</div>
           </div>
           <span class="badge {l.mode === 'allow' ? 'ok' : 'bad'}"><Icon name={l.mode === 'allow' ? 'check' : 'lock'} size={13} /> {l.mode === 'allow' ? 'Freigaben' : 'Sperren'}</span>
         </div>
@@ -872,7 +930,8 @@
           {/if}
         </div>
         <div class="actions">
-          <button class="btn sm" onclick={() => openList(l)}><Icon name="edit" size={15} /> Bearbeiten</button>
+          <button class="btn sm" onclick={() => browse(l)} title="Domains der Liste durchsuchen, herausnehmen oder ergänzen"><Icon name="search" size={15} /> Durchsuchen</button>
+          <button class="btn sm ghost" onclick={() => openList(l)}><Icon name="edit" size={15} /> Bearbeiten</button>
           <button class="btn sm ghost" onclick={() => toggleDNSList(l)}><Icon name="power" size={15} /> {l.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
           {#if l.url}<button class="btn sm ghost" onclick={() => refreshList(l)} disabled={busy === l.id}><Icon name="refresh" size={15} /> {busy === l.id ? 'Lädt …' : 'Neu laden'}</button>{/if}
           <span class="grow"></span>
@@ -888,15 +947,18 @@
       <p>Damit eine Liste wirkt, muss sie in einem Filterprofil gewählt sein.</p>
     </Info></h3></div>
     <div class="toplist">
-      {#each d.presets as pr}
+      {#each d.presets as pr, i}
         <div class="toprow">
           <div class="grow">
             <div class="small strong">{pr.name}</div>
             <div class="tiny muted">{pr.note}</div>
           </div>
           {#if usedPresets.has(pr.url)}
+            {@const own = d.lists.find((l) => l.url === pr.url)}
+            <button class="btn sm ghost" onclick={() => browse(own)} title="Angelegte Liste durchsuchen und anpassen"><Icon name="search" size={14} /> Durchsuchen</button>
             <span class="badge ok"><Icon name="check" size={12} /> hinzugefügt</span>
           {:else}
+            <button class="btn sm ghost" onclick={() => preview({ ...pr, index: i })} title="Inhalt ansehen, bevor du die Liste hinzufügst"><Icon name="eye" size={14} /> Ansehen</button>
             <button class="btn sm" onclick={() => openList(null, pr)}><Icon name="plus" size={14} /> Hinzufügen</button>
           {/if}
         </div>
@@ -1165,7 +1227,7 @@
         </Info></span
       >
       {#if !groupOpts.length}
-        <div class="muted small">Noch keine Ausgangsgruppe – unter <a href="#/proxy/groups">Proxy & Ausgänge → Gruppen</a> anlegen.</div>
+        <div class="muted small">Noch keine Ausgangsgruppe – unter <a href="#/routing/groups">Routing → Gruppen</a> anlegen.</div>
       {:else}
         {#each pf.smart as row, i}
           <div class="smartrow">
@@ -1251,6 +1313,8 @@
     <button class="btn primary" onclick={saveList} disabled={!lf.name}>{lCur ? 'Speichern' : 'Anlegen'}</button>
   {/snippet}
 </Modal>
+
+<DNSListBrowser bind:open={br.open} list={br.list} preset={br.preset} start={br.start} onchange={load} onadd={(pr) => openList(null, pr)} />
 
 <style>
   .smartrow {
@@ -1422,6 +1486,30 @@
     margin-top: 2px;
     max-width: 320px;
   }
+  .gsearch {
+    margin-bottom: var(--gap);
+  }
+  .ghit {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0 2px;
+    border-top: 1px solid var(--border);
+  }
+  .ghit .badge {
+    margin-top: 2px;
+  }
+  .gitems {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    margin-top: 2px;
+    color: var(--text-2);
+  }
+  .strike {
+    text-decoration: line-through;
+    opacity: 0.6;
+  }
   .lst {
     display: flex;
     flex-direction: column;
@@ -1431,6 +1519,7 @@
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     padding: 10px 14px;
     border-top: 1px solid var(--border);

@@ -43,6 +43,8 @@ type DNSList struct {
 	URL     string
 	Refresh int // Stunden, 0 = nur von Hand
 	Entries []string
+	// Excluded: aus der Online-Liste herausgenommene Domains (bleiben auch nach dem Neuladen draußen)
+	Excluded []string
 }
 
 func DNSListFrom(o *store.Object) *DNSList {
@@ -55,6 +57,7 @@ func DNSListFrom(o *store.Object) *DNSList {
 		l.Refresh = int(f)
 	}
 	l.Entries = strs(o.Data["entries"])
+	l.Excluded = strs(o.Data["excluded"])
 	return l
 }
 
@@ -351,7 +354,11 @@ func (e *Engine) DeleteDNSListData(id int64) {
 
 // dnsListSets: eigene Einträge plus geladener Inhalt (zwischengespeichert, solange sich nichts ändert).
 func (e *Engine) dnsListSets(l *DNSList) *dnsListData {
-	sig := fmt.Sprintf("%s|%d|%s", l.Mode, len(l.Entries), hashStr(strings.Join(l.Entries, ",")))
+	sig := fmt.Sprintf("%s|%d|%s|%s", l.Mode, len(l.Entries), hashStr(strings.Join(l.Entries, ",")), hashStr(strings.Join(l.Excluded, ",")))
+	excl := make(map[string]bool, len(l.Excluded))
+	for _, x := range l.Excluded {
+		excl[x] = true
+	}
 	path := e.dnsListPath(l.ID)
 	fi, ferr := os.Stat(path)
 	if l.URL != "" && ferr == nil {
@@ -380,8 +387,10 @@ func (e *Engine) dnsListSets(l *DNSList) *dnsListData {
 			for sc.Scan() {
 				t := sc.Text()
 				if strings.HasPrefix(t, "@") {
-					d.allow[t[1:]] = struct{}{}
-				} else if t != "" {
+					if !excl[t[1:]] {
+						d.allow[t[1:]] = struct{}{}
+					}
+				} else if t != "" && !excl[t] {
 					own[t] = struct{}{}
 				}
 			}
@@ -399,6 +408,37 @@ func (e *Engine) dnsListSets(l *DNSList) *dnsListData {
 
 // dnsListSample: Inhalt für den Testmodus (nichts aus dem Netz laden).
 const dnsListSample = "0.0.0.0 ads.example.com\n0.0.0.0 tracker.example.net\n||doubleclick.net^\n||googlesyndication.com^\n@@||ok.example.com^\n"
+
+// downloadDomainList lädt eine Online-Liste und liest die Domains (Testmodus: Beispielinhalt).
+func (e *Engine) downloadDomainList(raw string) (block, allow []string, skipped int, err error) {
+	if err := CheckListURL(raw); err != nil {
+		return nil, nil, 0, err
+	}
+	var body io.Reader
+	if u, _ := url.Parse(raw); e.Sys.DryRun() && u != nil && u.Hostname() != "127.0.0.1" {
+		body = strings.NewReader(dnsListSample)
+	} else {
+		req, _ := http.NewRequest(http.MethodGet, raw, nil)
+		req.Header.Set("User-Agent", "vpnpanel")
+		resp, err := listHTTP().Do(req)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("nicht erreichbar: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, nil, 0, fmt.Errorf("Antwort %d vom Server der Liste", resp.StatusCode)
+		}
+		body = &io.LimitedReader{R: resp.Body, N: 4*maxListBytes + 1}
+	}
+	block, allow, skipped, err = ParseDomainList(body, maxDNSListEntries)
+	if err != nil {
+		return nil, nil, skipped, err
+	}
+	if lr, ok := body.(*io.LimitedReader); ok && lr.N <= 0 {
+		return nil, nil, skipped, fmt.Errorf("Liste ist größer als %d MB", 4*maxListBytes>>20)
+	}
+	return block, allow, skipped, nil
+}
 
 // FetchDNSList lädt eine Online-Blockliste neu. changed = Inhalt hat sich geändert.
 func (e *Engine) FetchDNSList(id int64) (changed bool, err error) {
@@ -436,31 +476,9 @@ func (e *Engine) FetchDNSList(id int64) (changed bool, err error) {
 		e.setDNSListStatus(id, st)
 		return false, err
 	}
-	if err := CheckListURL(l.URL); err != nil {
-		return fail(err)
-	}
-	var body io.Reader
-	if u, _ := url.Parse(l.URL); e.Sys.DryRun() && u != nil && u.Hostname() != "127.0.0.1" {
-		body = strings.NewReader(dnsListSample)
-	} else {
-		req, _ := http.NewRequest(http.MethodGet, l.URL, nil)
-		req.Header.Set("User-Agent", "vpnpanel")
-		resp, err := listHTTP().Do(req)
-		if err != nil {
-			return fail(fmt.Errorf("nicht erreichbar: %v", err))
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fail(fmt.Errorf("Antwort %d vom Server der Liste", resp.StatusCode))
-		}
-		body = &io.LimitedReader{R: resp.Body, N: 4*maxListBytes + 1}
-	}
-	block, allow, skipped, err := ParseDomainList(body, maxDNSListEntries)
+	block, allow, skipped, err := e.downloadDomainList(l.URL)
 	if err != nil {
 		return fail(err)
-	}
-	if lr, ok := body.(*io.LimitedReader); ok && lr.N <= 0 {
-		return fail(fmt.Errorf("Liste ist größer als %d MB", 4*maxListBytes>>20))
 	}
 	if len(block)+len(allow) == 0 {
 		return fail(fmt.Errorf("keine Domains gefunden (%d Zeilen nicht lesbar) – Hosts-Datei, Adblock-Liste oder eine Domain pro Zeile?", skipped))

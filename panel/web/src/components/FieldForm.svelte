@@ -68,7 +68,7 @@
           <option value={0}>Direkt über den Server</option>
           {#each groups || [] as g}<option value={g.id}>{g.name}{g.enabled ? '' : ' (deaktiviert)'}</option>{/each}
         </select>
-        {#if groups && !groups.length}<div class="help">Noch keine Ausgangsgruppen – im Menü <a href="#/proxy/groups">Proxy &amp; Ausgänge → Gruppen</a> anlegen.</div>{/if}
+        {#if groups && !groups.length}<div class="help">Noch keine Ausgangsgruppen – im Menü <a href="#/routing/groups">Proxy &amp; Ausgänge → Gruppen</a> anlegen.</div>{/if}
       {:else if f.type === 'number'}
         <input id="f-{f.key}" class="input" type="number" value={values[f.key] ?? ''} oninput={(e) => num(e, f.key)} placeholder={f.placeholder || ''} />
       {:else if f.type === 'cidrlist' || f.type === 'textlist'}

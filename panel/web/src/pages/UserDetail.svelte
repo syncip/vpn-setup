@@ -6,8 +6,9 @@
   import PeerRoutes from '../components/PeerRoutes.svelte';
   import Modal from '../components/Modal.svelte';
   import Info from '../components/Info.svelte';
-  import TrafficPanel from '../components/TrafficPanel.svelte';
-  import LivePanel from '../components/LivePanel.svelte';
+  import TrafficChart from '../components/TrafficChart.svelte';
+  import LiveDevices from '../components/LiveDevices.svelte';
+  import { liveFeed } from '../lib/live.svelte.js';
   import Usage from '../components/Usage.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LimitsForm from '../components/LimitsForm.svelte';
@@ -27,7 +28,9 @@
   const TABS = ['overview', 'peers', 'limits', 'sub', 'settings'];
   const tab = $derived(TABS.includes(tabParam) ? tabParam : 'overview');
   const setTab = (t) => go(t === 'overview' ? `/users/${id}` : `/users/${id}/${t}`);
-  let liveOn = $state(0);
+  // verbundene Geräte live (gemeinsame Abfrage mit Grafik und Geräteliste)
+  const lv = liveFeed(() => id);
+  const liveOn = $derived((lv.d?.peers || []).filter((p) => p.user_id === Number(id)).length);
   let now = $state(Date.now() / 1000);
   $effect(() => {
     const t = setInterval(() => (now = Date.now() / 1000), 15000);
@@ -157,7 +160,7 @@
         {#if u.status_reason}· <span class="strong">{u.status_reason}</span>{/if}
       </div>
     </div>
-    <div class="row">
+    <div class="row wrap">
       {#if tab === 'overview'}<LayoutButton />{/if}
       <button class="btn" onclick={toggleEnabled}><Icon name="power" size={16} /> {u.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
       <button class="btn danger" onclick={remove}><Icon name="trash" size={16} /> Löschen</button>
@@ -202,7 +205,7 @@
       </div>
     {/snippet}
     {#snippet w_live()}
-    <LivePanel user={id} compact bind:connected={liveOn} />
+    <LiveDevices user={id} title="Verbunden" limit={8} />
     {/snippet}
     {#snippet w_sub()}
     <div class="card">
@@ -226,7 +229,7 @@
     </div>
     {/snippet}
     {#snippet w_traffic()}
-    <TrafficPanel url={`/users/${id}/traffic`} />
+    <TrafficChart id="user-traffic" title="Verkehr" url={`/users/${id}/traffic`} user={id} kpis />
     {/snippet}
     {#snippet w_peers()}
     <div class="card">
@@ -267,9 +270,9 @@
         { id: 'speed', title: 'Aktuelles Tempo', w: 3, body: w_speed },
         { id: 'total', title: 'Gesamt seit Beginn', w: 3, body: w_total },
         { id: 'online', title: 'Online / zuletzt da', w: 3, body: w_online },
-        { id: 'live', title: 'Live', w: 8, body: w_live },
+        { id: 'traffic', title: 'Verkehr (live und Verlauf)', w: 8, body: w_traffic },
         { id: 'sub', title: 'Abo-Link', w: 4, body: w_sub },
-        { id: 'traffic', title: 'Traffic-Verlauf', w: 8, body: w_traffic },
+        { id: 'live', title: 'Verbundene Geräte', w: 8, body: w_live },
         { id: 'peers', title: 'Zugänge', w: 4, body: w_peers },
         { id: 'info', title: 'Limits und Daten', w: 4, body: w_info },
       ]}
@@ -284,7 +287,7 @@
         <div class="card">
           <div class="card-head">
             <h3 class="row" style="gap:8px"><ProtoLogo id={g.protocol} size={24} /> {g.name} <span class="muted small" style="font-weight:400">{protocol(g.protocol)?.label || g.protocol}</span></h3>
-            {#if g.protocol === 'wireguard'}<a class="small" href="#/network/{sid}">Netzwerk ansehen</a>{/if}
+            {#if g.protocol === 'wireguard'}<a class="small" href="#/servers/wg/{sid}">Netzwerk ansehen</a>{/if}
           </div>
           <div class="table-wrap">
             <table class="table">

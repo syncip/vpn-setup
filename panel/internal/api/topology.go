@@ -163,9 +163,9 @@ func (a *API) topology(w http.ResponseWriter, r *http.Request) {
 				if msg == "" {
 					msg = "nicht verbunden"
 				}
-				issues = append(issues, issue{"bad", "exit", o.ID, fmt.Sprintf("Ausgang „%s“: %s", o.Name, msg), "#/proxy"})
+				issues = append(issues, issue{"bad", "exit", o.ID, fmt.Sprintf("Ausgang „%s“: %s", o.Name, msg), "#/routing"})
 			case st.Loss > 20:
-				issues = append(issues, issue{"warn", "exit", o.ID, fmt.Sprintf("Ausgang „%s“: %.0f %% Paketverlust", o.Name, st.Loss), "#/proxy"})
+				issues = append(issues, issue{"warn", "exit", o.ID, fmt.Sprintf("Ausgang „%s“: %.0f %% Paketverlust", o.Name, st.Loss), "#/routing"})
 			}
 		}
 	}
@@ -177,11 +177,11 @@ func (a *API) topology(w http.ResponseWriter, r *http.Request) {
 			}
 			switch st.State {
 			case "blocked":
-				issues = append(issues, issue{"bad", "group", o.ID, fmt.Sprintf("Gruppe „%s“: alle Ausgänge gestört – Verkehr ist gesperrt", o.Name), "#/proxy"})
+				issues = append(issues, issue{"bad", "group", o.ID, fmt.Sprintf("Gruppe „%s“: alle Ausgänge gestört – Verkehr ist gesperrt", o.Name), "#/routing"})
 			case "direct":
-				issues = append(issues, issue{"warn", "group", o.ID, fmt.Sprintf("Gruppe „%s“: alle Ausgänge gestört – Verkehr geht direkt über den Server", o.Name), "#/proxy"})
+				issues = append(issues, issue{"warn", "group", o.ID, fmt.Sprintf("Gruppe „%s“: alle Ausgänge gestört – Verkehr geht direkt über den Server", o.Name), "#/routing"})
 			case "failover":
-				issues = append(issues, issue{"warn", "group", o.ID, fmt.Sprintf("Gruppe „%s“ nutzt den Ausweich-Ausgang „%s“ (%s)", o.Name, exitName[st.Active], st.Reason), "#/proxy"})
+				issues = append(issues, issue{"warn", "group", o.ID, fmt.Sprintf("Gruppe „%s“ nutzt den Ausweich-Ausgang „%s“ (%s)", o.Name, exitName[st.Active], st.Reason), "#/routing"})
 			}
 		}
 	}
@@ -196,13 +196,13 @@ func (a *API) topology(w http.ResponseWriter, r *http.Request) {
 		if n == "" {
 			n = fmt.Sprintf("#%d", id)
 		}
-		issues = append(issues, issue{"warn", "route", id, fmt.Sprintf("Ziel-Regel „%s“ wirkt nicht: %s", n, notes[id]), "#/proxy"})
+		issues = append(issues, issue{"warn", "route", id, fmt.Sprintf("Ziel-Regel „%s“ wirkt nicht: %s", n, notes[id]), "#/routing"})
 	}
 	if lo, err := a.St.Objects("iplist"); err == nil {
 		for _, o := range lo {
 			if l := engine.IPListFrom(o); l.Enabled && l.URL != "" {
 				if st := a.E.ListStatus(o.ID); st.Error != "" {
-					issues = append(issues, issue{"warn", "list", o.ID, fmt.Sprintf("IP-Liste „%s“: Abruf fehlgeschlagen – %s", o.Name, st.Error), "#/iplists"})
+					issues = append(issues, issue{"warn", "list", o.ID, fmt.Sprintf("IP-Liste „%s“: Abruf fehlgeschlagen – %s", o.Name, st.Error), "#/routing/iplists"})
 				}
 			}
 		}

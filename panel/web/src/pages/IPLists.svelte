@@ -92,7 +92,7 @@
   {#snippet help()}
     <p><b>Sperrliste:</b> Gesperrte Adressen können sich nicht mehr verbinden; bestehende Verbindungen werden getrennt.</p>
     <p><b>Freigabeliste:</b> Gibt es für einen Dienst eine, dürfen nur deren Adressen verbinden – Sperrlisten gelten trotzdem.</p>
-    <p><b>Zielliste:</b> Ziele für Ziel-Regeln (Proxy & Ausgänge).</p>
+    <p><b>Zielliste:</b> Ziele für Ziel-Regeln (Routing).</p>
     <p>Das Webinterface und die Abo-Links sind nicht betroffen. Online-Listen lädt der Server regelmäßig neu (eine Adresse oder ein Netz pro Zeile, z. B. Sperrlisten von FireHOL oder Spamhaus); schlägt ein Abruf fehl, bleibt der letzte Stand aktiv.</p>
   {/snippet}
   <button class="btn primary" onclick={() => openList()}><Icon name="plus" size={16} /> Liste anlegen</button>
@@ -230,6 +230,7 @@
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     padding: 10px 14px;
     border-top: 1px solid var(--border);

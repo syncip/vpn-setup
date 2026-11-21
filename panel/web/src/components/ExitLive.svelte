@@ -3,7 +3,7 @@
   // (wird im Browser gesammelt, solange die Seite offen ist).
   import Icon from './Icon.svelte';
   import Info from './Info.svelte';
-  import TimeChart from './TimeChart.svelte';
+  import Chart from './Chart.svelte';
   import StateBadge from './StateBadge.svelte';
   import { get } from '../lib/api.js';
   import { speed } from '../lib/format.js';
@@ -12,7 +12,7 @@
   let { exits = [], groups = [] } = $props();
 
   const KEEP = 30 * 60 * 1000;
-  let win = $state(5); // Minuten
+  let win = $state('5'); // Minuten
   let sel = $state('all'); // all | e<id> | g<id>
   let cur = $state(null); // letzte Antwort
   let hist = $state({}); // Schlüssel → [{ts, up, down}]
@@ -56,27 +56,37 @@
   const exitName = (id) => exits.find((e) => e.id === id)?.name || '–';
   const selName = $derived(sel === 'all' ? 'Alle Ausgänge' : sel[0] === 'e' ? exitName(+sel.slice(1)) : 'Gruppe ' + (groups.find((g) => g.id === +sel.slice(1))?.name || ''));
   const toggle = (k) => (sel = sel === k ? 'all' : k);
+  const SERIES = [
+    { key: 'down', label: 'Download', color: 'var(--down)' },
+    { key: 'up', label: 'Upload', color: 'var(--up)' },
+  ];
 </script>
 
-<div class="card">
-  <div class="card-head">
-    <h3>
-      <span class="live-dot"></span> Live
-      <Info title="Live" text="Durchsatz der Ausgänge, alle 2 Sekunden gemessen an den Schnittstellen ex<ID>. Eine Gruppe zeigt den Durchsatz ihres aktiven Ausgangs. Der Verlauf wird gesammelt, solange die Seite offen ist. Zeile anklicken = nur diesen Ausgang bzw. diese Gruppe im Diagramm." />
-      <span class="muted small">{selName}</span>
-    </h3>
-    <div class="segmented">
-      {#each [[2, '2 Min.'], [5, '5 Min.'], [15, '15 Min.'], [30, '30 Min.']] as [n, l]}<button class:active={win === n} onclick={() => (win = n)}>{l}</button>{/each}
-    </div>
-  </div>
-  <div class="card-pad" style="padding-top:0">
+<Chart
+  id="exits-live"
+  title="Ausgänge live"
+  sub={selName}
+  series={SERIES}
+  {points}
+  unit="rate"
+  kinds={['area', 'line']}
+  from={now - +win * 60000}
+  to={now}
+  gap={8000}
+  height={170}
+  ranges={[['2', '2 Min.'], ['5', '5 Min.'], ['15', '15 Min.'], ['30', '30 Min.']]}
+  bind:range={win}
+  live
+>
+  {#snippet tools()}<Info title="Live" text="Durchsatz der Ausgänge, alle 2 Sekunden gemessen an den Schnittstellen ex<ID>. Eine Gruppe zeigt den Durchsatz ihres aktiven Ausgangs. Der Verlauf wird gesammelt, solange die Seite offen ist. Zeile anklicken = nur diesen Ausgang bzw. diese Gruppe im Diagramm." />{/snippet}
+  {#snippet children()}
     <div class="kpis">
       <div><div class="muted tiny">Download</div><div class="kpi">{speed(last.down)}</div></div>
       <div><div class="muted tiny">Upload</div><div class="kpi up">{speed(last.up)}</div></div>
-      <div><div class="muted tiny">Ausgänge verbunden</div><div class="kpi">{exits.filter((e) => exitState(e).tone === 'ok').length}<span class="muted"> / {exits.filter((e) => e.enabled).length}</span></div></div>
+      <div><div class="muted tiny">Ausgänge verbunden</div><div class="kpi other">{exits.filter((e) => exitState(e).tone === 'ok').length}<span class="muted"> / {exits.filter((e) => e.enabled).length}</span></div></div>
     </div>
-    <TimeChart mode="line" points={points} from={now - win * 60000} to={now} format={speed} gap={8000} height={170} legendNow />
-  </div>
+  {/snippet}
+  {#snippet footer()}
   <div class="rows">
     {#if groups.length}<div class="sect tiny muted">Gruppen</div>{/if}
     {#each groups as g (g.id)}
@@ -103,40 +113,25 @@
       <div class="small muted" style="padding:8px 12px">Noch keine Ausgänge.</div>
     {/each}
   </div>
-</div>
+  {/snippet}
+</Chart>
 
 <style>
-  .live-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--ok);
-    display: inline-block;
-    animation: blink 1.6s infinite;
-  }
-  @keyframes blink {
-    50% {
-      opacity: 0.35;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .live-dot {
-      animation: none;
-    }
-  }
   .kpis {
     display: flex;
     gap: 28px;
     flex-wrap: wrap;
-    margin-bottom: 8px;
   }
   .kpi {
-    font-size: var(--fs-xl);
+    font-size: var(--fs-lg);
     font-weight: 700;
     color: var(--down);
   }
   .kpi.up {
     color: var(--up);
+  }
+  .kpi.other {
+    color: var(--text);
   }
   .rows {
     display: flex;

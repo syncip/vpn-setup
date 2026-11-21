@@ -1,5 +1,5 @@
 <script>
-  // Netzwerk → Zugriff: welche Nutzer, Tarife oder Geräte welche WireGuard-Netze erreichen dürfen
+  // Server → Zugriff: welche Nutzer, Tarife oder Geräte welche WireGuard-Netze erreichen dürfen
   // (Tunnelnetz eines Servers und die Netze hinter dessen Geräten, z. B. Homelab).
   import Icon from './Icon.svelte';
   import Modal from './Modal.svelte';

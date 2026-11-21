@@ -125,7 +125,7 @@
 {:else}
   <div class="stack">
     {#if !d.mail_ok}
-      <div class="notice warn small"><Icon name="alert" size={16} /><span>Der Mailversand ist nicht eingerichtet – Alarme werden geprüft und unter „Braucht Aufmerksamkeit“ angezeigt, aber nicht verschickt. <a href="#/settings/notify">Benachrichtigungen einrichten</a></span></div>
+      <div class="notice warn small"><Icon name="alert" size={16} /><span>Der Mailversand ist nicht eingerichtet – Alarme werden geprüft und unter „Braucht Aufmerksamkeit“ angezeigt, aber nicht verschickt. <a href="#/system/settings/notify">Benachrichtigungen einrichten</a></span></div>
     {:else if !d.recipients.length}
       <div class="notice warn small"><Icon name="alert" size={16} /><span>Kein Administrator hat Benachrichtigungen mit E-Mail-Adresse eingeschaltet („Mein Konto“). Alarme ohne eigene Empfänger gehen deshalb an niemanden.</span></div>
     {/if}

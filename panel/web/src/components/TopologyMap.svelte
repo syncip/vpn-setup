@@ -419,7 +419,7 @@
     const ok = await confirmDialog({
       title: g ? `Über Gruppe „${g.name}“ leiten?` : 'Direkt über den Server leiten?',
       text: g
-        ? `${srcName(d)}: Der gesamte Verkehr läuft danach über die Ausgangsgruppe „${g.name}“. Regeln für bestimmte Ziele bleiben bestehen. Du findest die Regel unter „Proxy & Ausgänge“ → Ziel-Regeln.`
+        ? `${srcName(d)}: Der gesamte Verkehr läuft danach über die Ausgangsgruppe „${g.name}“. Regeln für bestimmte Ziele bleiben bestehen. Du findest die Regel unter „Routing“ → Ziel-Regeln.`
         : `${srcName(d)}: Der Verkehr geht danach direkt über den Server hinaus. Regeln für bestimmte Ziele bleiben bestehen.`,
       ok: 'Zuweisen',
     });
@@ -928,7 +928,7 @@
           <div class="strong">{s.name}</div>
           <div class="muted tiny">{PROTO_LABEL[s.protocol]} · {s.status?.detail || (s.status?.running ? 'läuft' : 'läuft nicht')}</div>
         </div>
-        {#if s.protocol === 'wireguard'}<a class="btn sm" href="#/network/{s.id}">Geräte und Zugriff</a>{/if}
+        {#if s.protocol === 'wireguard'}<a class="btn sm" href="#/servers/wg/{s.id}">Geräte und Zugriff</a>{/if}
         <a class="btn sm" href="#/servers"><Icon name="edit" size={14} /> Server</a>
         <button class="btn sm ghost" onclick={() => (sel = null)}>Schließen</button>
       </div>
@@ -952,7 +952,7 @@
               : 'sperren'}
           </div>
         </div>
-        <a class="btn sm" href="#/proxy/rules"><Icon name="edit" size={14} /> Gruppen und Regeln</a>
+        <a class="btn sm" href="#/routing/rules"><Icon name="edit" size={14} /> Gruppen und Regeln</a>
         <button class="btn sm ghost" onclick={() => (sel = null)}>Schließen</button>
       </div>
       <div class="facts2">
@@ -971,7 +971,7 @@
           <div class="muted tiny">{e.status?.error || (e.status?.up ? `${fmtNum(Math.round(e.status.rtt))} ms${e.status.loc ? ' · ' + e.status.loc : ''}${e.status.ip ? ' · ' + e.status.ip : ''}` : e.enabled ? 'nicht verbunden' : 'deaktiviert')}</div>
         </div>
         {#if e.via}<button class="btn sm" onclick={() => setVia(e.id, 0)}><Icon name="x" size={14} /> Direkt verbinden</button>{/if}
-        <a class="btn sm" href="#/proxy/exits"><Icon name="edit" size={14} /> Ausgänge</a>
+        <a class="btn sm" href="#/routing/exits"><Icon name="edit" size={14} /> Ausgänge</a>
         <button class="btn sm ghost" onclick={() => (sel = null)}>Schließen</button>
       </div>
       <div class="facts2">

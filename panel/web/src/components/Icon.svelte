@@ -59,6 +59,17 @@
     upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
     'arrow-up': 'M12 19V5M5 12l7-7 7 7',
     'arrow-right': 'M5 12h14M12 5l7 7-7 7',
+    'zoom-in': 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5M11 8v6M8 11h6',
+    'zoom-out': 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5M8 11h6',
+    pause: 'M7 5h3v14H7zM14 5h3v14h-3z',
+    play: 'M7 4l13 8-13 8z',
+    dots: 'M5 12h.01M12 12h.01M19 12h.01',
+    chart: 'M3 3v18h18M7 15l4-5 4 3 5-7',
+    expand: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
+    shrink: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
+    sidebar: 'M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 4v16',
+    stats: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+    reset: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
   };
 </script>
 

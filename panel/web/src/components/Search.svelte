@@ -13,36 +13,42 @@
   // Seiten, Reiter und Einstellungen (mit Stichwörtern, unter denen man sie sucht)
   const PAGES = [
     ['/', 'Übersicht', 'home', 'start dashboard live traffic aufmerksamkeit'],
+    ['/stats', 'Statistik · Verkehr', 'stats', 'traffic verlauf grafik statistik datenmenge'],
+    ['/stats/live', 'Statistik · Live', 'activity', 'live geschwindigkeit verbunden geräte online'],
+    ['/stats/exits', 'Statistik · Ausgänge', 'route', 'ausgang verkehr live grafik'],
+    ['/stats/dns', 'Statistik · DNS', 'globe', 'dns anfragen live grafik'],
     ['/users', 'Nutzer', 'users', 'benutzer konten kunden'],
     ['/servers', 'Server', 'server', 'wireguard vless hysteria openvpn protokolle'],
-    ['/plans', 'Tarife & Limits', 'tag', 'volumen drosselung limit tarif kontingent'],
-    ['/network', 'Netzwerk · Übersicht', 'network', 'topologie karte homelab'],
-    ['/network/access', 'Netzwerk · Zugriff', 'lock', 'zugriff zwischen servern netze freigeben'],
-    ['/proxy', 'Proxy & Ausgänge · Übersicht', 'route', 'ausgang externes vpn'],
-    ['/proxy/exits', 'Ausgänge', 'globe', 'externes vpn anbieter wireguard openvpn hochladen speedtest'],
-    ['/proxy/groups', 'Ausgangsgruppen', 'layers', 'failover ausweich gruppe'],
-    ['/proxy/rules', 'Ziel-Regeln', 'route', 'routing domains länder regeln'],
-    ['/proxy/proxy', 'Proxy-Server', 'server', 'socks5 http proxy fernseher'],
+    ['/users/plans', 'Tarife & Limits', 'tag', 'volumen drosselung limit tarif kontingent'],
+    ['/routing/map', 'Karte (Aufbau)', 'network', 'topologie karte homelab netzwerk aufbau stufen'],
+    ['/routing/live', 'Live-Karte', 'activity', 'topologie live verkehr störungen netzwerk'],
+    ['/servers/wg', 'WireGuard-Netz', 'network', 'netzwerk geräte homelab matrix mesh'],
+    ['/servers/access', 'Zugriff zwischen Netzen', 'lock', 'zugriff zwischen servern netze freigeben'],
+    ['/routing', 'Routing · Übersicht', 'route', 'ausgang externes vpn proxy'],
+    ['/routing/exits', 'Ausgänge', 'globe', 'externes vpn anbieter wireguard openvpn hochladen speedtest'],
+    ['/routing/groups', 'Ausgangsgruppen', 'layers', 'failover ausweich gruppe'],
+    ['/routing/rules', 'Ziel-Regeln', 'route', 'routing domains länder regeln'],
+    ['/routing/proxy', 'Proxy-Server', 'server', 'socks5 http proxy fernseher'],
     ['/dns', 'DNS · Übersicht', 'globe', 'dns statistik anfragen gesperrt'],
     ['/dns/log', 'DNS-Protokoll', 'list', 'dns log anfragen protokoll'],
     ['/dns/profiles', 'DNS-Filterprofile', 'shield', 'filter profil kinder werbung smartdns'],
     ['/dns/lists', 'DNS-Blocklisten', 'filter', 'blocklisten werbeblocker tracker adblock'],
     ['/dns/external', 'DNS ohne VPN', 'globe', 'doh dot verschlüsselt freigabe zertifikat'],
     ['/dns/settings', 'DNS-Einstellungen', 'settings', 'unbound upstream zwischenspeicher cache ttl'],
-    ['/iplists', 'IP-Listen', 'filter', 'sperrliste freigabe länder ip'],
-    ['/health', 'Zustand', 'activity', 'system komponenten cpu ram anwenden einsammeln'],
-    ['/health', 'Portweiterleitungen prüfen', 'activity', 'port weiterleitung proxmox erreichbar dnat'],
-    ['/health/updates', 'Updates', 'download', 'paket update xray hysteria debian apt sicherheit version'],
-    ['/health/events', 'Ereignisse', 'clock', 'log protokoll fehler warnungen'],
-    ['/settings', 'Einstellungen · Allgemein', 'settings', 'domain server host abo port update-prüfung'],
-    ['/settings/security', 'Einstellungen · Sicherheit', 'lock', 'lokale netze private'],
-    ['/settings/security', 'Login-Sperre', 'shield', 'fehlversuche gesperrte adressen ip sperren entsperren brute force'],
-    ['/settings/notify', 'Benachrichtigungen', 'mail', 'e-mail smtp mailserver testmail'],
-    ['/settings/alarms', 'Alarme', 'alert', 'alarm schwelle cpu speicher datenträger limit ausgang gestört warnung e-mail'],
-    ['/proxy/exits', 'Limits für Ausgänge', 'gauge', 'ausgang datenlimit volumen drosseln abschalten verbrauch'],
-    ['/settings/backup', 'Sicherung', 'archive', 'backup export einspielen wiederherstellen'],
-    ['/settings/admins', 'Administratoren', 'users', 'admin konten zugänge panel'],
-    ['/account', 'Mein Konto', 'user', 'passwort 2fa zwei-faktor totp sitzungen anmeldeprotokoll e-mail'],
+    ['/routing/iplists', 'IP-Listen', 'filter', 'sperrliste freigabe länder ip'],
+    ['/system', 'Zustand', 'activity', 'system komponenten cpu ram anwenden einsammeln'],
+    ['/system', 'Portweiterleitungen prüfen', 'activity', 'port weiterleitung proxmox erreichbar dnat'],
+    ['/system/updates', 'Updates', 'download', 'paket update xray hysteria debian apt sicherheit version'],
+    ['/system/events', 'Ereignisse', 'clock', 'log protokoll fehler warnungen'],
+    ['/system/settings', 'Einstellungen · Allgemein', 'settings', 'domain server host abo port update-prüfung'],
+    ['/system/settings/security', 'Einstellungen · Sicherheit', 'lock', 'lokale netze private'],
+    ['/system/settings/security', 'Login-Sperre', 'shield', 'fehlversuche gesperrte adressen ip sperren entsperren brute force'],
+    ['/system/settings/notify', 'Benachrichtigungen', 'mail', 'e-mail smtp mailserver testmail'],
+    ['/system/settings/alarms', 'Alarme', 'alert', 'alarm schwelle cpu speicher datenträger limit ausgang gestört warnung e-mail'],
+    ['/routing/exits', 'Limits für Ausgänge', 'gauge', 'ausgang datenlimit volumen drosseln abschalten verbrauch'],
+    ['/system/settings/backup', 'Sicherung', 'archive', 'backup export einspielen wiederherstellen'],
+    ['/system/settings/admins', 'Administratoren', 'users', 'admin konten zugänge panel'],
+    ['/system/account', 'Mein Konto', 'user', 'passwort 2fa zwei-faktor totp sitzungen anmeldeprotokoll e-mail'],
   ];
 
   let q = $state('');
@@ -75,10 +81,10 @@
     if (idx) {
       for (const u of idx.users) out.push({ group: 'Nutzer', label: u.name, sub: u.sub, icon: 'user', path: `/users/${u.id}`, off: u.off, text: `${u.name} ${u.sub || ''}` });
       for (const p of idx.peers) out.push({ group: 'Geräte und Zugänge', label: p.name, sub: p.sub, icon: 'phone', path: `/users/${p.user_id}/peers`, off: p.off, text: `${p.name} ${p.sub || ''} ${PROTO_LABEL[p.proto] || ''}` });
-      for (const s of idx.servers) out.push({ group: 'Server', label: s.name, sub: PROTO_LABEL[s.proto] || s.proto, icon: 'server', path: s.proto === 'wireguard' ? `/network/${s.id}` : '/servers', off: s.off, text: `${s.name} ${PROTO_LABEL[s.proto] || s.proto} server` });
-      for (const e of idx.exits) out.push({ group: 'Ausgänge', label: e.name, sub: e.status?.loc || '', icon: 'globe', path: '/proxy/exits', text: `${e.name} ausgang ${e.status?.loc || ''} ${e.status?.ip || ''}` });
-      for (const g of idx.groups) out.push({ group: 'Ausgangsgruppen', label: g.name, icon: 'layers', path: '/proxy/groups', text: `${g.name} gruppe` });
-      for (const p of idx.plans) out.push({ group: 'Tarife', label: p.name, sub: p.sub, icon: 'tag', path: '/plans', text: `${p.name} tarif ${p.sub || ''}` });
+      for (const s of idx.servers) out.push({ group: 'Server', label: s.name, sub: PROTO_LABEL[s.proto] || s.proto, icon: 'server', path: s.proto === 'wireguard' ? `/servers/wg/${s.id}` : '/servers', off: s.off, text: `${s.name} ${PROTO_LABEL[s.proto] || s.proto} server` });
+      for (const e of idx.exits) out.push({ group: 'Ausgänge', label: e.name, sub: e.status?.loc || '', icon: 'globe', path: '/routing/exits', text: `${e.name} ausgang ${e.status?.loc || ''} ${e.status?.ip || ''}` });
+      for (const g of idx.groups) out.push({ group: 'Ausgangsgruppen', label: g.name, icon: 'layers', path: '/routing/groups', text: `${g.name} gruppe` });
+      for (const p of idx.plans) out.push({ group: 'Tarife', label: p.name, sub: p.sub, icon: 'tag', path: '/users/plans', text: `${p.name} tarif ${p.sub || ''}` });
     }
     return out;
   });

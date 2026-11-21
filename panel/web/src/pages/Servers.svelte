@@ -136,7 +136,7 @@
         </dl>
       </div>
       <div class="actions">
-        {#if p?.mesh}<a class="btn sm" href="#/network/{s.id}"><Icon name="network" size={15} /> Netzwerk</a>{/if}
+        {#if p?.mesh}<a class="btn sm" href="#/servers/wg/{s.id}"><Icon name="network" size={15} /> Netzwerk</a>{/if}
         <button class="btn sm" onclick={() => openEdit(s)}><Icon name="edit" size={15} /> Bearbeiten</button>
         <button class="btn sm" onclick={() => toggle(s)}><Icon name="power" size={15} /> {s.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
         <span class="grow"></span>

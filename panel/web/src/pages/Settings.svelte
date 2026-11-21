@@ -19,7 +19,7 @@
   ];
   // unbekannter Tab in der Adresse → erster Tab statt leerer Seite
   $effect(() => {
-    if (!tabs.some((t) => t[0] === tab)) go('/settings');
+    if (!tabs.some((t) => t[0] === tab)) go('/system/settings');
   });
 
   // ---------- Allgemein ----------
@@ -223,16 +223,16 @@
     { key: 'sub_update_interval', label: 'Abo-Aktualisierung (Stunden)', help: 'Wie oft die App das Abo neu lädt.', num: true },
     { key: 'traffic_retention', label: 'Verlauf aufbewahren (Tage)', num: true },
     { key: 'session_hours', label: 'Anmeldung gültig (Stunden)', num: true },
-    { key: 'exit_speedtest', label: 'Geschwindigkeitstest der Ausgänge (Minuten)', help: '0 = aus. Jeder Test lädt 5 MB über den Ausgang (Menü Proxy).', num: true },
+    { key: 'exit_speedtest', label: 'Geschwindigkeitstest der Ausgänge (Minuten)', help: '0 = aus. Jeder Test lädt 5 MB über den Ausgang (Routing → Ausgänge).', num: true },
   ];
   let showAdv = $state(false);
 </script>
 
-<PageHead title="Einstellungen" subtitle="Server-Adresse, Sicherheit, Benachrichtigungen, Sicherung und Administratoren · System und Ereignisse stehen jetzt unter „Zustand“" />
+<PageHead title="Einstellungen" subtitle="Server-Adresse, Sicherheit, Benachrichtigungen, Sicherung und Administratoren" />
 
 <div class="tabs">
   {#each tabs as [id, label, icon]}
-    <button class:active={tab === id} onclick={() => go(`/settings/${id}`)}><Icon name={icon} size={16} /> {label}</button>
+    <button class:active={tab === id} onclick={() => go(`/system/settings/${id}`)}><Icon name={icon} size={16} /> {label}</button>
   {/each}
 </div>
 
@@ -257,7 +257,7 @@
   </div>
 {:else if tab === 'security'}
   <div class="grid cols-2" style="max-width:1100px">
-    <div class="notice" style="grid-column:1/-1"><Icon name="user" /><div class="small">Passwort, Zwei-Faktor-Anmeldung, Sitzungen und das Anmeldeprotokoll findest du unter <a href="#/account">Mein Konto</a> (Klick auf deinen Namen unten links).</div></div>
+    <div class="notice" style="grid-column:1/-1"><Icon name="user" /><div class="small">Passwort, Zwei-Faktor-Anmeldung, Sitzungen und das Anmeldeprotokoll findest du unter <a href="#/system/account">Mein Konto</a> (Klick auf deinen Namen unten links).</div></div>
     {#if priv}
       <div class="card" style="grid-column:1/-1">
         <div class="card-head">
@@ -268,7 +268,7 @@
               <ul>
                 <li>Gesperrt: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 (CGNAT/Tailscale), 127.0.0.0/8, 169.254.0.0/16, IPv6 fc00::/7, fe80::/10, ::1 – und die Adressen der Server-Domain.</li>
                 <li>Gilt für WireGuard, OpenVPN, VLESS, Hysteria2 und Proxy.</li>
-                <li>Netze zwischen VPN-Servern gibst du gezielt unter <a href="#/network/access">Netzwerk → Zugriff</a> frei. Geräte desselben WireGuard-Servers erreichen sich weiter nach dessen Einstellung.</li>
+                <li>Netze zwischen VPN-Servern gibst du gezielt unter <a href="#/servers/access">Server → Zugriff</a> frei. Geräte desselben WireGuard-Servers erreichen sich weiter nach dessen Einstellung.</li>
                 <li>Ausnahmen unten gelten für alle VPN-Nutzer.</li>
               </ul>
             </Info>
@@ -413,7 +413,7 @@
           {#each nstate.recipients as r}
             <div class="row small"><Icon name="mail" size={14} /> {r}</div>
           {:else}
-            <div class="notice warn"><Icon name="alert" /><div class="small">Noch kein Empfänger. Jeder Administrator trägt seine Adresse in <a href="#/account">Mein Konto</a> ein und schaltet Benachrichtigungen ein.</div></div>
+            <div class="notice warn"><Icon name="alert" /><div class="small">Noch kein Empfänger. Jeder Administrator trägt seine Adresse in <a href="#/system/account">Mein Konto</a> ein und schaltet Benachrichtigungen ein.</div></div>
           {/each}
           {#if nstate.sent?.length}
             <div class="tiny muted" style="margin-top:8px">Testmodus – nicht wirklich verschickt:</div>

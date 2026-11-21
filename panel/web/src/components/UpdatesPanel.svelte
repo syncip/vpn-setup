@@ -68,7 +68,7 @@
       {#if !d.checked}<span class="badge muted">{d.busy ? 'prüft …' : 'noch nicht geprüft'}</span>
       {:else if pending}<span class="badge {d.security ? 'bad' : 'warn'}">{pending}{d.security ? ` · ${d.security} Sicherheit` : ''}</span>{:else}<span class="badge ok">aktuell</span>{/if}
     {/if}
-    {#if compact}<span class="grow"></span><a href="#/health/updates" class="small">Details</a>{/if}
+    {#if compact}<span class="grow"></span><a href="#/system/updates" class="small">Details</a>{/if}
   </div>
   {#if !d}
     <div class="card-pad muted small">Lade …</div>

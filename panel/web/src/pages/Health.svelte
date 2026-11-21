@@ -20,7 +20,7 @@
   ];
   // unbekannter Tab in der Adresse → erster Tab statt leerer Seite
   $effect(() => {
-    if (!tabs.some((t) => t[0] === tab)) go('/health');
+    if (!tabs.some((t) => t[0] === tab)) go('/system');
   });
 
   // ---------- System ----------
@@ -69,18 +69,18 @@
   const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
 </script>
 
-<PageHead title="Zustand" subtitle="Was gerade läuft, was Aufmerksamkeit braucht, Komponenten, Ports, Updates und Ereignisse" />
+<PageHead title={tabs.find((t) => t[0] === tab)?.[1] === 'Übersicht' ? 'Zustand' : tabs.find((t) => t[0] === tab)?.[1] || 'Zustand'} subtitle={{ overview: 'Was gerade läuft, was Aufmerksamkeit braucht, Komponenten und Ports', updates: 'Pakete und Programme auf dem Server', events: 'Was das Panel getan hat und was schiefging' }[tab]} />
 
-<div class="tabs">
+<div class="tabs pagetabs">
   {#each tabs as [id, label, icon]}
-    <button class:active={tab === id} onclick={() => go(`/health${id === 'overview' ? '' : '/' + id}`)}><Icon name={icon} size={16} /> {label}</button>
+    <button class:active={tab === id} onclick={() => go(`/system${id === 'overview' ? '' : '/' + id}`)}><Icon name={icon} size={16} /> {label}</button>
   {/each}
 </div>
 
 {#if tab === 'overview'}
   {#if sys}
   <div class="stack" style="margin-bottom:16px">
-  <div class="row">
+  <div class="row wrap">
     <button class="btn primary" onclick={applyNow}><Icon name="refresh" size={16} /> Konfiguration jetzt anwenden</button>
     <button class="btn" onclick={collectNow}><Icon name="activity" size={16} /> Statistik einsammeln</button>
     <span class="grow"></span>

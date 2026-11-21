@@ -1,5 +1,5 @@
 :root {
-  --bg: #f4f6fa;
+  --bg: #f6f7fa;
   --panel: #ffffff;
   --panel-2: #f8f9fc;
   --border: #e3e7ef;
@@ -20,9 +20,9 @@
   --bad-soft: #fbe6e6;
   --up: #9aa9f4;
   --down: #4f6bed;
-  --shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 2px 8px rgba(20, 30, 60, 0.04);
+  --shadow: 0 1px 2px rgba(20, 30, 60, 0.04);
   --shadow-lg: 0 12px 40px rgba(20, 30, 60, 0.18);
-  --radius: 12px;
+  --radius: 10px;
   --radius-sm: 8px;
   --sidebar: #141a2b;
   --sidebar-text: #aeb6c9;
@@ -35,8 +35,14 @@
   --fs-md: 13px;
   --fs-base: 14px;
   --fs-lg: 16px;
-  --fs-xl: 22px;
-  --fs-2xl: 24px;
+  --fs-xl: 20px;
+  --fs-2xl: 22px;
+  /* Abstände (Dichte „Kompakt“ verkleinert sie) */
+  --gap: 14px;
+  --pad-y: 14px;
+  --pad-x: 16px;
+  --head-y: 10px;
+  --cell-y: 9px;
   /* Seitenleiste (immer dunkel) */
   --side-accent: #6f88ff;
   --side-warn: #f0a33a;
@@ -139,7 +145,7 @@ h2 {
   font-size: var(--fs-lg);
 }
 h3 {
-  font-size: var(--fs-lg);
+  font-size: var(--fs-base);
 }
 
 code,
@@ -158,15 +164,19 @@ pre,
   box-shadow: var(--shadow);
 }
 .card-pad {
-  padding: 18px 20px;
+  padding: var(--pad-y) var(--pad-x);
 }
 .card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 20px;
+  padding: var(--head-y) var(--pad-x);
   border-bottom: 1px solid var(--border);
+  min-height: 46px;
+}
+.card-head h2 {
+  font-size: var(--fs-base);
 }
 .card-head h2,
 .card-head h3 {
@@ -177,7 +187,7 @@ pre,
 
 .grid {
   display: grid;
-  gap: 16px;
+  gap: var(--gap);
 }
 .cols-2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -228,7 +238,7 @@ pre,
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--gap);
 }
 .stack-sm {
   display: flex;
@@ -386,6 +396,13 @@ textarea.input {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+.input.sm,
+select.input.sm {
+  height: 30px;
+  width: auto;
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+}
 .input.mono {
   font-family: var(--mono);
   font-size: var(--fs-md);
@@ -486,6 +503,13 @@ textarea.input {
   color: var(--text);
   box-shadow: var(--shadow);
 }
+.segmented.sm {
+  padding: 2px;
+}
+.segmented.sm button {
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+}
 
 /* ---------- Tabellen ---------- */
 
@@ -498,18 +522,16 @@ table.table {
 }
 .table th {
   text-align: left;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--fs-sm);
   color: var(--muted);
-  font-weight: 600;
-  padding: 10px 14px;
+  font-weight: 550;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
-  background: var(--panel-2);
+  background: transparent;
 }
 .table td {
-  padding: 11px 14px;
+  padding: var(--cell-y) 14px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -681,7 +703,7 @@ pre.code {
   display: flex;
   gap: 2px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 18px;
+  margin-bottom: 16px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -692,7 +714,7 @@ pre.code {
   font: inherit;
   font-weight: 550;
   color: var(--muted);
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   cursor: pointer;
@@ -780,4 +802,34 @@ pre.code {
 
 ::selection {
   background: var(--accent-soft);
+}
+
+/* Seiten-Reiter, die das Seitenmenü schon zeigt: nur auf dem Handy sichtbar */
+@media (min-width: 901px) {
+  .tabs.pagetabs {
+    display: none;
+  }
+}
+
+/* Dichte „Kompakt“ (Knopf unten in der Seitenleiste) */
+:root[data-density='compact'] {
+  --gap: 10px;
+  --pad-y: 10px;
+  --pad-x: 12px;
+  --head-y: 6px;
+  --cell-y: 5px;
+  --main-pad: 16px 20px 40px;
+}
+:root[data-density='compact'] .card-head {
+  min-height: 38px;
+}
+:root[data-density='compact'] .btn {
+  height: 30px;
+}
+:root[data-density='compact'] .btn.sm {
+  height: 26px;
+}
+:root[data-density='compact'] .input,
+:root[data-density='compact'] select.input {
+  height: 32px;
 }

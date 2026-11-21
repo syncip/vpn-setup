@@ -53,10 +53,10 @@ func TestAttention(t *testing.T) {
 	if got != "error:err:exit:3 error:server_host warn:port:udp:51820" {
 		t.Errorf("Einträge: %s", got)
 	}
-	if att[0].Title != "Ausgang A: Verbindung fehlgeschlagen" || att[0].Link != "#/proxy/exits" {
+	if att[0].Title != "Ausgang A: Verbindung fehlgeschlagen" || att[0].Link != "#/routing/exits" {
 		t.Errorf("Fehler-Eintrag: %+v", att[0])
 	}
-	if att[2].Title != "UDP 51820 (wg) kommt von außen nicht an" || att[2].Link != "#/health" {
+	if att[2].Title != "UDP 51820 (wg) kommt von außen nicht an" || att[2].Link != "#/system" {
 		t.Errorf("Port-Eintrag: %+v", att[2])
 	}
 }

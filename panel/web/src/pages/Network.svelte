@@ -15,24 +15,34 @@
   import { ago, bytes } from '../lib/format.js';
   import { go, protocol } from '../lib/state.svelte.js';
 
+  // Eine Seite für drei Stellen im Menü:
+  //   Routing → Karte (tab '' = Aufbau, 'live' = Live-Karte), Server → Zugriff (tab 'access'),
+  //   Server → WireGuard-Netz (tab 'wg', id = Server; ohne id wird der erste WireGuard-Server gezeigt)
   let { id = 0, view: viewParam = 'map', tab = '' } = $props();
   let servers = $state([]);
   let users = $state([]);
   let net = $state(null);
   let sel = $state(0);
-  // Ansicht steht in der Adresse (#/network/<id>/matrix)
+  // Ansicht steht in der Adresse (#/servers/wg/<id>/matrix)
   const view = $derived(viewParam === 'matrix' ? 'matrix' : 'map');
 
   const mesh = $derived(servers.filter((s) => protocol(s.protocol)?.mesh));
   // ohne Server in der Adresse: Übersicht über alle Server (Karte mit Verkehr und Wegen)
   const sid = $derived(id);
+  // WireGuard-Netz ohne Server in der Adresse → ersten WireGuard-Server öffnen
+  $effect(() => {
+    if (tab === 'wg' && !id && mesh.length) go(`/servers/wg/${mesh[0].id}`, true);
+    // Server ist (nicht mehr) WireGuard bzw. gelöscht → ersten WireGuard-Server zeigen
+    else if (tab === 'wg' && id && servers.length && !mesh.some((s) => s.id === id)) go('/servers/wg', true);
+  });
+  const wgPath = (sv, v = view) => `/servers/wg/${sv}${v === 'matrix' ? '/matrix' : ''}`;
 
   async function loadBase() {
     [servers, users] = await Promise.all([get('/servers'), get('/users')]);
   }
   async function loadNet() {
-    if (!sid) return;
-    net = await get(`/servers/${sid}/network`);
+    if (!sid || tab !== 'wg') return;
+    net = await get(`/servers/${sid}/network`).catch(() => null);
   }
   loadBase();
   $effect(() => {
@@ -157,34 +167,38 @@
   }
 </script>
 
-<PageHead title="Netzwerk" subtitle={sid ? 'Geräte und Netze dieses WireGuard-Servers' : 'Verbindungen, Verkehr und Störungen'} helpTitle="Netzwerk">
+<PageHead
+  title={tab === 'access' ? 'Zugriff zwischen Netzen' : tab === 'wg' ? 'WireGuard-Netz' : 'Karte'}
+  subtitle={tab === 'access' ? 'Wer welche WireGuard-Netze erreichen darf' : tab === 'wg' ? 'Geräte und Netze eines WireGuard-Servers' : tab === 'live' ? 'Geräte, Verkehr und Störungen in Echtzeit' : 'Welcher Server über welche Ausgänge ins Internet geht'}
+  helpTitle="Netzwerk"
+>
   {#snippet help()}
-    <p><b>Übersicht → Aufbau:</b> Welcher Server über welche Ausgänge ins Internet geht (Stufe 1 verbindet direkt, jede weitere über die vorige). Ziehen: Server auf einen Ausgang, eine Gruppe oder „Direkt“ = Weg des Servers; Ausgang auf Ausgang = dahinter schalten; Ausgang auf Gruppe = aufnehmen. „Server“, „Ausgang“ und „Gruppe“ oben hineinziehen = anlegen.</p>
-    <p><b>Übersicht → Live:</b> Wer verbunden ist, wohin der Verkehr gerade fließt und wo es hakt. Bei vielen Nutzern ist die Karte kompakt – Nutzer aufklappen oder suchen.</p>
-    <p><b>Zugriff:</b> Welche Nutzer, Tarife oder Geräte andere WireGuard-Netze erreichen dürfen (z. B. Anna auf WireGuard 1 und 2).</p>
-    <p><b>WireGuard-Server:</b> Geräte und Netze, die über diesen Server miteinander verbunden sind, und wer wen erreichen darf (Karte, Matrix, Liste).</p>
+    <p><b>Karte → Aufbau:</b> Welcher Server über welche Ausgänge ins Internet geht (Stufe 1 verbindet direkt, jede weitere über die vorige). Ziehen: Server auf einen Ausgang, eine Gruppe oder „Direkt“ = Weg des Servers; Ausgang auf Ausgang = dahinter schalten; Ausgang auf Gruppe = aufnehmen. „Server“, „Ausgang“ und „Gruppe“ oben hineinziehen = anlegen.</p>
+    <p><b>Karte → Live:</b> Wer verbunden ist, wohin der Verkehr gerade fließt und wo es hakt. Bei vielen Nutzern ist die Karte kompakt – Nutzer aufklappen oder suchen.</p>
+    <p><b>Server → Zugriff:</b> Welche Nutzer, Tarife oder Geräte andere WireGuard-Netze erreichen dürfen (z. B. Anna auf WireGuard 1 und 2).</p>
+    <p><b>Server → WireGuard-Netz:</b> Geräte und Netze, die über einen WireGuard-Server miteinander verbunden sind, und wer wen erreichen darf (Karte, Matrix, Liste).</p>
   {/snippet}
   {#if sid}<button class="btn primary" onclick={add}><Icon name="plus" size={16} /> Gerät hinzufügen</button>{/if}
 </PageHead>
 
-{#if mesh.length}
+{#if tab === 'wg' && mesh.length > 1}
   <div class="tabs">
-    <button class:active={!sid && tab !== 'access'} onclick={() => go('/network')}><Icon name="network" size={14} /> Übersicht</button>
-    <button class:active={tab === 'access'} onclick={() => go('/network/access')}><Icon name="lock" size={14} /> Zugriff</button>
-    <span class="tabs-sep" aria-hidden="true"></span><span class="tabs-label">WireGuard-Server</span>
+    <span class="tabs-label">WireGuard-Server</span>
     {#each mesh as s}
-      <button class:active={s.id === sid} onclick={() => go(`/network/${s.id}${view === 'matrix' ? '/matrix' : ''}`)}><span class="dot" class:on={s.status?.running}></span> {s.name}</button>
+      <button class:active={s.id === sid} onclick={() => go(wgPath(s.id))}><span class="dot" class:on={s.status?.running}></span> {s.name}</button>
     {/each}
   </div>
 {/if}
 
 {#if tab === 'access'}
   <NetAccess />
+{:else if tab === 'wg' && !sid}
+  <div class="card card-pad muted small">{servers.length ? 'Noch kein WireGuard-Server angelegt.' : 'Lädt …'} <a href="#/servers">Server verwalten</a></div>
 {:else if !sid}
   <div class="spread mapbar">
     <div class="segmented" role="tablist" aria-label="Ansicht der Karte">
-      <button class:active={tab !== 'live'} onclick={() => go('/network')} title="Server, Stufen und Ausgänge – per Ziehen ändern"><Icon name="layers" size={14} /> Aufbau</button>
-      <button class:active={tab === 'live'} onclick={() => go('/network/live')} title="Geräte und aktueller Verkehr"><Icon name="activity" size={14} /> Live</button>
+      <button class:active={tab !== 'live'} onclick={() => go('/routing/map')} title="Server, Stufen und Ausgänge – per Ziehen ändern"><Icon name="layers" size={14} /> Aufbau</button>
+      <button class:active={tab === 'live'} onclick={() => go('/routing/live')} title="Geräte und aktueller Verkehr"><Icon name="activity" size={14} /> Live</button>
     </div>
     <span class="muted small">{tab === 'live' ? 'Geräte, Verkehr und Störungen in Echtzeit' : 'Welcher Server über welche Ausgänge ins Internet geht – ziehen zum Ändern'}</span>
   </div>
@@ -217,8 +231,8 @@
           {/if}
           {#if selNode}<span class="small muted">Ausgewählt: <b>{selNode.name}</b> · erreicht {reachSet.size}, erreichbar von {reachedBy.size}</span><button class="btn sm ghost" onclick={() => (sel = 0)}>Auswahl aufheben</button>{/if}
           <div class="segmented">
-            <button class:active={view === 'map'} onclick={() => go(`/network/${sid}`)}>Karte</button>
-            <button class:active={view === 'matrix'} onclick={() => go(`/network/${sid}/matrix`)}>Matrix</button>
+            <button class:active={view === 'map'} onclick={() => go(wgPath(sid, 'map'))}>Karte</button>
+            <button class:active={view === 'matrix'} onclick={() => go(wgPath(sid, 'matrix'))}>Matrix</button>
           </div>
         </div>
       </div>

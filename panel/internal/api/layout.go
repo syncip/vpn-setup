@@ -9,31 +9,61 @@ import (
 )
 
 // Anordnung der Fenster (Karten) je Seite, pro Administrator gespeichert: Reihenfolge, Breite
-// (1–12 Spalten) und ausgeblendete Fenster. Liegt in der Tabelle settings unter
+// (1–12 Spalten), ausgeblendete und hinzugefügte Fenster. Unter „chart:<id>“ liegen die Einstellungen
+// einer Grafik (Darstellung je Einheit, Einheit, Höhe, Zeitraum, ausgeblendete Reihen in Hidden). Liegt in der Tabelle settings unter
 // „state:layout:<AdminID>“ (state:-Schlüssel tauchen in den Einstellungen nicht auf).
 
 type boardLayout struct {
-	Order  []string       `json:"order"`
-	Hidden []string       `json:"hidden"`
-	W      map[string]int `json:"w"`
+	Order  []string       `json:"order,omitempty"`
+	Hidden []string       `json:"hidden,omitempty"`
+	Shown  []string       `json:"shown,omitempty"` // anfangs ausgeblendete Fenster, die hinzugefügt wurden
+	W      map[string]int `json:"w,omitempty"`
+	// Grafik („chart:<id>“)
+	KindRate  string `json:"kind_rate,omitempty"`
+	KindBytes string `json:"kind_bytes,omitempty"`
+	KindCount string `json:"kind_count,omitempty"`
+	Unit      string `json:"unit,omitempty"`  // bits | bytes
+	Size      string `json:"size,omitempty"`  // s | m | l
+	Range     string `json:"range,omitempty"` // z. B. 10m, 24h, 7
 }
 
-var layoutID = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,47}$`)
+var (
+	layoutID   = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,47}$`)
+	layoutPage = regexp.MustCompile(`^(chart:)?[a-z0-9][a-z0-9_.-]{0,47}$`)
+	layoutOpt  = regexp.MustCompile(`^[a-z0-9]{0,8}$`)
+)
+
+func oneOf(v string, allowed ...string) bool {
+	for _, a := range allowed {
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
 
 func layoutKey(id int64) string { return "state:layout:" + strconv.FormatInt(id, 10) }
 
 func validLayout(m map[string]boardLayout) error {
-	if len(m) > 64 {
+	if len(m) > 256 {
 		return errors.New("zu viele Seiten")
 	}
 	for page, b := range m {
-		if !layoutID.MatchString(page) {
+		if !layoutPage.MatchString(page) {
 			return errors.New("ungültiger Seitenname")
 		}
-		if len(b.Order) > 64 || len(b.Hidden) > 64 || len(b.W) > 64 {
+		if len(b.Order) > 64 || len(b.Hidden) > 64 || len(b.Shown) > 64 || len(b.W) > 64 {
 			return errors.New("zu viele Fenster")
 		}
-		for _, id := range append(append([]string{}, b.Order...), b.Hidden...) {
+		for _, k := range []string{b.KindRate, b.KindBytes, b.KindCount} {
+			if !oneOf(k, "", "line", "area", "bars") {
+				return errors.New("ungültige Darstellung")
+			}
+		}
+		if !oneOf(b.Unit, "", "bits", "bytes") || !oneOf(b.Size, "", "s", "m", "l") || !layoutOpt.MatchString(b.Range) {
+			return errors.New("ungültige Einstellung der Grafik")
+		}
+		for _, id := range append(append(append([]string{}, b.Order...), b.Hidden...), b.Shown...) {
 			if !layoutID.MatchString(id) {
 				return errors.New("ungültiger Fenstername")
 			}
