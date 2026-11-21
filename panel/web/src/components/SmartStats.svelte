@@ -17,6 +17,8 @@
   let domSort = $state('q');
   let showAllDoms = $state(false);
 
+  // Verkehr ohne VPN von vor v0.33.0 (nur als Summe gezählt)
+  const oldProxy = $derived(Math.max(0, (s.proxy || 0) - (s.proxy_up || 0) - (s.proxy_down || 0)));
   const traffic = $derived((s.up || 0) + (s.down || 0) + (s.proxy || 0));
   const maxOf = (a) => Math.max(1, ...a);
 
@@ -59,7 +61,8 @@
   <div class="kpi"><span class="k">{fmtNum(s.q24)}</span><span class="l">Anfragen in 24 h</span><span class="t">{fmtNum(s.queries)} seit {date(s.since)}</span></div>
   <div class="kpi">
     <span class="k">{bytes(traffic)}</span><span class="l">Verkehr gesamt <Info title="Wie wird gezählt?" text="VPN-Geräte (WireGuard, OpenVPN): Zähler der Firewall je Weiterleitung – zu den Zielen (↑) und Antworten von den Zieladressen (↓). Geräte ohne VPN: genau über den SmartDNS-Proxy, getrennt nach Richtung und laufend alle 5 Sekunden (auch während ein Stream noch läuft). VLESS und Hysteria2 leiten selbst; dort zählen nur die Anfragen." /></span>
-    <span class="t">VPN ↑ {bytes(s.up)} ↓ {bytes(s.down)} · ohne VPN {#if (s.proxy_up || 0) + (s.proxy_down || 0)}↑ {bytes(s.proxy_up)} ↓ {bytes(s.proxy_down)}{:else}{bytes(s.proxy)}{/if}</span>
+    <span class="t">VPN ↑ {bytes(s.up)} ↓ {bytes(s.down)}</span>
+    <span class="t">ohne VPN ↑ {bytes(s.proxy_up)} ↓ {bytes(s.proxy_down)}{#if oldProxy > 0}<span title="Vor v0.33.0 hat der Proxy nur die Summe beider Richtungen gezählt.">{' · '}{bytes(oldProxy)} vorher ohne Aufteilung</span>{/if}</span>
   </div>
   <div class="kpi"><span class="k">{fmtNum(s.devices24)}</span><span class="l">Geräte in 24 h</span><span class="t">{fmtNum(s.devices.length)} insgesamt (Auswahl)</span></div>
   <div class="kpi">
