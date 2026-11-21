@@ -176,6 +176,39 @@ type dnsExt struct {
 	tokens  map[string]extSrc
 	byID    map[int64]extSrc
 	learned map[netip.Addr]learnRec
+	smartOK map[netip.Addr]learnRec // SmartDNS-Proxy: Absender, die per SmartDNS die Serveradresse bekamen
+}
+
+// smartGrant: Der Absender hat per SmartDNS die Adresse des Servers bekommen – er darf den
+// SmartDNS-Proxy 6 Stunden nutzen (IPv6 je /64, weil Geräte wechselnde Adressen im Netz nutzen).
+func (e *Engine) smartGrant(a netip.Addr, client int64) {
+	if !a.IsValid() || client <= 0 {
+		return
+	}
+	k := rateKey(a)
+	x := &e.dnsx
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if x.smartOK == nil || len(x.smartOK) > 5000 {
+		x.smartOK = map[netip.Addr]learnRec{}
+	}
+	x.smartOK[k] = learnRec{id: client, until: time.Now().Add(6 * time.Hour).Unix()}
+}
+
+// smartGrantOf: Richtlinie für einen Absender, der kürzlich SmartDNS-Antworten bekam (nil = keiner).
+func (e *Engine) smartGrantOf(a netip.Addr) *srcPolicy {
+	x := &e.dnsx
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	l, ok := x.smartOK[rateKey(a)]
+	if !ok || l.until < time.Now().Unix() {
+		return nil
+	}
+	s, ok := x.byID[l.id]
+	if !ok {
+		return nil
+	}
+	return &srcPolicy{pfx: netip.PrefixFrom(a, a.BitLen()), peer: -s.id, filt: s.filt, smart: s.smart, dns: true}
 }
 
 func (x *dnsExt) anyBlock() bool {

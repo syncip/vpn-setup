@@ -37,6 +37,26 @@ type smartProxy struct {
 	bytes   atomic.Int64
 	lastErr string
 	recent  map[string]*SmartHit // Domain → Zähler
+	denials []SmartDeny          // zuletzt abgewiesene Verbindungen (neueste zuerst)
+}
+
+// SmartDeny: abgewiesene Verbindung am SmartDNS-Proxy (zur Fehlersuche).
+type SmartDeny struct {
+	Addr   string `json:"addr"`
+	SNI    string `json:"sni,omitempty"`
+	Reason string `json:"reason"`
+	Time   int64  `json:"time"`
+}
+
+func (p *smartProxy) deny(src netip.Addr, sni, reason string) {
+	p.denied.Add(1)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	d := SmartDeny{Addr: src.String(), SNI: sni, Reason: reason, Time: time.Now().Unix()}
+	p.denials = append([]SmartDeny{d}, p.denials...)
+	if len(p.denials) > 20 {
+		p.denials = p.denials[:20]
+	}
 }
 
 // SmartHit: Nutzung einer SmartDNS-Domain über den Proxy (seit dem Start).
@@ -133,21 +153,27 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	br := bufio.NewReaderSize(c, 16*1024)
 	hello, sni, err := readClientHello(br)
 	if err != nil || sni == "" {
-		p.denied.Add(1)
+		p.deny(src, "", "kein TLS-Name (SNI) – nur HTTPS über Port 443 wird weitergereicht")
 		return
 	}
-	// Wer darf? Freigegebene Geräte ohne VPN (bzw. VPN-Geräte) mit SmartDNS für diesen Namen.
+	// Wer darf? Freigegebene Geräte ohne VPN (auch nur mit DoH/DoT), Absender, die eben per SmartDNS
+	// die Serveradresse bekamen, und VPN-Geräte – jeweils mit SmartDNS für diesen Namen.
 	s := e.dns.sourceOf(src)
 	if s == nil {
-		s = e.extSourceOf(src)
+		s = e.extSource(src, false)
+	}
+	if s == nil || !s.smart.has(sni) {
+		if g := e.smartGrantOf(src); g != nil {
+			s = g
+		}
 	}
 	if s == nil {
-		p.denied.Add(1)
+		p.deny(src, sni, "Absender unbekannt – Adresse nicht freigegeben und keine SmartDNS-Antwort an diese Adresse")
 		return
 	}
 	rid, gid, dom, ok := s.smart.matchRule(sni)
 	if !ok {
-		p.denied.Add(1)
+		p.deny(src, sni, "Name steht in keinem SmartDNS-Profil dieses Geräts")
 		return
 	}
 	e.dns.mu.Lock()
@@ -304,24 +330,25 @@ func parseSNI(b []byte) string {
 
 // SmartStatus: Zustand des SmartDNS-Proxys (Oberfläche).
 type SmartStatus struct {
-	Running bool       `json:"running"`
-	Needed  bool       `json:"needed"` // Geräte ohne VPN nutzen SmartDNS-Profile
-	Domains int        `json:"domains"`
-	Active  int64      `json:"active"`
-	Total   int64      `json:"total"`
-	Denied  int64      `json:"denied"`
-	Bytes   int64      `json:"bytes"`
-	Hits    []SmartHit `json:"hits"`
-	Error   string     `json:"error,omitempty"`
-	Target4 string     `json:"target4"` // Adresse, mit der der DNS antwortet
-	Target6 string     `json:"target6"`
+	Running bool        `json:"running"`
+	Needed  bool        `json:"needed"` // Geräte ohne VPN nutzen SmartDNS-Profile
+	Domains int         `json:"domains"`
+	Active  int64       `json:"active"`
+	Total   int64       `json:"total"`
+	Denied  int64       `json:"denied"`
+	Bytes   int64       `json:"bytes"`
+	Hits    []SmartHit  `json:"hits"`
+	Denials []SmartDeny `json:"denials"`
+	Error   string      `json:"error,omitempty"`
+	Target4 string      `json:"target4"` // Adresse, mit der der DNS antwortet
+	Target6 string      `json:"target6"`
 }
 
 func (e *Engine) SmartState() SmartStatus {
 	p := &e.smart
 	v4, v6 := e.PublicAddrs()
 	p.mu.Lock()
-	st := SmartStatus{Running: p.ln != nil, Domains: len(p.domains), Error: p.lastErr, Hits: []SmartHit{}}
+	st := SmartStatus{Running: p.ln != nil, Domains: len(p.domains), Error: p.lastErr, Hits: []SmartHit{}, Denials: append([]SmartDeny{}, p.denials...)}
 	for _, h := range p.recent {
 		st.Hits = append(st.Hits, *h)
 	}

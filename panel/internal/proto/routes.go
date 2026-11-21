@@ -2,6 +2,7 @@ package proto
 
 import (
 	"net/netip"
+	"regexp"
 	"strings"
 )
 
@@ -52,14 +53,70 @@ func (p *Policy) AllGroup() (group int64, ok bool) {
 }
 
 // DomainMatch: passt host (kleingeschrieben) auf eine der Domains (gleich oder Unterdomain)?
+// Einträge mit „*“ sind Muster (DomainPatternMatch).
 func DomainMatch(domains []string, host string) bool {
 	host = strings.TrimSuffix(host, ".")
 	for _, d := range domains {
+		if IsDomainPattern(d) {
+			if DomainPatternMatch(d, host) {
+				return true
+			}
+			continue
+		}
 		if host == d || (len(host) > len(d) && strings.HasSuffix(host, d) && host[len(host)-len(d)-1] == '.') {
 			return true
 		}
 	}
 	return false
+}
+
+// IsDomainPattern: Eintrag mit Platzhalter „*“ (z. B. netflix.*, ipv4-*.nflxvideo.net, *nflx*).
+func IsDomainPattern(d string) bool { return strings.IndexByte(d, '*') >= 0 }
+
+// DomainPatternMatch: passt host – oder eine übergeordnete Domain davon – auf das Muster?
+// „*“ steht für beliebig viele Zeichen (auch Punkte). Wie bei normalen Einträgen zählen
+// Unterdomains mit: netflix.* passt auf netflix.de und www.netflix.de.
+func DomainPatternMatch(pattern, host string) bool {
+	for n := host; ; {
+		if globMatch(pattern, n) {
+			return true
+		}
+		i := strings.IndexByte(n, '.')
+		if i < 0 {
+			return false
+		}
+		n = n[i+1:]
+	}
+}
+
+// globMatch: einfacher Vergleich mit „*“ (ohne Rekursion, linear mit Rücksprung).
+func globMatch(p, s string) bool {
+	pi, si, star, mark := 0, 0, -1, 0
+	for si < len(s) {
+		switch {
+		case pi < len(p) && p[pi] == '*':
+			star, mark = pi, si
+			pi++
+		case pi < len(p) && p[pi] == s[si]:
+			pi++
+			si++
+		case star >= 0:
+			pi = star + 1
+			mark++
+			si = mark
+		default:
+			return false
+		}
+	}
+	for pi < len(p) && p[pi] == '*' {
+		pi++
+	}
+	return pi == len(p)
+}
+
+// DomainPatternRegexp: Muster als regulärer Ausdruck (für Xray und nginx), samt Unterdomains.
+func DomainPatternRegexp(pattern string) string {
+	return `^(.+\.)?` + strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `.*`) + `$`
 }
 
 // MatchDomain: erste Regel, deren Domains auf host passen (für die DNS-Auswertung). Eine

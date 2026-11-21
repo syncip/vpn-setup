@@ -403,7 +403,11 @@ func (e *Engine) applyNginx(snap *Snapshot) error {
 		if exact[d] || d == e.encDNSHost() {
 			continue
 		}
-		wild[pub] = append(wild[pub], proto.SNIRoute{Port: pub, SNI: "." + d, Backend: smartAddr})
+		sni := "." + d
+		if proto.IsDomainPattern(d) { // Muster als regulärer Ausdruck (nginx: „~“)
+			sni = "\"~" + proto.DomainPatternRegexp(d) + "\""
+		}
+		wild[pub] = append(wild[pub], proto.SNIRoute{Port: pub, SNI: sni, Backend: smartAddr})
 	}
 	var ports []int
 	for p := range defaults {

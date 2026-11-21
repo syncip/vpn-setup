@@ -94,7 +94,7 @@ func TestRoutes(t *testing.T) {
 		return saveObj(t, e, &store.Object{Kind: "route", Enabled: true, Data: d})
 	}
 	// global: Netflix über US; Anna: alles über NL; Annas TV: eine Bank direkt, eine Liste über US
-	rGlobal := route("global", 0, us.ID, store.M{"match": "targets", "domains": []string{"netflix.com"}, "nets": []string{"203.0.113.0/24"}})
+	rGlobal := route("global", 0, us.ID, store.M{"match": "targets", "domains": []string{"netflix.com", "disney*.*"}, "nets": []string{"203.0.113.0/24"}})
 	rAnna := route("user", anna.ID, nl.ID, nil)
 	rTVBank := route("peer", annaTV.ID, 0, store.M{"match": "targets", "domains": []string{"bank.example"}})
 	rTVList := route("peer", annaTV.ID, us.ID, store.M{"match": "targets", "lists": []int64{tl.ID}})
@@ -185,7 +185,7 @@ func TestRoutes(t *testing.T) {
 
 	// Xray: Anna alles über NL (IPv6 gesperrt), Ben Netflix über US
 	xr, _ := dry.ReadFile("/usr/local/etc/xray/config.json")
-	for _, want := range []string{`"tag": "g` + id64(nl.ID) + `"`, `"mark": 50331648`, `"domainStrategy": "UseIPv4"`, `"domain:netflix.com"`,
+	for _, want := range []string{`"tag": "g` + id64(nl.ID) + `"`, `"mark": 50331648`, `"domainStrategy": "UseIPv4"`, `"domain:netflix.com"`, `"regexp:^(.+\\.)?disney.*\\..*$"`,
 		`"203.0.113.0/24"`, `"::/0"`, `"domainStrategy": "IPOnDemand"`, `"p` + id64(annaVL.ID) + `"`, `"p` + id64(benVL.ID) + `"`} {
 		if !strings.Contains(string(xr), want) {
 			t.Errorf("Xray ohne %s", want)
@@ -193,7 +193,7 @@ func TestRoutes(t *testing.T) {
 	}
 	// Hysteria2: nur globale/Server-Regeln; Gruppe hat noch keinen aktiven Ausgang gemeldet → an ex gebunden oder gesperrt
 	hc, _ := os.ReadFile(filepath.Join(dry.Root, "etc/hysteria", "hy"+id64(hy.ID)+".yaml"))
-	for _, want := range []string{`(suffix:netflix.com)`, `(203.0.113.0/24)`, `"direct(all)"`} {
+	for _, want := range []string{`(suffix:netflix.com)`, `(disney*.*)`, `(*.disney*.*)`, `(203.0.113.0/24)`, `"direct(all)"`} {
 		if !strings.Contains(string(hc), want) {
 			t.Errorf("Hysteria2 ohne %s:\n%s", want, hc)
 		}

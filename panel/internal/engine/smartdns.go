@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"vpnpanel/internal/proto"
 	"vpnpanel/internal/store"
 )
 
@@ -49,6 +50,13 @@ type smartSet struct {
 	rules []smartRule
 	m     map[string]int64 // Domain → Gruppe
 	rid   map[string]int64 // Domain → Regel (Profil und Weiterleitung, für die Statistik)
+	pats  []string         // Einträge mit „*“ (Reihenfolge = Vorrang), Gruppe steht in m
+}
+
+// has: läuft der Name über SmartDNS?
+func (s *smartSet) has(name string) bool {
+	_, _, ok := s.match(name)
+	return ok
 }
 
 // matchRule: wie match, zusätzlich mit der Regel-ID (SmartRuleID).
@@ -71,10 +79,17 @@ func (s *smartSet) match(name string) (group int64, domain string, ok bool) {
 		}
 		i := strings.IndexByte(n, '.')
 		if i < 0 {
-			return 0, "", false
+			break
 		}
 		n = n[i+1:]
 	}
+	// Muster erst nach den festen Domains – die sind genauer
+	for _, p := range s.pats {
+		if proto.DomainPatternMatch(p, name) {
+			return s.m[p], p, true
+		}
+	}
+	return 0, "", false
 }
 
 // smartProfiles: aktive SmartDNS-Profile (nach ID).
@@ -113,6 +128,9 @@ func smartFor(profiles []*SmartProfile, scopes ...string) *smartSet {
 					if _, taken := s.m[d]; !taken {
 						s.m[d] = r.Group
 						s.rid[d] = SmartRuleID(p.ID, i)
+						if proto.IsDomainPattern(d) {
+							s.pats = append(s.pats, d)
+						}
 						doms = append(doms, d)
 					}
 				}

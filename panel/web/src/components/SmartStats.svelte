@@ -76,12 +76,20 @@
       <button class:active={metric === 'bytes'} onclick={() => (metric = 'bytes')}>Verkehr</button>
     </div>
   </div>
-  <div class="bars" role="img" aria-label="Verlauf">
-    {#each s.hours as h, i}
-      <div class="bar" style="height:{Math.max(series[i] ? 3 : 0, (series[i] / sMax) * 100)}%" title="{hourLabel(h.t)}: {fmtMetric(series[i])}"></div>
-    {/each}
+  <div class="vchart">
+    <div class="yax" aria-hidden="true"><span>{metric === 'q' ? fmtNum(sMax) : bytes(sMax)}</span><span>{metric === 'q' ? fmtNum(Math.round(sMax / 2)) : bytes(sMax / 2)}</span><span>0</span></div>
+    <div style="min-width:0">
+      <div class="bars" role="img" aria-label="Verlauf">
+        {#each s.hours as h, i}
+          <div class="bar" style="height:{Math.max(series[i] ? 3 : 0, (series[i] / sMax) * 100)}%" title="{hourLabel(h.t)}: {fmtMetric(series[i])}"></div>
+        {/each}
+      </div>
+      <div class="xax" aria-hidden="true">
+        {#each s.hours as h}<span>{new Date(h.t * 1000).getHours() === 0 ? new Date(h.t * 1000).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : ''}</span>{/each}
+      </div>
+    </div>
   </div>
-  <div class="row tiny muted" style="justify-content:space-between"><span>vor 7 Tagen</span><span>höchstens {fmtMetric(sMax)} je Stunde</span><span>jetzt</span></div>
+  <div class="tiny muted" style="margin-top:2px">{metric === 'q' ? 'Anfragen' : 'Verkehr'} je Stunde, die letzten 7 Tage bis jetzt</div>
 </div>
 
 <div class="sec">
@@ -213,6 +221,40 @@
   h4 {
     margin: 0 0 6px;
     font-size: var(--fs-md);
+  }
+  .vchart {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px;
+  }
+  .yax {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-end;
+    height: 98px;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1;
+  }
+  .xax {
+    display: flex;
+    font-size: 10px;
+    color: var(--muted);
+    padding-top: 3px;
+    height: 16px;
+  }
+  .xax span {
+    flex: 1;
+    width: 0;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: visible;
+    border-left: 1px solid transparent;
+  }
+  .xax span:not(:empty) {
+    border-left-color: var(--border);
+    padding-left: 2px;
   }
   .bars {
     display: flex;

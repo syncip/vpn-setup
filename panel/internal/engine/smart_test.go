@@ -73,12 +73,12 @@ func TestSmartDNS(t *testing.T) {
 	us := saveObj(t, e, &store.Object{Kind: "group", Name: "USA", Enabled: true, Data: store.M{"slot": 2, "exits": []int64{ex.ID}, "on_fail": "block"}})
 	saveObj(t, e, &store.Object{Kind: "dnsprofile", Name: "Standard", Enabled: true, Data: store.M{"assign": []string{"global"}}})
 	prof := saveObj(t, e, &store.Object{Kind: "smartdns", Name: "Streaming", Enabled: true, Data: store.M{"assign": []string{"global"},
-		"routes": []any{map[string]any{"group": us.ID, "domains": []string{"netflix.com", "NFLXVIDEO.net", "kaputt..x"}}}}})
+		"routes": []any{map[string]any{"group": us.ID, "domains": []string{"netflix.com", "NFLXVIDEO.net", "kaputt..x", "disney*.*"}}}}})
 	tv := saveObj(t, e, &store.Object{Kind: "dnsclient", Name: "TV", Enabled: true, Data: store.M{"addrs": []string{"203.0.113.50"}, "profile": float64(0), "learn": true},
 		Secrets: store.M{"token": "abc123token"}})
 	_ = tv
 
-	if got := SmartProfileFrom(prof).Routes; len(got) != 1 || strings.Join(got[0].Domains, ",") != "netflix.com,nflxvideo.net" {
+	if got := SmartProfileFrom(prof).Routes; len(got) != 1 || strings.Join(got[0].Domains, ",") != "netflix.com,nflxvideo.net,disney*.*" {
 		t.Fatalf("ParseSmart: %+v", got)
 	}
 	if err := e.Apply(); err != nil {
@@ -87,7 +87,7 @@ func TestSmartDNS(t *testing.T) {
 	// VPN-Gerät: Ziel-Regel aus dem SmartDNS-Profil
 	pol := e.routing().Policies[p.ID]
 	if pol == nil || len(pol.Rules) != 1 || pol.Rules[0].ID != SmartRuleID(prof.ID, 0) || pol.Rules[0].Group != us.ID ||
-		strings.Join(pol.Rules[0].Domains, ",") != "netflix.com,nflxvideo.net" {
+		strings.Join(pol.Rules[0].Domains, ",") != "netflix.com,nflxvideo.net,disney*.*" {
 		t.Fatalf("Ziel-Regel: %+v", pol)
 	}
 
@@ -119,8 +119,26 @@ func TestSmartDNS(t *testing.T) {
 		st.Devices[-tv.ID] == nil || st.Devices[p.ID] == nil || st.Routes[0].Q != 2 {
 		t.Errorf("SmartDNS-Statistik: %+v", st)
 	}
+	// Proxy: Wer per SmartDNS die Serveradresse bekam, darf den Proxy nutzen; unbekannte Absender nicht
+	if g := e.smartGrantOf(tvIP); g == nil || !g.smart.has("www.netflix.com") {
+		t.Error("SmartDNS-Antwort gibt den Proxy nicht frei")
+	}
+	if e.smartGrantOf(netip.MustParseAddr("198.51.100.200")) != nil {
+		t.Error("fremder Absender für den Proxy freigegeben")
+	}
+	e.smartGrant(netip.MustParseAddr("2001:db8:1:2::5"), tv.ID)
+	if e.smartGrantOf(netip.MustParseAddr("2001:db8:1:2::99")) == nil || e.smartGrantOf(netip.MustParseAddr("2001:db8:1:3::5")) != nil {
+		t.Error("IPv6: Freigabe je /64")
+	}
+	// Muster: disney*.* passt auf www.disneyplus.com
+	if _, got := answers(t, e.dns.handle(e, tvIP, dnsQuery("www.disneyplus.com.", dnsmessage.TypeA), false)); strings.Join(got, " ") != "198.51.100.77" {
+		t.Errorf("SmartDNS Muster: %v", got)
+	}
 	// nginx: Namen samt Unterdomains an den Proxy
 	ng, _ := e.Sys.ReadFile(nginxStream)
+	if !strings.Contains(string(ng), `"~^(.+\.)?disney.*\..*$" `+smartAddr+";") {
+		t.Errorf("nginx Muster:\n%s", ng)
+	}
 	if !strings.Contains(string(ng), "hostnames;") || !strings.Contains(string(ng), ".netflix.com "+smartAddr+";") {
 		t.Errorf("nginx:\n%s", ng)
 	}

@@ -120,7 +120,18 @@
     }
     return out;
   });
-  const maxBar = $derived(Math.max(1, ...bars.map((b) => b.tot)));
+  // Achse: runder Höchstwert (1, 2, 2,5, 5 × 10ⁿ), Beschriftung der Zeit etwa alle 8 Balken
+  const maxBar = $derived.by(() => {
+    const m = Math.max(1, ...bars.map((b) => b.tot));
+    const p = 10 ** Math.floor(Math.log10(m));
+    return [1, 2, 4, 5, 10].map((f) => f * p).find((v) => v >= m);
+  });
+  const xStep = $derived(Math.max(1, Math.ceil(bars.length / 8)));
+  const xLabel = (ts) => {
+    const d = new Date(ts * 1000);
+    const hh = String(d.getHours()).padStart(2, '0') + ':00';
+    return hours <= 24 ? hh : d.getHours() === 0 || hours > 24 * 7 ? day(ts) : `${day(ts)} ${hh}`;
+  };
 
   let check = $state({ peer: 0, name: '' });
   let checkRes = $state(null);
@@ -697,12 +708,22 @@
       <strong class="small">Anfragen je {hours > 24 * 7 ? `${Math.ceil(hours / 168)} Stunden` : 'Stunde'}</strong>
       <span class="tiny muted"><span class="sw"></span> aufgelöst <span class="sw bl"></span> gesperrt</span>
     </div>
-    <div class="bars">
-      {#each bars as b}
-        <div class="bar" title="{day(b.ts)} {clock(b.ts).slice(0, 5)} – {fmtNum(b.tot)} Anfragen, {fmtNum(b.bl)} gesperrt">
-          <div class="fill" style="height:{(b.tot / maxBar) * 100}%"><div class="blk" style="height:{b.tot ? (b.bl / b.tot) * 100 : 0}%"></div></div>
+    <div class="hchart">
+      <div class="yax tiny muted" aria-hidden="true"><span>{fmtNum(maxBar)}</span><span>{maxBar >= 2 ? fmtNum(maxBar / 2) : ''}</span><span>0</span></div>
+      <div class="plot">
+        <div class="gl" style="top:0"></div>
+        <div class="gl" style="top:50%"></div>
+        <div class="bars">
+          {#each bars as b}
+            <div class="bar" title="{day(b.ts)} {clock(b.ts).slice(0, 5)} – {fmtNum(b.tot)} Anfragen, {fmtNum(b.bl)} gesperrt">
+              <div class="fill" style="height:{(b.tot / maxBar) * 100}%"><div class="blk" style="height:{b.tot ? (b.bl / b.tot) * 100 : 0}%"></div></div>
+            </div>
+          {/each}
         </div>
-      {/each}
+        <div class="xax tiny muted" aria-hidden="true">
+          {#each bars as b, i}<span>{i % xStep === 0 ? xLabel(b.ts) : ''}</span>{/each}
+        </div>
+      </div>
     </div>
     {#if !stats.total}<div class="muted small" style="margin-top:8px">Im gewählten Zeitraum keine Anfragen protokolliert.</div>{/if}
   </div>
@@ -1017,6 +1038,19 @@
       {:else}
         <div class="tiny muted">Noch keine Verbindungen über den Proxy.</div>
       {/each}
+      {#if smartState.denials?.length}
+        <details class="small">
+          <summary class="warn-t">Zuletzt abgewiesen ({smartState.denials.length}) – warum lädt eine Seite nicht?</summary>
+          {#each smartState.denials as dn}
+            <div class="row small" style="gap:8px;margin-top:4px">
+              <span class="mono tiny nowrap">{dn.addr}</span>
+              <span class="mono tiny ellipsis" style="max-width:200px">{dn.sni || '–'}</span>
+              <span class="tiny muted grow">{dn.reason}</span>
+              <span class="tiny muted nowrap">{when(dn.time)}</span>
+            </div>
+          {/each}
+        </details>
+      {/if}
     </div>
   </div>
   <Modal bind:open={statOpen} title={statCur ? `Statistik: ${statCur.name}` : 'Statistik'} subtitle={statCur ? `seit ${new Date(statCur.since * 1000).toLocaleDateString('de-DE')} · aktualisiert jede Minute` : ''} width={860}>
@@ -1452,6 +1486,7 @@
           <p><b>VPN-Geräte</b> (WireGuard, OpenVPN, VLESS; Hysteria2 nur über Server-Regeln): wirkt wie eine Ziel-Regel – der Verkehr zu diesen Zielen geht über den Ausgang der Gruppe, alle Ports.</p>
           <p><b>Geräte ohne VPN</b> (Fernseher, Konsole, DoH/DoT): Der Panel-DNS antwortet für diese Namen mit der Adresse des Servers; der Server reicht die HTTPS-Verbindung (Port 443) anhand des Namens über die Gruppe weiter. Die Verschlüsselung bleibt Ende-zu-Ende. Unverschlüsseltes HTTP (Port 80) und UDP/QUIC laufen so nicht – Apps weichen dann auf HTTPS aus.</p>
           <p>Damit Streamingdienste den Standort glauben, braucht es meist mehrere Domains (Anmeldung, Videoserver). Die Vorlagen enthalten die üblichen.</p>
+          <p><b>Platzhalter „*“</b> steht für beliebige Zeichen: <code>netflix.*</code> (alle Länderendungen), <code>ipv4-*.nflxvideo.net</code>, <code>*nflx*</code> (jeder Name mit „nflx“). Unterdomains zählen auch hier mit. <code>*.netflix.com</code> ist dasselbe wie <code>netflix.com</code>. Feste Domains haben Vorrang vor Mustern.</p>
         </Info></span
       >
       {#each sm.routes as row, i}
@@ -1465,7 +1500,8 @@
             <span class="grow"></span>
             <button class="btn sm icon ghost danger" title="Entfernen" onclick={() => (sm.routes = sm.routes.filter((_, j) => j !== i))}><Icon name="trash" size={14} /></button>
           </div>
-          <textarea class="input mono" rows="4" bind:value={row.domains} placeholder={'netflix.com\nnflxvideo.net'}></textarea>
+          <textarea class="input mono" rows="4" bind:value={row.domains} placeholder={'netflix.com\nnflxvideo.net\nnetflix.*'}></textarea>
+          {#if (row.domains || '').includes('*')}<div class="tiny muted">„*“ = beliebige Zeichen, z. B. <code>netflix.*</code> oder <code>ipv4-*.nflxvideo.net</code> – Unterdomains zählen mit.</div>{/if}
         </div>
       {/each}
       <div class="row wrap" style="gap:6px">
@@ -1663,6 +1699,46 @@
   }
   .bad-text {
     color: var(--bad);
+  }
+  .hchart {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+  }
+  .yax {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-end;
+    height: 120px;
+    line-height: 1;
+    margin-top: -4px;
+    padding-bottom: 0;
+  }
+  .plot {
+    position: relative;
+    min-width: 0;
+  }
+  .gl {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px dashed var(--border);
+    pointer-events: none;
+  }
+  .xax {
+    display: flex;
+    gap: 2px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+    padding-top: 3px;
+  }
+  .xax span {
+    flex: 1;
+    min-width: 2px;
+    white-space: nowrap;
+    overflow: visible;
+    width: 0;
   }
   .bars {
     display: flex;

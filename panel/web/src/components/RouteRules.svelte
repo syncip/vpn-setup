@@ -267,7 +267,7 @@
     </div>
     {#if f.match === 'targets'}
       <div class="field">
-        <label for="rt-dom">Domains <Info title="Domains" text="Eine pro Zeile, Unterdomains sind eingeschlossen. Bei WireGuard und OpenVPN erkennt der Server die Ziele an den DNS-Anfragen des Geräts. Eine neue Regel greift, sobald das Gerät den Namen neu auflöst (VPN kurz trennen und verbinden hilft). Fest erzwungenes verschlüsseltes DNS (DoH, „Privates DNS“ mit Anbieter) umgeht das." /></label>
+        <label for="rt-dom">Domains <Info title="Domains" text="Eine pro Zeile, Unterdomains sind eingeschlossen. „*“ steht für beliebige Zeichen (netflix.*, ipv4-*.nflxvideo.net). Bei WireGuard und OpenVPN erkennt der Server die Ziele an den DNS-Anfragen des Geräts. Eine neue Regel greift, sobald das Gerät den Namen neu auflöst (VPN kurz trennen und verbinden hilft). Fest erzwungenes verschlüsseltes DNS (DoH, „Privates DNS“ mit Anbieter) umgeht das." /></label>
         <textarea id="rt-dom" class="input mono" rows="3" bind:value={f.domains} placeholder={'netflix.com\nnflxvideo.net'}></textarea>
       </div>
       <div class="field">

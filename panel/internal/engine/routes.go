@@ -105,8 +105,46 @@ func ParseRouteNets(text string) ([]string, error) {
 
 var domainRe = regexp.MustCompile(`^([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z0-9-]{2,63}$`)
 
+var patternRe = regexp.MustCompile(`^[a-z0-9_*-]+(\.[a-z0-9_*-]+)*$`)
+
+// CleanDomainEntry: Eintrag für SmartDNS und Ziel-Regeln – eine Domain (samt Unterdomains) oder ein
+// Muster mit „*“ (netflix.*, ipv4-*.nflxvideo.net, *nflx*). „*.“ am Anfang fällt weg, weil
+// Unterdomains ohnehin dazugehören. Leer = ungültig.
+func CleanDomainEntry(d string) string {
+	d = strings.ToLower(strings.TrimSpace(d))
+	for strings.Contains(d, "**") {
+		d = strings.ReplaceAll(d, "**", "*")
+	}
+	d = strings.TrimPrefix(d, "*.")
+	d = strings.Trim(d, ".")
+	if len(d) > 253 || d == "" {
+		return ""
+	}
+	if !proto.IsDomainPattern(d) {
+		if !domainRe.MatchString(d) {
+			return ""
+		}
+		return d
+	}
+	if !patternRe.MatchString(d) {
+		return ""
+	}
+	// Muster brauchen etwas Festes (mindestens zwei Buchstaben oder Ziffern) – „*“ allein passte auf alles.
+	n := 0
+	for _, c := range d {
+		if c != '*' && c != '.' && c != '-' && c != '_' {
+			n++
+		}
+	}
+	if n < 2 {
+		return ""
+	}
+	return d
+}
+
 // ParseRouteDomains: Domains (eine pro Zeile bzw. durch Komma/Leerzeichen getrennt). „*.“ und
-// führende Punkte fallen weg – Unterdomains sind immer eingeschlossen. Auch ganze Adressen
+// führende Punkte fallen weg – Unterdomains sind immer eingeschlossen; „*“ an anderer Stelle macht
+// den Eintrag zum Muster (CleanDomainEntry). Auch ganze Adressen
 // (https://www.beispiel.de/seite) werden auf den Namen gekürzt.
 func ParseRouteDomains(text string) ([]string, error) {
 	seen := map[string]bool{}
@@ -123,13 +161,11 @@ func ParseRouteDomains(text string) ([]string, error) {
 			if i := strings.IndexAny(d, "/?"); i >= 0 {
 				d = d[:i]
 			}
-			d = strings.TrimPrefix(d, "*.")
-			d = strings.Trim(d, ".")
 			if i := strings.LastIndexByte(d, ':'); i >= 0 {
 				d = d[:i]
 			}
-			if !domainRe.MatchString(d) || len(d) > 253 {
-				return nil, fmt.Errorf("„%s“ ist kein gültiger Domainname (Beispiel: netflix.com)", f)
+			if d = CleanDomainEntry(d); d == "" {
+				return nil, fmt.Errorf("„%s“ ist kein gültiger Domainname (Beispiele: netflix.com, netflix.*, ipv4-*.nflxvideo.net)", f)
 			}
 			if !seen[d] {
 				seen[d] = true

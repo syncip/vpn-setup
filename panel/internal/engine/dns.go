@@ -685,6 +685,9 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 				if q.Type == dnsmessage.TypeA {
 					e.smartQuery(rid, dom, name, s.peer)
 				}
+				// Wer die Serveradresse bekommt, darf damit auch den Proxy nutzen – wichtig bei DoH/DoT
+				// über die Kennung, wenn die Adresse des Geräts nicht freigegeben ist.
+				e.smartGrant(src, -s.peer)
 				v4, v6 := e.PublicAddrs()
 				detail := "SmartDNS: " + dom + " über „" + gr.Name + "“"
 				switch q.Type {
@@ -693,8 +696,10 @@ func (g *dnsGate) handleWith(e *Engine, src netip.Addr, s *srcPolicy, query []by
 						return done(dnsReply(hdr, q, dnsmessage.RCodeSuccess, []netip.Addr{v4}, 60), "rewritten", detail, gid)
 					}
 				case dnsmessage.TypeAAAA:
+					// IPv6 nur, wenn auch die Anfrage über IPv6 kam: Sonst verbindet sich das Gerät über
+					// seine (unbekannte) IPv6-Adresse, und der Proxy kann es nicht zuordnen.
 					var a []netip.Addr
-					if v6.IsValid() {
+					if v6.IsValid() && src.Is6() && !src.Is4In6() {
 						a = []netip.Addr{v6}
 					}
 					if v4.IsValid() {

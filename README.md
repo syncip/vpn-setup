@@ -514,6 +514,15 @@ um – deshalb nach dem Update die Config neu laden.
   Geräte ohne VPN (Port 53, DoH, DoT) bekommen für diese Namen die Adresse des Servers; nginx reicht die
   HTTPS-Verbindungen anhand des Namens an das Panel, das sie über die Gruppe weiterleitet (Ende-zu-Ende
   verschlüsselt, nur Port 443 – HTTP und QUIC nicht). Die SmartDNS-Seite zeigt Verbindungen und Fehler je Domain.
+  - **Platzhalter „*“** in SmartDNS-Profilen und Ziel-Regeln: `netflix.*` (alle Länderendungen),
+    `ipv4-*.nflxvideo.net`, `*nflx*` (jeder Name mit „nflx“). „*“ steht für beliebige Zeichen, Unterdomains zählen
+    mit; `*.netflix.com` ist dasselbe wie `netflix.com`. Feste Domains haben Vorrang vor Mustern. Wirkt im DNS, in
+    den Ziel-Regeln (Firewall), bei VLESS (Xray, als regulärer Ausdruck), Hysteria2 und im nginx-Proxy.
+  - **Geräte ohne VPN – wer darf den Proxy nutzen?** Freigegebene Adressen (auch wenn nur DoH/DoT an ist) und jede
+    Adresse, die gerade per SmartDNS die Serveradresse bekommen hat (6 Stunden, IPv6 je /64) – so klappt es auch über
+    DoH/DoT mit der Kennung von unterwegs. Die IPv6 des Servers bekommt nur, wer auch über IPv6 fragt; sonst würde
+    das Gerät über eine unbekannte IPv6-Adresse kommen. Abgewiesene Verbindungen stehen mit Grund auf der
+    SmartDNS-Seite („Zuletzt abgewiesen“).
   - **Statistik je Profil** (Zeile auf jeder Profilkarte, Knopf „Statistik“): Anfragen und Geräte der letzten
     24 Stunden, Verkehr, zuletzt gegriffen; im Dialog der Verlauf der letzten 7 Tage (Anfragen oder Verkehr je
     Stunde), eine Wochenansicht „Wann wird es genutzt?“ (Wochentag × Stunde), Weiterleitungen im Vergleich, alle

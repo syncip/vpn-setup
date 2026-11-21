@@ -98,7 +98,7 @@ func ParseSmart(v any) []SmartRoute {
 		}
 		seen := map[string]bool{}
 		for _, d := range strs(m["domains"]) {
-			if c := cleanDomain(d); c != "" && !seen[c] {
+			if c := CleanDomainEntry(d); c != "" && !seen[c] {
 				seen[c] = true
 				r.Domains = append(r.Domains, c)
 			}

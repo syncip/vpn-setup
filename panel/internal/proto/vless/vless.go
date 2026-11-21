@@ -352,6 +352,9 @@ func (d Driver) Apply(env *proto.Env, servers []*proto.ServerBundle) error {
 				ds := make([]string, len(r.Domains))
 				for i, d := range r.Domains {
 					ds[i] = "domain:" + d
+					if proto.IsDomainPattern(d) { // Muster (netflix.*) als regulärer Ausdruck
+						ds[i] = "regexp:" + proto.DomainPatternRegexp(d)
+					}
 				}
 				rules = append(rules, map[string]any{"type": "field", "user": c.emails, "domain": ds, "outboundTag": tag})
 			}

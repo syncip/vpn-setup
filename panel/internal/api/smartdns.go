@@ -117,9 +117,9 @@ func (a *API) saveSmartDNS(w http.ResponseWriter, r *http.Request, o *store.Obje
 				if d == "" || strings.HasPrefix(d, "#") {
 					continue
 				}
-				c := engine.CleanDomain(d)
+				c := engine.CleanDomainEntry(d)
 				if c == "" {
-					errJSON(w, http.StatusBadRequest, "„"+g.Name+"“: „"+d+"“ ist keine gültige Domain")
+					errJSON(w, http.StatusBadRequest, "„"+g.Name+"“: „"+d+"“ ist keine gültige Domain bzw. kein gültiges Muster (Beispiele: netflix.com, netflix.*, ipv4-*.nflxvideo.net)")
 					return
 				}
 				if !seen[c] {
