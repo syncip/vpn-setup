@@ -484,9 +484,12 @@ um – deshalb nach dem Update die Config neu laden.
   - **Große Netze** bis `0.0.0.0/0` / `::/0` lassen sich freigeben; die Oberfläche warnt ab /23 bzw. /55
     (bei `0.0.0.0/0` als „offener DNS-Server“). Jeder in dem Netz kann den DNS dann nutzen, SmartDNS leitet
     auch dessen Verkehr über die Ausgänge, und offene DNS-Server werden gezielt für Verstärkungsangriffe
-    gesucht. Schutz dagegen: Über UDP (Port 53) beantwortet das Panel je Absender (IPv4-Adresse bzw. IPv6-/64)
-    höchstens 20 Anfragen je Sekunde (kurz bis 60) und lehnt ANY-Anfragen ab. TCP, DoH und DoT sind nicht
-    begrenzt, dort ist der Absender echt.
+    gesucht.
+  - **Schutz vor Missbrauch** (Karte in „Ohne VPN“): Über UDP (Port 53) beantwortet das Panel je Absender
+    (IPv4-Adresse bzw. IPv6-/64) höchstens so viele Anfragen je Sekunde wie eingestellt (Vorgabe 20, kurzzeitig 60;
+    0 = keine Begrenzung) und lehnt auf Wunsch ANY-Anfragen ab. Je freigegebenem Gerät lässt sich ein eigener
+    Wert oder „unbegrenzt“ setzen (z. B. für einen Router mit vielen Geräten dahinter). Verworfene Anfragen werden
+    je Gerät gezählt und angezeigt. TCP, DoH und DoT sind nicht begrenzt, dort ist der Absender echt.
   Auf dem Proxmox-Host UDP und TCP 53 an den Container weiterleiten (die Seite zeigt die Befehle,
   mit der internen IPv6 des Containers und der öffentlichen IPv6 aus der Server-Adresse).
 - **DoH und DoT** (Reiter „Ohne VPN“): Jedes freigegebene Gerät bekommt eine Kennung und damit eigene

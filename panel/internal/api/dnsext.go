@@ -53,6 +53,8 @@ func (a *API) saveDNSClient(w http.ResponseWriter, r *http.Request, o *store.Obj
 		Profile *int64   `json:"profile"`
 		Note    *string  `json:"note"`
 		Learn   *bool    `json:"learn"`
+		Rate    *int     `json:"rate"`  // 0 = Vorgabe, -1 = unbegrenzt
+		Burst   *int     `json:"burst"` // 0 = 3 × Rate
 		NewTok  bool     `json:"new_token"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -103,6 +105,20 @@ func (a *API) saveDNSClient(w http.ResponseWriter, r *http.Request, o *store.Obj
 	}
 	if in.Learn != nil {
 		o.Data["learn"] = *in.Learn
+	}
+	if in.Rate != nil {
+		if *in.Rate < -1 || *in.Rate > 100000 {
+			errJSON(w, http.StatusBadRequest, "Begrenzung: -1 (unbegrenzt), 0 (Vorgabe) oder 1 bis 100000 Anfragen je Sekunde")
+			return
+		}
+		o.Data["rate"] = *in.Rate
+	}
+	if in.Burst != nil {
+		if *in.Burst < 0 || *in.Burst > 100000 {
+			errJSON(w, http.StatusBadRequest, "Spitze: 0 (automatisch) bis 100000 Anfragen")
+			return
+		}
+		o.Data["burst"] = *in.Burst
 	}
 	if o.Secrets == nil {
 		o.Secrets = store.M{}

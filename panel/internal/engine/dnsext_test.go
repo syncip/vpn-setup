@@ -103,20 +103,37 @@ func TestDNSExternal(t *testing.T) {
 	if l, err := ParseClientAddrs([]string{"0.0.0.0/0, ::/0, 10.1.2.3/8, 192.0.2.0/24"}); err != nil || strings.Join(LargeNets(l), " ") != "0.0.0.0/0 ::/0 10.0.0.0/8" {
 		t.Errorf("große Netze: %v %v", l, err)
 	}
-	// Begrenzung je Absender (IPv6 je /64)
+	// Begrenzung je Absender (IPv6 je /64), Vorgabe 20/s, kurz bis 60
 	var lim extLimiter
 	now := time.Now()
+	rate, burst := extRateOf(defExtRate, defExtBurst, 0, 0)
 	n := 0
 	for i := 0; i < 200; i++ {
-		if lim.allow(netip.MustParseAddr(fmt.Sprintf("2001:db8::%x", i+1)), now) {
+		if lim.allow(netip.MustParseAddr(fmt.Sprintf("2001:db8::%x", i+1)), now, rate, burst, 7) {
 			n++
 		}
 	}
-	if n != int(extBurst) || lim.allow(netip.MustParseAddr("2001:db8::ffff"), now) || !lim.allow(netip.MustParseAddr("192.0.2.1"), now) {
+	if n != defExtBurst || lim.allow(netip.MustParseAddr("2001:db8::ffff"), now, rate, burst, 7) || !lim.allow(netip.MustParseAddr("192.0.2.1"), now, rate, burst, 8) {
 		t.Errorf("Begrenzung: %d durchgelassen", n)
 	}
-	if !lim.allow(netip.MustParseAddr("2001:db8::1"), now.Add(time.Second)) {
+	if !lim.allow(netip.MustParseAddr("2001:db8::1"), now.Add(time.Second), rate, burst, 7) {
 		t.Error("Begrenzung erholt sich nicht")
+	}
+	if total, by := lim.Dropped(); total != 141 || by[7].Count != 141 || by[8].Count != 0 {
+		t.Errorf("verworfen: %d %+v", total, by)
+	}
+	// eigene Werte je Gerät: unbegrenzt, eigener Wert mit automatischer Spitze, Spitze nie unter dem Wert
+	if r, _ := extRateOf(20, 60, -1, 0); r != 0 {
+		t.Error("unbegrenzt")
+	}
+	if r, b := extRateOf(20, 60, 200, 0); r != 200 || b != 600 {
+		t.Errorf("eigener Wert: %v %v", r, b)
+	}
+	if r, b := extRateOf(50, 10, 0, 0); r != 50 || b != 50 {
+		t.Errorf("Spitze unter dem Wert: %v %v", r, b)
+	}
+	if r, _ := extRateOf(0, 0, 0, 0); r != 0 || !lim.allow(netip.MustParseAddr("2001:db8::ffff"), now, 0, 0, 7) {
+		t.Error("global aus")
 	}
 	if l, err := ParseClientAddrs([]string{"Mein.DynDNS.org, 192.0.2.1\n2001:db8::1"}); err != nil || strings.Join(l, " ") != "mein.dyndns.org 192.0.2.1 2001:db8::1" {
 		t.Errorf("Adressen: %v %v", l, err)

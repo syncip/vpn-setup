@@ -33,9 +33,11 @@ type srcPolicy struct {
 	user  int64
 	filt  *dnsFilter // Filterprofil (nil = keins)
 	smart *smartSet  // SmartDNS (nil = keins)
-	dns   bool       // DNS-Anfragen an den Panel-DNS umleiten
-	doh   bool       // verschlüsseltes DNS (DoH/DoT) sperren
-	via   string     // Weg ohne VPN: dns | doh | dot | doh-addr | dot-addr ("" = VPN)
+	rate  float64    // DNS von außen über UDP: Anfragen je Sekunde (0 = unbegrenzt)
+	burst float64
+	dns   bool   // DNS-Anfragen an den Panel-DNS umleiten
+	doh   bool   // verschlüsseltes DNS (DoH/DoT) sperren
+	via   string // Weg ohne VPN: dns | doh | dot | doh-addr | dot-addr ("" = VPN)
 }
 
 // forwardSources: Quelladressen aller Geräte, deren Verkehr weitergeleitet wird und für die

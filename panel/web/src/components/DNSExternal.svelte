@@ -118,15 +118,18 @@
   let open = $state(false);
   let busy = $state(false);
   let f = $state({});
+  // Begrenzung je Gerät: rateMode '' = Vorgabe, 'off' = unbegrenzt, 'own' = eigener Wert
+  const rateModeOf = (c) => (c.rate < 0 ? 'off' : c.rate > 0 ? 'own' : '');
   function edit(c, addr) {
     f = c
-      ? { id: c.id, name: c.name, addrs: c.addrs.join('\n'), profile: c.profile, note: c.note, enabled: c.enabled, learn: c.learn }
-      : { id: 0, name: '', addrs: addr || '', profile: 0, note: '', enabled: true, learn: false };
+      ? { id: c.id, name: c.name, addrs: c.addrs.join('\n'), profile: c.profile, note: c.note, enabled: c.enabled, learn: c.learn, rateMode: rateModeOf(c), rate: c.rate > 0 ? c.rate : x.rate * 5 || 100, burst: c.burst || 0 }
+      : { id: 0, name: '', addrs: addr || '', profile: 0, note: '', enabled: true, learn: false, rateMode: '', rate: x.rate * 5 || 100, burst: 0 };
     open = true;
   }
   async function save() {
     busy = true;
-    const body = { name: f.name, addrs: [f.addrs], profile: Number(f.profile), note: f.note, enabled: f.enabled, learn: f.learn };
+    const rate = f.rateMode === 'off' ? -1 : f.rateMode === 'own' ? Math.max(1, Math.round(Number(f.rate) || 0)) : 0;
+    const body = { name: f.name, addrs: [f.addrs], profile: Number(f.profile), note: f.note, enabled: f.enabled, learn: f.learn, rate, burst: f.rateMode === 'own' ? Math.max(0, Math.round(Number(f.burst) || 0)) : 0 };
     const ok = await run(() => (f.id ? put(`/dns/clients/${f.id}`, body) : post('/dns/clients', body)), 'Gespeichert');
     busy = false;
     if (ok) {
@@ -251,6 +254,23 @@
   }
   const cp = (t) => copy(t).then(() => toast('Kopiert'));
   const valid = $derived(f.name?.trim() && (f.addrs?.trim() || T.on));
+  // ---------- Schutz vor Missbrauch (Begrenzung über UDP) ----------
+  let rf = $state(null); // Formular, null = Werte vom Server
+  const rv = $derived(rf || { rate: x.rate ?? 20, burst: x.burst ?? 60, any: x.any_block ?? true });
+  const rateDirty = $derived(!!rf && (rf.rate !== x.rate || rf.burst !== x.burst || rf.any !== x.any_block));
+  function rateEdit(k, v) {
+    rf = { ...rv, [k]: v };
+  }
+  async function saveRate() {
+    const r = Math.max(0, Math.round(Number(rf.rate) || 0));
+    const b = Math.max(0, Math.round(Number(rf.burst) || 0));
+    if (r === 0 && !(await confirmDialog({ title: 'Begrenzung ausschalten?', text: 'Ohne Begrenzung kann jeder freigegebene Absender beliebig viele Anfragen über UDP stellen. Bei großen freigegebenen Netzen lässt sich der Server dann für Angriffe auf fremde Adressen missbrauchen.', ok: 'Ausschalten', danger: true }))) return;
+    if (await run(() => put('/dns/settings', { ext_rate: r, ext_burst: Math.max(b, r), ext_any: !!rf.any }), 'Begrenzung gespeichert')) {
+      rf = null;
+      load();
+    }
+  }
+  const rateText = (c) => (c.rate < 0 ? 'unbegrenzt' : c.rate > 0 ? `${fmtNum(c.rate)}/s` : '');
   // große Netze: erlaubt, aber mit Warnung (ab /23 bzw. /55; 0.0.0.0/0 = offener DNS-Server)
   function largeNets(text) {
     return (text || '')
@@ -274,7 +294,7 @@
         <strong>DNS von außen</strong>
         <Info title="DNS ohne VPN" wide>
           <p>Geräte, die kein VPN können (Fernseher, Konsole, Router zu Hause), tragen den Server direkt als DNS-Server ein. Dann gelten für sie Filterprofile und Protokoll wie für VPN-Geräte.</p>
-          <p><b>Nur freigegebene Absender</b> bekommen Antworten. Ein offener DNS-Server für alle würde sofort für Angriffe (DNS-Verstärkung) missbraucht – deshalb gibt es das nicht. Anfragen nicht freigegebener Absender werden verworfen, aber unten als „gesperrt“ mitgezählt.</p>
+          <p><b>Nur freigegebene Absender</b> bekommen Antworten. Anfragen nicht freigegebener Absender werden verworfen, aber unten als „gesperrt“ mitgezählt. Große Netze bis <code>0.0.0.0/0</code> lassen sich freigeben – ein offener DNS-Server wird aber schnell für Angriffe (DNS-Verstärkung) missbraucht; die Begrenzung unter „Schutz vor Missbrauch“ bremst das.</p>
           <p>Wechselt die Adresse deines Anschlusses, trag statt der IP einen DynDNS-Namen ein (z. B. von der FRITZ!Box: <code>xyz.myfritz.net</code>) – das Panel löst ihn alle 5 Minuten neu auf.</p>
         </Info>
         <div class="muted small">Port 53 auf {d.out_interface} → Panel-DNS</div>
@@ -414,6 +434,43 @@
   </div>
 </div>
 
+<div class="card" style="margin-top:14px">
+  <div class="card-head">
+    <h2>
+      <Icon name="shield" size={16} /> Schutz vor Missbrauch
+      <Info title="Begrenzung über UDP" wide>
+        <p>Bei DNS über UDP (Port 53) lässt sich der Absender fälschen. Ein Angreifer schickt dann kleine Anfragen mit der Adresse seines Opfers, und dein Server schickt die – größeren – Antworten dorthin (Verstärkungsangriff). Das trifft vor allem große freigegebene Netze bis hin zu <code>0.0.0.0/0</code>.</p>
+        <p>Deshalb beantwortet das Panel je Absender (IPv4-Adresse bzw. IPv6-/64-Netz) höchstens so viele Anfragen je Sekunde; kurzzeitig sind mehr erlaubt (Spitze). Was darüber liegt, wird verworfen. Ein Gerät mit vielen Nutzern dahinter (z. B. Router zu Hause) braucht eventuell mehr – das lässt sich je freigegebenem Gerät einstellen.</p>
+        <p>TCP, DoH und DoT sind nicht begrenzt, dort ist der Absender echt. VPN-Geräte sind nie betroffen.</p>
+      </Info>
+    </h2>
+    {#if x.dropped}<span class="badge warn" title="seit dem Start des Panels">{fmtNum(x.dropped)} verworfen</span>{/if}
+  </div>
+  <div class="card-pad stack" style="gap:10px">
+    <div class="row wrap" style="gap:14px;align-items:flex-end">
+      <div class="field" style="margin:0">
+        <label for="dx-rate">Anfragen je Sekunde und Absender</label>
+        <input id="dx-rate" class="input" type="number" min="0" max="100000" style="width:140px" value={rv.rate} oninput={(e) => rateEdit('rate', Number(e.currentTarget.value))} />
+      </div>
+      <div class="field" style="margin:0">
+        <label for="dx-burst">Kurzzeitig bis</label>
+        <input id="dx-burst" class="input" type="number" min="0" max="100000" style="width:140px" value={rv.burst} oninput={(e) => rateEdit('burst', Number(e.currentTarget.value))} />
+      </div>
+      <label class="switch" style="margin-bottom:8px"><input type="checkbox" checked={rv.any} onchange={(e) => rateEdit('any', e.currentTarget.checked)} /><span class="track"></span> ANY-Anfragen ablehnen</label>
+      <span class="grow"></span>
+      {#if rateDirty}
+        <button class="btn" onclick={() => (rf = null)}>Verwerfen</button>
+        <button class="btn primary" onclick={saveRate}>Speichern</button>
+      {/if}
+    </div>
+    {#if Number(rv.rate) === 0}
+      <div class="notice warn small"><Icon name="alert" size={16} /><span><b>Keine Begrenzung</b> – jeder freigegebene Absender darf beliebig viele Anfragen über UDP stellen.</span></div>
+    {:else}
+      <div class="tiny muted">0 = keine Begrenzung. Gilt für alle freigegebenen Geräte ohne eigenen Wert{x.clients.some((c) => c.rate) ? ` (eigene Werte: ${x.clients.filter((c) => c.rate).map((c) => `${c.name} ${rateText(c)}`).join(', ')})` : ''}. Vorgabe: 20 je Sekunde, kurzzeitig 60.</div>
+    {/if}
+  </div>
+</div>
+
 {#if d.smart?.domains}
   <div class="notice small" style="margin-top:14px">
     <Icon name="route" size={16} />
@@ -439,6 +496,7 @@
               {#each c.addrs as a}<span class="chip mono" class:warnchip={largeNets(a).length} title={largeNets(a).length ? 'Großes Netz – viele fremde Adressen dürfen fragen' : ''}>{a}</span>{/each}
               {#if !c.addrs.length}<span class="chip">nur DoH/DoT</span>{/if}
               {#if c.learn}<span class="chip" title="Wer per DoH/DoT fragt, darf 24 h auch normales DNS">Adresse merken{c.learned.length ? `: ${c.learned.join(', ')}` : ''}</span>{/if}
+              {#if c.rate}<span class="chip" class:warnchip={c.rate < 0} title="Eigene Begrenzung über UDP">Begrenzung {rateText(c)}</span>{/if}
             </div>
             {#if T.on && T.host && c.token}
               <div class="links">
@@ -451,6 +509,7 @@
               <span><Icon name="shield" size={12} /> {profName(c.profile)}</span>
               <span>· {fmtNum(c.queries)} Anfragen{#if c.blocked}, <span class="bad-text">{fmtNum(c.blocked)} gesperrt</span>{/if}</span>
               <span>· zuletzt {when(c.last)}</span>
+              {#if c.dropped?.count}<span class="warn-text" title="Wegen der Begrenzung verworfen (seit dem Start des Panels)">· {fmtNum(c.dropped.count)} verworfen, zuletzt {when(c.dropped.last)}</span>{/if}
               {#each c.resolved as r}
                 <span class={r.err ? 'warn-text' : ''}>· {r.host} → {r.addrs.length ? r.addrs.join(', ') : r.err}</span>
               {/each}
@@ -568,7 +627,7 @@
           <Icon name="alert" size={16} />
           <span
             >{#if isOpen(fLarge)}<b>Offener DNS-Server:</b> {fLarge.join(', ')} gibt deinen DNS für das ganze Internet frei.{:else}<b>Großes Netz:</b> {fLarge.join(', ')} gibt sehr viele fremde Adressen frei.{/if}
-            Jeder darin kann deinen DNS nutzen, und SmartDNS leitet auch dessen Verkehr über deine Ausgänge. Offene DNS-Server werden gezielt gesucht und für Angriffe missbraucht – das Panel begrenzt deshalb Anfragen über UDP auf 20 je Sekunde und Absender und lehnt ANY-Anfragen ab. Besser: eigene Adressen, das /64 des Anschlusses oder DoH/DoT mit Kennung.</span
+            Jeder darin kann deinen DNS nutzen, und SmartDNS leitet auch dessen Verkehr über deine Ausgänge. Offene DNS-Server werden gezielt gesucht und für Angriffe missbraucht – das Panel begrenzt deshalb Anfragen über UDP je Absender (Schutz vor Missbrauch, derzeit {x.rate ? `${x.rate} je Sekunde` : 'aus!'}). Besser: eigene Adressen, das /64 des Anschlusses oder DoH/DoT mit Kennung.</span
           >
         </div>
       {/if}
@@ -591,6 +650,23 @@
         <Info title="Adresse merken" text="Fragt das Gerät (z. B. Handy oder Router) per DoH/DoT, darf seine öffentliche Adresse 24 Stunden lang auch normales DNS über Port 53 nutzen – praktisch für Fernseher im selben Heimnetz, ohne feste IP. Braucht „DNS von außen“." />
       </div>
     {/if}
+    <div class="field">
+      <span class="label">Begrenzung über UDP <Info title="Begrenzung je Gerät" text="Höchstens so viele Anfragen je Sekunde und Absender (Port 53, UDP). Ein Router mit vielen Geräten dahinter braucht eventuell mehr. „Unbegrenzt“ nur für eigene, feste Adressen – nie für große Netze." /></span>
+      <div class="segmented sm" style="margin-bottom:6px">
+        <button class:active={f.rateMode === ''} onclick={() => (f.rateMode = '')}>Vorgabe ({x.rate ? `${fmtNum(x.rate)}/s` : 'keine'})</button>
+        <button class:active={f.rateMode === 'own'} onclick={() => (f.rateMode = 'own')}>Eigener Wert</button>
+        <button class:active={f.rateMode === 'off'} onclick={() => (f.rateMode = 'off')}>Unbegrenzt</button>
+      </div>
+      {#if f.rateMode === 'own'}
+        <div class="row wrap" style="gap:10px">
+          <label class="row small" style="gap:6px"><input class="input" type="number" min="1" max="100000" style="width:110px" bind:value={f.rate} /> je Sekunde</label>
+          <label class="row small" style="gap:6px">kurzzeitig bis <input class="input" type="number" min="0" max="100000" style="width:110px" bind:value={f.burst} /></label>
+          <span class="tiny muted">0 = dreifacher Wert</span>
+        </div>
+      {:else if f.rateMode === 'off' && fLarge.length}
+        <div class="notice bad small"><Icon name="alert" size={16} /><span>Unbegrenzt bei großen Netzen ({fLarge.join(', ')}) macht den Server zum Werkzeug für Angriffe auf fremde Adressen.</span></div>
+      {/if}
+    </div>
     <label class="switch"><input type="checkbox" bind:checked={f.enabled} /><span class="track"></span> Aktiv</label>
   </div>
   {#snippet footer()}

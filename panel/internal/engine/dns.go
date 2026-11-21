@@ -579,10 +579,10 @@ func (g *dnsGate) handle(e *Engine, src netip.Addr, query []byte, tcp bool) []by
 			s = es
 			if !tcp {
 				// Schutz vor Missbrauch für Verstärkungsangriffe (gefälschte Absender, dnsrate.go)
-				if !e.dnsRate.allow(src, time.Now()) {
+				if !e.dnsRate.allow(src, time.Now(), es.rate, es.burst, -es.peer) {
 					return nil
 				}
-				if queryType(query) == dnsmessage.TypeALL {
+				if queryType(query) == dnsmessage.TypeALL && e.dnsx.anyBlock() {
 					return refusedReply(query)
 				}
 			}

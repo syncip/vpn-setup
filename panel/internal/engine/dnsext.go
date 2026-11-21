@@ -35,6 +35,8 @@ type DNSClient struct {
 	Note    string
 	Token   string // Kennung für DoH/DoT (<token>.<dns-host>)
 	Learn   bool   // Adresse merken: wer per DoH/DoT fragt, darf 24 h auch normales DNS (Port 53)
+	Rate    int    // Anfragen je Sekunde (UDP): 0 = Vorgabe, -1 = unbegrenzt
+	Burst   int    // kurzzeitig: 0 = 3 × Rate
 }
 
 func DNSClientFrom(o *store.Object) *DNSClient {
@@ -47,6 +49,7 @@ func DNSClientFrom(o *store.Object) *DNSClient {
 	c.Note, _ = o.Data["note"].(string)
 	c.Token, _ = o.Secrets["token"].(string)
 	c.Learn, _ = o.Data["learn"].(bool)
+	c.Rate, c.Burst = int(numData(o.Data["rate"])), int(numData(o.Data["burst"]))
 	return c
 }
 
@@ -108,6 +111,8 @@ type extSrc struct {
 	name  string
 	filt  *dnsFilter
 	smart *smartSet
+	rate  float64 // Begrenzung über UDP (0 = keine)
+	burst float64
 	token string
 	learn bool
 }
@@ -159,6 +164,7 @@ const (
 type dnsExt struct {
 	mu     sync.Mutex
 	public bool
+	anyOff bool // ANY-Anfragen über UDP ablehnen (dns_ext_any)
 	srcs   []extSrc
 	hosts  map[string]hostRes
 	seen   map[netip.Addr]*extSeen
@@ -170,6 +176,12 @@ type dnsExt struct {
 	tokens  map[string]extSrc
 	byID    map[int64]extSrc
 	learned map[netip.Addr]learnRec
+}
+
+func (x *dnsExt) anyBlock() bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.anyOff
 }
 
 func (x *dnsExt) isPublic() bool {
@@ -225,6 +237,7 @@ func (e *Engine) extSources(force bool) []extSrc {
 	}
 	byScope, byID := e.dnsProfileFilters()
 	smartProfiles := e.smartProfiles()
+	gRate, gBurst := atoi(e.Setting("dns_ext_rate"), defExtRate), atoi(e.Setting("dns_ext_burst"), defExtBurst)
 	var out []extSrc
 	for _, o := range objs {
 		c := DNSClientFrom(o)
@@ -239,8 +252,9 @@ func (e *Engine) extSources(force bool) []extSrc {
 			filt = byScope["global"]
 		}
 		smart := smartForClient(smartProfiles, c.ID)
+		rate, burst := extRateOf(gRate, gBurst, c.Rate, c.Burst)
 		if c.Token != "" {
-			out = append(out, extSrc{id: c.ID, name: c.Name, filt: filt, smart: smart, token: c.Token, learn: c.Learn})
+			out = append(out, extSrc{id: c.ID, name: c.Name, filt: filt, smart: smart, rate: rate, burst: burst, token: c.Token, learn: c.Learn})
 		}
 		for _, a := range c.Addrs {
 			var pfxs []netip.Prefix
@@ -254,7 +268,7 @@ func (e *Engine) extSources(force bool) []extSrc {
 				}
 			}
 			for _, p := range pfxs {
-				out = append(out, extSrc{pfx: p, id: c.ID, name: c.Name, filt: filt, smart: smart, learn: c.Learn})
+				out = append(out, extSrc{pfx: p, id: c.ID, name: c.Name, filt: filt, smart: smart, rate: rate, burst: burst, learn: c.Learn})
 			}
 		}
 	}
@@ -267,6 +281,7 @@ func (e *Engine) configureExt() {
 	srcs := e.extSources(false)
 	x.mu.Lock()
 	x.public = e.dnsPublic()
+	x.anyOff = e.Setting("dns_ext_any") != "0"
 	x.setSrcs(srcs)
 	e.loadExt()
 	x.mu.Unlock()
@@ -307,7 +322,7 @@ func (e *Engine) extByToken(token string, src netip.Addr) *srcPolicy {
 			x.learned[src] = learnRec{id: s.id, until: time.Now().Add(24 * time.Hour).Unix()}
 		}
 	}
-	return &srcPolicy{pfx: netip.PrefixFrom(src, src.BitLen()), peer: -s.id, filt: s.filt, smart: s.smart, dns: true}
+	return &srcPolicy{pfx: netip.PrefixFrom(src, src.BitLen()), peer: -s.id, filt: s.filt, smart: s.smart, rate: s.rate, burst: s.burst, dns: true}
 }
 
 // refreshExtHosts löst DynDNS-Namen neu auf (jede Minute geprüft, alle 5 Minuten fällig).
@@ -346,12 +361,12 @@ func (e *Engine) extSource(a netip.Addr, needPublic bool) *srcPolicy {
 	}
 	for _, s := range x.srcs {
 		if s.pfx.Contains(a) {
-			return &srcPolicy{pfx: s.pfx, peer: -s.id, filt: s.filt, smart: s.smart, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
+			return &srcPolicy{pfx: s.pfx, peer: -s.id, filt: s.filt, smart: s.smart, rate: s.rate, burst: s.burst, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
 		}
 	}
 	if l, ok := x.learned[a]; ok && l.until > time.Now().Unix() {
 		if s, ok := x.byID[l.id]; ok && s.learn {
-			return &srcPolicy{pfx: netip.PrefixFrom(a, a.BitLen()), peer: -s.id, filt: s.filt, smart: s.smart, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
+			return &srcPolicy{pfx: netip.PrefixFrom(a, a.BitLen()), peer: -s.id, filt: s.filt, smart: s.smart, rate: s.rate, burst: s.burst, dns: true, doh: s.filt != nil && s.filt.BlockDoH}
 		}
 	}
 	return nil
@@ -510,6 +525,9 @@ type ExtClient struct {
 	Token    string       `json:"token"`
 	Learn    bool         `json:"learn"`
 	Learned  []string     `json:"learned"` // per DoH/DoT gemerkte Adressen
+	Rate     int          `json:"rate"`    // eigene Begrenzung (0 = Vorgabe, -1 = unbegrenzt)
+	Burst    int          `json:"burst"`
+	Dropped  RateDrops    `json:"dropped"` // wegen der Begrenzung verworfen
 	Queries  int          `json:"queries"`
 	Blocked  int          `json:"blocked"`
 	Last     int64        `json:"last"`
@@ -609,10 +627,18 @@ type DNSExternal struct {
 	Seen    []ExtSeenRow `json:"seen"`
 	Self    string       `json:"self"`     // eigene öffentliche Adresse (Einstellung server_host)
 	SelfIPs []string     `json:"self_ips"` // deren Adressen – die tragen Geräte als DNS-Server ein
+	// Begrenzung über UDP: Vorgabe und verworfene Anfragen seit dem Start
+	Rate    int   `json:"rate"`
+	Burst   int   `json:"burst"`
+	AnyOff  bool  `json:"any_block"`
+	Dropped int64 `json:"dropped"`
 }
 
 func (e *Engine) DNSExternal() DNSExternal {
-	out := DNSExternal{Public: e.dnsPublic(), Clients: []ExtClient{}, Seen: []ExtSeenRow{}, Self: e.Setting("server_host")}
+	out := DNSExternal{Public: e.dnsPublic(), Clients: []ExtClient{}, Seen: []ExtSeenRow{}, Self: e.Setting("server_host"),
+		Rate: atoi(e.Setting("dns_ext_rate"), defExtRate), Burst: atoi(e.Setting("dns_ext_burst"), defExtBurst), AnyOff: e.Setting("dns_ext_any") != "0"}
+	var drops map[int64]RateDrops
+	out.Dropped, drops = e.dnsRate.Dropped()
 	out.SelfIPs = []string{}
 	if a, err := netip.ParseAddr(out.Self); err == nil {
 		out.SelfIPs = append(out.SelfIPs, a.String())
@@ -629,7 +655,8 @@ func (e *Engine) DNSExternal() DNSExternal {
 	for _, o := range objs {
 		c := DNSClientFrom(o)
 		row := ExtClient{ID: c.ID, Name: c.Name, Enabled: c.Enabled, Addrs: orEmpty(c.Addrs), Profile: c.Profile, Note: c.Note,
-			Resolved: []ExtHostRes{}, Sources: []string{}, Token: c.Token, Learn: c.Learn, Learned: []string{}}
+			Resolved: []ExtHostRes{}, Sources: []string{}, Token: c.Token, Learn: c.Learn, Learned: []string{}, Rate: c.Rate, Burst: c.Burst,
+			Dropped: drops[c.ID]}
 		now := time.Now().Unix()
 		for a, l := range x.learned {
 			if l.id == c.ID && l.until > now {

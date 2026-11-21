@@ -155,6 +155,9 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 		TLSHost  *string `json:"tls_host"`
 		DoTPort  *int    `json:"dot_port"`
 		Email    *string `json:"acme_email"`
+		ExtRate  *int    `json:"ext_rate"`
+		ExtBurst *int    `json:"ext_burst"`
+		ExtAny   *bool   `json:"ext_any"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, err)
@@ -193,6 +196,15 @@ func (a *API) dnsSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Email != nil {
 		set["dns_acme_email"] = *in.Email
+	}
+	if in.ExtRate != nil {
+		set["dns_ext_rate"] = strconv.Itoa(*in.ExtRate)
+	}
+	if in.ExtBurst != nil {
+		set["dns_ext_burst"] = strconv.Itoa(*in.ExtBurst)
+	}
+	if in.ExtAny != nil {
+		set["dns_ext_any"] = map[bool]string{true: "1", false: "0"}[*in.ExtAny]
 	}
 	if in.TLS != nil && *in.TLS {
 		h := a.E.Setting("dns_tls_host")
