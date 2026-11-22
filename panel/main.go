@@ -104,6 +104,17 @@ func main() {
 		cli(args)
 		return
 	}
+	if len(args) > 0 && args[0] == "version" {
+		fmt.Println(version)
+		return
+	}
+	// Wächter für das Update aus dem Panel (internal/engine/selfupdate.go), läuft per systemd-run
+	if len(args) > 1 && args[0] == "update-apply" {
+		if err := engine.UpdateApply(args[1]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(args) > 0 && args[0] == "serve" {
 		serve(args[1:])
 		return
@@ -179,6 +190,7 @@ func serve(args []string) {
 	go e.RunLists(stop)
 	go e.RunUnbound(stop)
 	go e.RunNotify(stop, version)
+	go e.RunBackups(stop, version)
 	if o.demo && o.dev {
 		go e.RunDemoDNSLive(stop)
 	}
@@ -260,6 +272,9 @@ func serve(args []string) {
 			}
 		}()
 	}
+
+	// läuft: einem wartenden Update-Wächter „ok“ melden
+	e.ConfirmUpdate(version)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

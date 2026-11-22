@@ -60,6 +60,8 @@ type Engine struct {
 	notif     notifyState   // E-Mail-Benachrichtigungen (notify.go)
 	host      hostSampler   // CPU/RAM/Durchsatz für die Seitenleiste (hoststats.go)
 	alarm     alarmState    // Alarme (alarms.go)
+	pts       pointState    // Wiederherstellungspunkte (points.go)
+	self      selfUpdate    // Update aus dem Panel (selfupdate.go)
 }
 
 func New(st *store.Store, sys system.Runner, cfg Config) *Engine {
@@ -121,6 +123,8 @@ var settingDefaults = map[string]string{
 	"smtp_user":           "",
 	"mail_from":           "",
 	"notify_events":       "exit,unbound,cert,update,error,lockout,backup",
+	"backup_auto":         "1", // täglich einen Wiederherstellungspunkt anlegen
+	"backup_keep":         "7", // so viele tägliche Punkte behalten
 }
 
 func (e *Engine) Setting(k string) string { return e.St.GetSetting(k, settingDefaults[k]) }

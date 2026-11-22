@@ -127,7 +127,7 @@
         <div class="big">v{meta.version}</div>
         <div class="tiny muted">
           {#if meta.update?.disabled}Update-Prüfung ausgeschaltet
-          {:else if meta.update?.available}<a href={meta.update.url} target="_blank" rel="noopener noreferrer"><b>Neue Version {meta.update.latest} verfügbar</b></a> – Einspielen wie in der README beschrieben
+          {:else if meta.update?.available}<a href={meta.update.url} target="_blank" rel="noopener noreferrer"><b>Neue Version {meta.update.latest} verfügbar</b></a> – <a href="#/system/updates">im Panel installieren</a>
           {:else if meta.update?.error}Prüfung fehlgeschlagen: {meta.update.error}
           {:else if meta.update?.checked}Aktuell (geprüft {ago(meta.update.checked)})
           {:else}Noch nicht geprüft{/if}

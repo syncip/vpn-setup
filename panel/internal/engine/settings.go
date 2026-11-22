@@ -78,7 +78,11 @@ func ValidateSetting(k, v string) (string, error) {
 			}
 		}
 		v = strings.Join(parts, "\n")
-	case "trust_cloudflare", "update_check", "dns_enabled", "private_block", "dns_public", "dns_auto", "dns_tls", "login_lock_grow", "pkg_refresh":
+	case "backup_keep":
+		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 90 {
+			return "", fmt.Errorf("Tägliche Wiederherstellungspunkte: 1 bis 90 behalten")
+		}
+	case "trust_cloudflare", "update_check", "backup_auto", "dns_enabled", "private_block", "dns_public", "dns_auto", "dns_tls", "login_lock_grow", "pkg_refresh":
 		if v != "0" && v != "1" {
 			v = "0"
 		}

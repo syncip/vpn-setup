@@ -25,6 +25,11 @@ type UpdateInfo struct {
 	Checked   int64  `json:"checked,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Disabled  bool   `json:"disabled,omitempty"`
+	// Installieren aus dem Panel (selfupdate.go)
+	CanInstall    bool   `json:"can_install,omitempty"`
+	InstallReason string `json:"install_reason,omitempty"` // warum nicht
+	SetupChanged  bool   `json:"setup_changed,omitempty"`  // vpn-setup.sh hat sich geändert
+	Size          int64  `json:"size,omitempty"`
 }
 
 type updateState struct {
@@ -41,6 +46,16 @@ func (e *Engine) Update(current string) UpdateInfo {
 	i.Disabled = e.Setting("update_check") == "0"
 	i.Available = !i.Disabled && i.Latest != "" && newerVersion(i.Latest, current)
 	return i
+}
+
+// updateOffer: wie Update, im Testmodus aber ein Beispiel-Release für die Update-Karte,
+// damit sich der Ablauf ausprobieren lässt (nur dort, nicht in Hinweisen und Meldungen).
+func (e *Engine) updateOffer(current string) UpdateInfo {
+	if e.Sys.DryRun() {
+		return UpdateInfo{Current: current, Latest: "v99.0.0", Available: true, CanInstall: true, SetupChanged: true, Size: 20 << 20,
+			Notes: "Testmodus – Beispiel-Release. „Installieren“ zeigt den Ablauf, tauscht aber nichts aus.", Checked: time.Now().Unix()}
+	}
+	return e.Update(current)
 }
 
 // RunUpdateCheck: Prüfschleife (kurz nach dem Start, dann alle 12 Stunden).
@@ -75,9 +90,10 @@ func (e *Engine) CheckUpdate(current string) UpdateInfo {
 	if err == nil {
 		defer resp.Body.Close()
 		var r struct {
-			Tag  string `json:"tag_name"`
-			URL  string `json:"html_url"`
-			Body string `json:"body"`
+			Tag    string         `json:"tag_name"`
+			URL    string         `json:"html_url"`
+			Body   string         `json:"body"`
+			Assets []releaseAsset `json:"assets"`
 		}
 		if resp.StatusCode != 200 {
 			err = fmt.Errorf("GitHub antwortet mit %d", resp.StatusCode)
@@ -89,6 +105,13 @@ func (e *Engine) CheckUpdate(current string) UpdateInfo {
 			info.Notes = r.Body
 			if !strings.HasPrefix(info.URL, "https://github.com/") {
 				info.URL = ""
+			}
+			if newerVersion(info.Latest, current) {
+				rel := &releaseInfo{Tag: info.Latest, Assets: r.Assets}
+				info.CanInstall, info.InstallReason, info.SetupChanged = installCheck(rel, current)
+				if a := rel.asset(binaryAssetName()); a != nil {
+					info.Size = a.Size
+				}
 			}
 		}
 	}

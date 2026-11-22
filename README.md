@@ -617,8 +617,8 @@ Die Werte stammen aus denselben Daten, mit denen das Panel die Konfiguration erz
 
 **System → Updates** zeigt neue Versionen von Panel, Xray, Hysteria2 und den Debian-Paketen
 (Sicherheitsupdates und vom Panel genutzte Pakete hervorgehoben); die Übersicht hat dazu ein Fenster und
-„Braucht Aufmerksamkeit“ meldet Sicherheitsupdates. **Installiert wird nichts automatisch:** Panel wie unten
-beschrieben, Xray und Hysteria2 mit `bash vpn-setup.sh`, Debian-Pakete mit `apt full-upgrade` im Container.
+„Braucht Aufmerksamkeit“ meldet Sicherheitsupdates. **Installiert wird nichts automatisch:** das Panel per Knopf
+(siehe „Version und Updates“), Xray und Hysteria2 mit `bash vpn-setup.sh`, Debian-Pakete mit `apt full-upgrade` im Container.
 Geprüft wird alle 12 Stunden (Panel, Xray und Hysteria2 per GitHub, abschaltbar mit der Update-Prüfung unter
 System → Einstellungen → Allgemein); die Debian-Prüfung ist eine Simulation (`apt-get -s dist-upgrade`) und sieht, was
 in den Paketlisten steht. Die Listen aktualisiert Debian meist selbst; sonst „Paketlisten aktualisieren“ oder
@@ -686,6 +686,21 @@ vpn backup restore /root/panel.vpnbak && systemctl restart vpnpanel
 Ohne `VPNPANEL_BACKUP_PASSWORD` fragt `vpn backup` das Passwort ab. Eine Sicherung einer neueren
 Panel-Version lässt sich erst nach einem Update einspielen.
 
+### Wiederherstellungspunkte (seit v0.36.0)
+
+Im selben Reiter legt das Panel Sicherungen selbst auf dem Server ab (`/etc/vpn/backups/`):
+
+- **täglich** (abschaltbar, die letzten 7 bleiben – einstellbar 1 bis 90; der erste wenige Minuten nach dem Start),
+- **vor jedem Update** aus dem Panel und **vor jeder Wiederherstellung** (je die letzten 5),
+- **von Hand** mit Notiz – diese löscht das Panel nie selbst.
+
+Inhalt wie bei „Sicherung herunterladen“, aber ohne DNS- und Anmeldeprotokoll. Verschlüsselt sind die Punkte mit
+einem Schlüssel dieser Installation (`/etc/vpn/backup.key`, wird nie mitgesichert). **Herunterladen** verschlüsselt
+mit einem eigenen Passwort neu, damit sich die Datei auch auf einem anderen Server einspielen lässt.
+**Einspielen** sichert den aktuellen Stand vorher als eigenen Punkt und startet das Panel neu; Herunterladen und
+Einspielen verlangen das Panel-Passwort (und bei 2FA einen Code). Auch beim Einspielen einer hochgeladenen
+Sicherung entsteht vorher ein Punkt. Von den Ordnern `restore-bak-*` bleiben die letzten drei.
+
 ## Portweiterleitungen prüfen
 
 **System → Zustand → Portweiterleitungen auf dem Host → Prüfen** testet jeden Port der aktiven Server
@@ -706,8 +721,26 @@ bei Portbereichen (Port-Hopping) wird der erste Port geprüft.
 
 Die Seitenleiste und die Übersicht zeigen die Version. Das Panel fragt alle 12 Stunden bei GitHub nach
 dem neuesten Release (ohne Daten mitzuschicken) und zeigt ein verfügbares Update an; abschaltbar in den
-Einstellungen. Eingespielt wird ein Update wie die Installation (Programm und Script kopieren,
-`bash vpn-setup.sh`).
+Einstellungen.
+
+**Update aus dem Panel** (seit v0.36.0, **System → Updates → Panel aktualisieren**, mit Panel-Passwort und ggf. 2FA):
+
+1. Das Panel lädt `vpnpanel-linux-<arch>` des neuesten Releases nach `/usr/local/bin/.vpnpanel.new` und prüft es
+   gegen die SHA-256-Prüfsumme, die GitHub zur Release-Datei angibt; danach muss `.vpnpanel.new version` die
+   erwartete Version melden.
+2. Es legt einen Wiederherstellungspunkt an und hebt das laufende Programm als `/usr/local/bin/vpnpanel.prev` auf.
+3. Ein Wächter (`systemd-run --unit=vpnpanel-update`, außerhalb des Dienstes, mit dem **alten** Programm) tauscht
+   das Programm aus und startet `vpnpanel` neu.
+4. Meldet sich die neue Version nicht innerhalb von 2 Minuten oder startet der Dienst in den 20 Sekunden danach
+   neu (Absturz), setzt der Wächter das alte Programm und den Wiederherstellungspunkt zurück und startet erneut.
+   Ablauf und Ergebnis stehen auf der Karte und im Ereignisprotokoll (Benachrichtigung „Update“).
+
+Nach einem erfolgreichen Update gibt es „Zurück zu <vorherige Version>“ (Programm und Daten wie vor dem Update,
+der aktuelle Stand wird vorher gesichert). Der Zustand liegt in `/etc/vpn/update.json`.
+`vpn-setup.sh` führt das Panel nicht aus (Pakete, Xray, Hysteria2, systemd-Einheiten): Ändert ein Release auch
+das Script, zeigt die Karte das an – dann wie bisher Programm und Script kopieren und `bash vpn-setup.sh`.
+Aus dem Panel aktualisieren lässt sich erst **ab** der Version mit dieser Funktion; das Update darauf läuft noch
+von Hand.
 
 ## Abo (Hiddify, v2rayN, NekoBox)
 

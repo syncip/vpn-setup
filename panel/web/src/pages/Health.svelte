@@ -8,6 +8,7 @@
   import AttentionList from '../components/AttentionList.svelte';
   import Board from '../components/Board.svelte';
   import UpdatesPanel from '../components/UpdatesPanel.svelte';
+  import PanelUpdate from '../components/PanelUpdate.svelte';
   import { get, post, run } from '../lib/api.js';
   import { date, bytes, speed, duration } from '../lib/format.js';
   import { go, status } from '../lib/state.svelte.js';
@@ -184,7 +185,10 @@
     ]}
   />
 {:else if tab === 'updates'}
-  <UpdatesPanel />
+  <div class="stack">
+    <PanelUpdate />
+    <UpdatesPanel />
+  </div>
 {:else if tab === 'events'}
   <div class="card">
     <div class="card-head">

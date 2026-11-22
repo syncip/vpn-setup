@@ -45,7 +45,7 @@
   const debs = $derived((d?.items || []).filter((i) => i.kind === 'debian'));
   const shownDebs = $derived(showAll ? debs : debs.filter((i) => i.security || i.relevant).length ? debs.filter((i) => i.security || i.relevant) : debs.slice(0, 10));
   const pending = $derived(bins.filter((i) => i.available).length + debs.length);
-  const HOW = { panel: 'Neues Programm laden, wie in der README beschrieben', binary: 'bash vpn-setup.sh im Container', debian: 'apt full-upgrade im Container' };
+  const HOW = { panel: 'Oben „installieren“ (oder wie in der README beschrieben)', binary: 'bash vpn-setup.sh im Container', debian: 'apt full-upgrade im Container' };
 </script>
 
 <div class="card">
@@ -54,9 +54,9 @@
       <Icon name="download" size={16} /> Updates
       {#if !compact}
         <Info title="Updates" wide>
-          <p>Das Panel zeigt neue Versionen nur an – <b>installiert wird nichts automatisch</b>.</p>
+          <p>Installiert wird nichts automatisch. Das Panel selbst lässt sich oben per Knopf aktualisieren, alles andere im Container.</p>
           <ul>
-            <li><b>Panel:</b> neues Programm laden und einspielen wie in der README beschrieben.</li>
+            <li><b>Panel:</b> oben mit „installieren“ – mit Wiederherstellungspunkt und automatischem Rücksprung.</li>
             <li><b>Xray, Hysteria2:</b> <span class="mono">bash vpn-setup.sh</span> im Container ausführen (aktualisiert beide).</li>
             <li><b>Debian-Pakete:</b> <span class="mono">apt full-upgrade</span> im Container. Gezählt wird, was in den Paketlisten steht – die aktualisiert Debian meist selbst (apt-daily), sonst „Paketlisten aktualisieren“.</li>
             <li>Das WireGuard-Kernelmodul liegt auf dem Proxmox-Host und lässt sich aus dem Container nicht prüfen.</li>

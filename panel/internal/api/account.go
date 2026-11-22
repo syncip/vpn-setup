@@ -304,6 +304,10 @@ func (a *API) backupRestore(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if _, err := a.E.CreatePoint(a.Version, backup.KindRestore, "vor Einspielen einer hochgeladenen Sicherung"); err != nil {
+		errJSON(w, http.StatusInternalServerError, "aktuellen Stand sichern: "+err.Error())
+		return
+	}
 	if err := backup.Stage(a.E.Cfg.DataDir, arc, store.CheckBackupDB); err != nil {
 		errJSON(w, http.StatusBadRequest, "Sicherung abgelehnt: "+err.Error())
 		return

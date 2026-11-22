@@ -67,12 +67,12 @@ type Archive struct {
 }
 
 // skipDirs/skipFiles: nicht sichern (neu ladbar, Laufzeitdaten oder Testmodus).
-var skipDirs = map[string]bool{"dryroot": true, "lists": true, "dnslists": true, PendingDir: true}
+var skipDirs = map[string]bool{"dryroot": true, "lists": true, "dnslists": true, PendingDir: true, PointsDir: true}
 
 func skipFile(name string) bool {
 	base := path.Base(name)
 	switch base {
-	case DBName, DBName + "-wal", DBName + "-shm", DBName + "-journal", "dnscache.json", "geo.gob", "panel-admin.txt":
+	case DBName, DBName + "-wal", DBName + "-shm", DBName + "-journal", "dnscache.json", "geo.gob", "panel-admin.txt", KeyFile, UpdateStateFile:
 		return true
 	}
 	for _, suf := range []string{".exe", ".tmp", ".log", ".vpnbak"} {
@@ -210,6 +210,30 @@ var ErrPassword = errors.New("Passwort falsch oder Datei beschädigt bzw. verän
 
 // Open entschlüsselt und prüft eine Sicherung (Pfade, Größen, Prüfsummen, Manifest).
 func Open(data []byte, password string) (*Archive, error) {
+	plain, err := openPlain(data, password)
+	if err != nil {
+		return nil, err
+	}
+	return parse(plain)
+}
+
+// Reseal verschlüsselt eine Sicherung mit einem anderen Passwort neu (Inhalt wird vorher geprüft).
+func Reseal(data []byte, oldPassword, newPassword string) ([]byte, error) {
+	if len([]rune(newPassword)) < MinPassword {
+		return nil, fmt.Errorf("Passwort für die Sicherung: mindestens %d Zeichen", MinPassword)
+	}
+	plain, err := openPlain(data, oldPassword)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := parse(plain); err != nil {
+		return nil, err
+	}
+	return seal(plain, newPassword)
+}
+
+// openPlain: Kopf prüfen und entschlüsseln (liefert das tar.gz).
+func openPlain(data []byte, password string) ([]byte, error) {
 	if len(data) < headerLen+16 || string(data[:len(magic)]) != magic {
 		return nil, errors.New("keine Sicherung des VPN-Panels")
 	}
@@ -228,6 +252,11 @@ func Open(data []byte, password string) (*Archive, error) {
 	if err != nil {
 		return nil, ErrPassword
 	}
+	return plain, nil
+}
+
+// parse: entschlüsseltes Archiv auspacken und prüfen.
+func parse(plain []byte) (*Archive, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(plain))
 	if err != nil {
 		return nil, err

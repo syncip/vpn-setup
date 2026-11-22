@@ -3,6 +3,7 @@
   import PageHead from '../components/PageHead.svelte';
   import Info from '../components/Info.svelte';
   import AlarmsPanel from '../components/AlarmsPanel.svelte';
+  import RestorePoints from '../components/RestorePoints.svelte';
   import { confirmDialog } from '../components/Confirm.svelte';
   import { get, post, put, del, run, postFile, upload } from '../lib/api.js';
   import { date } from '../lib/format.js';
@@ -437,6 +438,12 @@
     {#if restarting}
       <div class="notice" style="grid-column:1/-1"><Icon name="refresh" /><div class="small">Das Panel startet neu und spielt die Sicherung ein. Die Seite lädt danach von selbst neu – melde dich dann mit den Zugangsdaten aus der Sicherung an.</div></div>
     {/if}
+    <RestorePoints
+      onrestart={() => {
+        restarting = true;
+        waitRestart();
+      }}
+    />
     <div class="card">
       <div class="card-head"><h3><Icon name="download" size={16} /> Sicherung herunterladen</h3></div>
       <div class="card-pad stack">
