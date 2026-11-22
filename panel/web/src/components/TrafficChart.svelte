@@ -28,10 +28,20 @@
   const isLive = $derived(LIVE.some(([k]) => k === range));
   const win = $derived((LIVE.find(([k]) => k === range) || [0, 0, 600])[2] * 1000);
 
-  const SERIES = [
+  const BASE = [
     { key: 'down', label: 'Download', color: 'var(--down)' },
     { key: 'up', label: 'Upload', color: 'var(--up)' },
   ];
+  // Gesamtansicht: SmartDNS als eigene Reihe. Der VPN-Anteil steckt im Verkehr der Zugänge und wird dort
+  // abgezogen, Geräte ohne VPN (Proxy) kommen dazu – gestapelt ergibt das wieder den ganzen Verkehr.
+  const overall = $derived(url === '/traffic' && !user);
+  const SMART = { key: 'smart', label: 'SmartDNS', color: 'var(--ok)' };
+  const withSmart = (p) => ({
+    ts: p.ts,
+    down: Math.max(0, (p.down || 0) - (p.svd || 0)),
+    up: Math.max(0, (p.up || 0) - (p.svu || 0)),
+    smart: (p.svu || 0) + (p.svd || 0) + (p.spu || 0) + (p.spd || 0),
+  });
 
   // ---------- Live ----------
   const lv = liveFeed(
@@ -39,7 +49,7 @@
     () => isLive,
   );
   const now = $derived(lv.at || Date.now());
-  const hist = $derived(lv.d?.history || []);
+  const hist = $derived(overall ? (lv.d?.history || []).map(withSmart) : lv.d?.history || []);
   const cur = $derived.by(() => {
     const d = lv.d;
     if (!d) return { up: 0, down: 0 };
@@ -59,7 +69,7 @@
     bucket: t.bucket * 1000,
     from: t.since * 1000,
     to: Math.min(t.until * 1000, Date.now() + 60000),
-    points: (t.points || []).map((p) => ({ ts: p.ts * 1000, up: p.up, down: p.down })),
+    points: (t.points || []).map((p) => (overall ? withSmart({ ...p, ts: p.ts * 1000 }) : { ts: p.ts * 1000, up: p.up, down: p.down })),
   });
   $effect(() => {
     if (isLive) return;
@@ -87,7 +97,12 @@
     } catch {}
   }
   const data = $derived(zoomed || base);
-  const sub = $derived(isLive ? '' : data ? `Datenmenge je ${data.bucket >= 86400000 ? 'Tag' : 'Stunde'}` : '');
+  // SmartDNS-Reihe nur, wenn es SmartDNS-Verkehr gibt
+  const hasSmart = $derived(overall && (isLive ? hist : data?.points || []).some((p) => p.smart > 0));
+  const SERIES = $derived(hasSmart ? [...BASE, SMART] : BASE);
+  const sub = $derived(
+    [isLive ? '' : data ? `Datenmenge je ${data.bucket >= 86400000 ? 'Tag' : 'Stunde'}` : '', hasSmart ? 'SmartDNS als eigene Reihe' : ''].filter(Boolean).join(' · '),
+  );
 </script>
 
 {#if isLive}

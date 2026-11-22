@@ -8,7 +8,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"vpnpanel/internal/store"
 )
 
 // Statistik je SmartDNS-Profil: wie oft eine Weiterleitung gegriffen hat (DNS-Anfragen), für welche
@@ -66,6 +69,10 @@ type smartStats struct {
 	nft    map[string]int64 // letzter Stand der nft-Zähler
 	nftMu  sync.Mutex       // Lesen und Auswerten der nft-Zähler nacheinander (sonst doppelt gezählt)
 	nftAt  time.Time        // zuletzt gelesen
+	nftOK  bool             // Ausgangsstand bekannt (sonst: erstes Lesen nach dem Start setzt ihn nur)
+	pend   [2][2]int64      // noch nicht gespeicherter Verkehr für den Verlauf: [VPN|Proxy][up|down]
+	vUp    atomic.Int64     // VPN über SmartDNS seit dem Start (für die Live-Grafik)
+	vDown  atomic.Int64
 }
 
 // splitSmartRule: Regel-ID → Profil und Index der Weiterleitung.
@@ -209,6 +216,8 @@ func (e *Engine) smartProxyBytes(rid int64, dom string, dev int64, up, down int6
 	st := s.stat(e, profile, time.Now().Unix())
 	st.PUp += up
 	st.PDown += down
+	s.pend[store.SmartProxy][0] += up
+	s.pend[store.SmartProxy][1] += down
 }
 
 // smartTraffic: Verkehr einer Weiterleitung laut nft-Zählern (Zuwachs seit dem letzten Lesen).
@@ -226,6 +235,10 @@ func (e *Engine) smartTraffic(rid int64, up, down int64, now int64) {
 	for _, c := range []*SmartCount{cnt(st.Routes, idx), cnt(st.Hours, now/3600)} {
 		c.Bytes += up + down
 	}
+	s.pend[store.SmartVPN][0] += up
+	s.pend[store.SmartVPN][1] += down
+	s.vUp.Add(up)
+	s.vDown.Add(down)
 	s.dirty = true
 }
 
@@ -233,6 +246,21 @@ func (e *Engine) smartTraffic(rid int64, up, down int64, now int64) {
 func (e *Engine) collectSmart(now time.Time) {
 	e.readSmartCounters(now)
 	e.saveSmartStats(now)
+	e.flushSmartTraffic(now)
+}
+
+// flushSmartTraffic schreibt den SmartDNS-Verkehr seit dem letzten Mal in den Stundenverlauf.
+func (e *Engine) flushSmartTraffic(now time.Time) {
+	s := &e.smartStat
+	s.mu.Lock()
+	p := s.pend
+	s.pend = [2][2]int64{}
+	s.mu.Unlock()
+	for kind, v := range p {
+		if err := e.St.AddSmartTraffic(kind, now.Unix(), v[0], v[1]); err != nil {
+			e.Log("error", "SmartDNS-Verkehr speichern: "+err.Error())
+		}
+	}
 }
 
 // readSmartCounters liest die nft-Zähler der SmartDNS-Weiterleitungen (VPN-Verkehr).
@@ -245,8 +273,22 @@ func (e *Engine) readSmartCounters(now time.Time) {
 	defer s.nftMu.Unlock()
 	s.nftAt = now
 	if out, err := e.Sys.Run("nft", "-j", "list", "counters", "table", "inet", nftTable); err == nil {
-		e.smartCounters(out, now.Unix())
+		// Nach einem Neustart des Panels läuft die nft-Tabelle samt Zählern weiter (unverändert) –
+		// das erste Lesen setzt nur den Ausgangsstand, sonst zählte alles bisherige noch einmal.
+		e.smartCountersMode(out, now.Unix(), !s.nftOK)
+		s.nftOK = true
 	}
+}
+
+// smartNftFresh: Die nft-Tabelle wurde eben neu angelegt – alle Zähler beginnen bei 0 und zählen ganz.
+func (e *Engine) smartNftFresh() {
+	s := &e.smartStat
+	s.nftMu.Lock()
+	defer s.nftMu.Unlock()
+	s.mu.Lock()
+	s.nft = map[string]int64{}
+	s.mu.Unlock()
+	s.nftOK = true
 }
 
 // RefreshSmartCounters: VPN-Verkehr für die Live-Ansicht nachlesen (höchstens alle 4 Sekunden).
@@ -262,7 +304,10 @@ func (e *Engine) RefreshSmartCounters() {
 
 // smartCounters wertet `nft -j list counters` aus. Die Tabelle wird bei Änderungen neu angelegt
 // (Zähler beginnen bei 0) – ein kleinerer Wert als zuletzt zählt deshalb ganz.
-func (e *Engine) smartCounters(out string, now int64) {
+func (e *Engine) smartCounters(out string, now int64) { e.smartCountersMode(out, now, false) }
+
+// smartCountersMode: base = nur den Stand merken, nichts zählen.
+func (e *Engine) smartCountersMode(out string, now int64, base bool) {
 	var doc struct {
 		Nftables []struct {
 			Counter *struct {
@@ -315,6 +360,9 @@ func (e *Engine) smartCounters(out string, now int64) {
 		}
 	}
 	s.mu.Unlock()
+	if base {
+		return
+	}
 	for rid, x := range delta {
 		e.smartTraffic(rid, x.up, x.down, now)
 	}

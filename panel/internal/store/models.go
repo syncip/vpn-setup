@@ -138,4 +138,9 @@ type TrafficPoint struct {
 	TS   int64 `json:"ts"`
 	Up   int64 `json:"up"`
 	Down int64 `json:"down"`
+	// SmartDNS (nur Gesamtverlauf): VPN-Anteil (in Up/Down enthalten) und ohne VPN über den Proxy (nicht enthalten)
+	SVU int64 `json:"svu,omitempty"`
+	SVD int64 `json:"svd,omitempty"`
+	SPU int64 `json:"spu,omitempty"`
+	SPD int64 `json:"spd,omitempty"`
 }

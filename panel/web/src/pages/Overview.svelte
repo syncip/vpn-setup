@@ -184,6 +184,7 @@
       <div>
         <div class="muted small">Traffic heute</div>
         <div class="big">{bytes(d.today.up + d.today.down)}</div>
+        {#if d.smart?.today}<div class="tiny muted">davon SmartDNS {bytes(d.smart.today)}</div>{/if}
       </div>
     </div>
   {/snippet}
@@ -193,6 +194,7 @@
       <div>
         <div class="muted small">Traffic diesen Monat</div>
         <div class="big">{bytes(d.month.up + d.month.down)}</div>
+        {#if d.smart?.month}<div class="tiny muted">davon SmartDNS {bytes(d.smart.month)}</div>{/if}
       </div>
     </div>
   {/snippet}

@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"time"
 
 	"vpnpanel/internal/proto"
 )
@@ -376,6 +377,7 @@ func (e *Engine) applyNftWith(snap *Snapshot, rt *routing, plan *aclPlan, srcs [
 			return nil
 		}
 	}
+	e.readSmartCounters(time.Now()) // SmartDNS-Zähler vor dem Neuanlegen noch einsammeln
 	if out, err := e.Sys.RunInput(script, "nft", "-f", "-"); err != nil {
 		msg := strings.TrimSpace(out)
 		if len(msg) > 400 {
@@ -387,6 +389,7 @@ func (e *Engine) applyNftWith(snap *Snapshot, rt *routing, plan *aclPlan, srcs [
 		return fmt.Errorf("nftables: %v %s", err, msg)
 	}
 	_ = e.St.SetSetting(stateKey, sig)
+	e.smartNftFresh()
 	return nil
 }
 

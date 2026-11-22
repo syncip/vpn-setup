@@ -35,6 +35,8 @@ type smartProxy struct {
 	total   atomic.Int64
 	denied  atomic.Int64
 	bytes   atomic.Int64
+	allUp   atomic.Int64 // seit dem Start, sofort mitgezählt (Live-Grafik)
+	allDown atomic.Int64
 	lastErr string
 	recent  map[string]*SmartHit // Domain → Zähler
 	denials []SmartDeny          // zuletzt abgewiesene Verbindungen (neueste zuerst)
@@ -242,8 +244,8 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 		}
 	}
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(countWriter{up, &nUp}, br); _ = closeWrite(up); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(countWriter{c, &nDown}, up); _ = closeWrite(c); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(countWriter{up, &nUp, &p.allUp}, br); _ = closeWrite(up); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(countWriter{c, &nDown, &p.allDown}, up); _ = closeWrite(c); done <- struct{}{} }()
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	for open := 2; open > 0; {
@@ -257,15 +259,17 @@ func (p *smartProxy) handle(e *Engine, c net.Conn) {
 	flush()
 }
 
-// countWriter zählt geschriebene Bytes mit.
+// countWriter zählt geschriebene Bytes mit (je Verbindung und insgesamt).
 type countWriter struct {
-	w io.Writer
-	n *atomic.Int64
+	w   io.Writer
+	n   *atomic.Int64
+	all *atomic.Int64
 }
 
 func (c countWriter) Write(b []byte) (int, error) {
 	n, err := c.w.Write(b)
 	c.n.Add(int64(n))
+	c.all.Add(int64(n))
 	return n, err
 }
 

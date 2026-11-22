@@ -96,6 +96,9 @@ var migrations = []string{
 	   checked INTEGER NOT NULL DEFAULT 0, fails INTEGER NOT NULL DEFAULT 0, since INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0,
 	   PRIMARY KEY (domain, exit_id));
 	 CREATE INDEX dns_log_via ON dns_log(via, ts);`,
+	// SmartDNS-Verkehr je Stunde: kind 0 = VPN-Geräte (Teil von traffic), 1 = Geräte ohne VPN über den Proxy
+	`CREATE TABLE smart_traffic (hour INTEGER NOT NULL, kind INTEGER NOT NULL, up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
+	   PRIMARY KEY (hour, kind));`,
 }
 
 // SchemaVersion: Stand der Datenbank, den dieses Programm kennt (für die Prüfung von Sicherungen).
@@ -572,6 +575,9 @@ func (s *Store) PruneTraffic(before int64) error {
 	}
 	if err == nil {
 		_, err = s.db.Exec(`DELETE FROM group_traffic WHERE hour < ?`, before)
+	}
+	if err == nil {
+		_, err = s.db.Exec(`DELETE FROM smart_traffic WHERE hour < ?`, before)
 	}
 	return err
 }

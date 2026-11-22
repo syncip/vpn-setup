@@ -26,6 +26,11 @@ type LivePoint struct {
 	TS   int64   `json:"ts"`   // Unix-Zeit in Millisekunden
 	Up   float64 `json:"up"`   // Bytes pro Sekunde
 	Down float64 `json:"down"` // Bytes pro Sekunde
+	// SmartDNS (nur Gesamtverlauf): VPN-Anteil (in Up/Down enthalten) und ohne VPN über den Proxy
+	SVU float64 `json:"svu,omitempty"`
+	SVD float64 `json:"svd,omitempty"`
+	SPU float64 `json:"spu,omitempty"`
+	SPD float64 `json:"spd,omitempty"`
 }
 
 type LivePeer struct {
@@ -59,6 +64,9 @@ type liveState struct {
 	errs     map[string]string
 	snap     *Snapshot
 	snapAt   time.Time
+	smPrev   [4]int64 // SmartDNS-Summen beim letzten Messen: VPN up/down, Proxy up/down
+	demoSm   [4]float64
+	demoSmAt time.Time
 	demo     map[int64]float64
 	demoAt   time.Time
 }
@@ -141,6 +149,12 @@ func (e *Engine) sampleLive() {
 			}
 		}
 	}
+	// SmartDNS: VPN-Anteil über die nft-Zähler (frisch gelesen), ohne VPN über den Proxy
+	e.readSmartCounters(time.Now())
+	sm := [4]int64{e.smartStat.vUp.Load(), e.smartStat.vDown.Load(), e.smart.allUp.Load(), e.smart.allDown.Load()}
+	if e.Sys.DryRun() {
+		sm = e.demoSmart()
+	}
 	now := time.Now()
 
 	ls.mu.Lock()
@@ -188,21 +202,30 @@ func (e *Engine) sampleLive() {
 			delete(ls.since, id)
 		}
 	}
-	ls.prev, ls.prevAt, ls.cur = samples, now, cur
+	smPrev := ls.smPrev
+	ls.prev, ls.prevAt, ls.cur, ls.smPrev = samples, now, cur, sm
 	if first {
 		return
 	}
+	var sr [4]float64
+	for i := range sm {
+		if d := sm[i] - smPrev[i]; d > 0 && dt > 0 {
+			sr[i] = float64(d) / dt
+		}
+	}
+	// der VPN-Anteil ist im Verkehr der Zugänge enthalten – nie mehr als dieser (Zähler laufen leicht versetzt)
+	sr[0], sr[1] = math.Min(sr[0], tu), math.Min(sr[1], td)
 	ms := now.UnixMilli()
 	cut := now.Add(-liveHistory).UnixMilli()
-	ls.hist = appendPoint(ls.hist, LivePoint{ms, tu, td}, cut)
+	ls.hist = appendPoint(ls.hist, LivePoint{TS: ms, Up: tu, Down: td, SVU: sr[0], SVD: sr[1], SPU: sr[2], SPD: sr[3]}, cut)
 	for id, p := range cur {
 		if p.Online || len(ls.peerHist[id]) > 0 {
-			ls.peerHist[id] = appendPoint(ls.peerHist[id], LivePoint{ms, p.Up, p.Down}, cut)
+			ls.peerHist[id] = appendPoint(ls.peerHist[id], LivePoint{TS: ms, Up: p.Up, Down: p.Down}, cut)
 		}
 	}
 	for id, h := range ls.peerHist {
 		if cur[id] == nil {
-			h = appendPoint(h, LivePoint{ms, 0, 0}, cut)
+			h = appendPoint(h, LivePoint{TS: ms}, cut)
 		}
 		if len(h) == 0 || h[len(h)-1].TS < cut {
 			delete(ls.peerHist, id)
@@ -243,6 +266,26 @@ func (e *Engine) Live() *LiveData {
 		d.Errors[k] = v
 	}
 	return d
+}
+
+// demoSmart: erfundene SmartDNS-Zähler für den Testmodus (VPN-Anteil und Proxy, wellenförmig).
+func (e *Engine) demoSmart() [4]int64 {
+	ls := &e.live
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	dt := time.Since(ls.demoSmAt).Seconds()
+	if ls.demoSmAt.IsZero() || dt > 60 {
+		dt = 2
+	}
+	ls.demoSmAt = time.Now()
+	t := float64(time.Now().UnixMilli()) / 1000
+	v := 900_000 * (1.1 + math.Sin(t/45))   // VPN über SmartDNS, Bytes/s
+	p := 1_400_000 * (1.0 + math.Sin(t/70)) // Geräte ohne VPN über den Proxy
+	ls.demoSm[0] += v / 12 * dt
+	ls.demoSm[1] += v * dt
+	ls.demoSm[2] += p / 15 * dt
+	ls.demoSm[3] += p * dt
+	return [4]int64{int64(ls.demoSm[0]), int64(ls.demoSm[1]), int64(ls.demoSm[2]), int64(ls.demoSm[3])}
 }
 
 // demoSamples: erfundene, gleichmäßig wachsende Zähler für den Testmodus.

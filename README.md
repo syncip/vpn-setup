@@ -536,6 +536,13 @@ um – deshalb nach dem Update die Config neu laden.
   - **Statistik → SmartDNS** (live, alle 5 Sekunden): was gerade über SmartDNS läuft – Tempo jetzt (↓/↑, davon
     ohne VPN) mit Verlauf der letzten 5 Minuten, Verkehr in 24 Stunden und gesamt (VPN und ohne VPN je ↑/↓), offene
     Verbindungen am Proxy, die zuletzt über den Proxy genutzten Domains und die Detailstatistik je Profil.
+  - **SmartDNS in den Verkehrsgrafiken** (seit v0.35.0): Die Gesamtgrafik (Übersicht, Statistik → Verkehr, live und
+    im Verlauf) zeigt SmartDNS als eigene grüne Reihe neben Download und Upload. Der VPN-Anteil wird dort aus dem
+    Verkehr der Zugänge herausgerechnet, Geräte ohne VPN (Proxy) kommen dazu – gestapelt ergibt das den ganzen
+    Verkehr. Die Kacheln „Heute“ und „Dieser Monat“ zählen den Proxy-Verkehr mit und zeigen „davon SmartDNS“.
+    Der Verlauf liegt stundenweise in der Tabelle `smart_traffic` (aufgeräumt wie der übrige Verkehr). Die
+    nft-Zähler werden vor jedem Neuladen der Firewall noch gelesen; nach einem Neustart setzt das erste Lesen nur den
+    Ausgangsstand, damit nichts doppelt gezählt wird.
   - **Statistik je Profil** (Zeile auf jeder Profilkarte, Knopf „Statistik“; live, alle 5 Sekunden neu, solange die Seite offen ist): Anfragen und Geräte der letzten
     24 Stunden, Verkehr, zuletzt gegriffen; im Dialog der Verlauf der letzten 7 Tage (Anfragen oder Verkehr je
     Stunde), eine Wochenansicht „Wann wird es genutzt?“ (Wochentag × Stunde), Weiterleitungen im Vergleich, alle

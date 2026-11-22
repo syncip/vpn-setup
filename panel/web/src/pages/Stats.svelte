@@ -54,10 +54,10 @@
 
 {#if tab === 'traffic'}
   {#snippet w_today()}
-    <div class="card card-pad kpi"><div class="muted small">Heute</div><div class="big">{ov ? bytes(ov.today.up + ov.today.down) : '–'}</div>{#if ov}<div class="tiny muted">↓ {bytes(ov.today.down)} · ↑ {bytes(ov.today.up)}</div>{/if}</div>
+    <div class="card card-pad kpi"><div class="muted small">Heute</div><div class="big">{ov ? bytes(ov.today.up + ov.today.down) : '–'}</div>{#if ov}<div class="tiny muted">↓ {bytes(ov.today.down)} · ↑ {bytes(ov.today.up)}</div>{#if ov.smart?.today}<div class="tiny muted">davon SmartDNS {bytes(ov.smart.today)}</div>{/if}{/if}</div>
   {/snippet}
   {#snippet w_month()}
-    <div class="card card-pad kpi"><div class="muted small">Dieser Monat</div><div class="big">{ov ? bytes(ov.month.up + ov.month.down) : '–'}</div>{#if ov}<div class="tiny muted">↓ {bytes(ov.month.down)} · ↑ {bytes(ov.month.up)}</div>{/if}</div>
+    <div class="card card-pad kpi"><div class="muted small">Dieser Monat</div><div class="big">{ov ? bytes(ov.month.up + ov.month.down) : '–'}</div>{#if ov}<div class="tiny muted">↓ {bytes(ov.month.down)} · ↑ {bytes(ov.month.up)}</div>{#if ov.smart?.month}<div class="tiny muted">davon SmartDNS {bytes(ov.smart.month)}</div>{/if}{/if}</div>
   {/snippet}
   {#snippet w_users()}
     <div class="card card-pad kpi"><div class="muted small">Nutzer</div><div class="big">{ov ? fmtNum(ov.counts.users || 0) : '–'}</div>{#if ov}<div class="tiny muted">{fmtNum(ov.counts.peers || 0)} Zugänge</div>{/if}</div>

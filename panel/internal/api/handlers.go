@@ -191,6 +191,20 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Unix()
 	tu, td, _ := a.St.TrafficSum(day)
 	mu, md, _ := a.St.TrafficSum(month)
+	// SmartDNS: Geräte ohne VPN über den Proxy kommen im Verkehr der Zugänge nicht vor → dazurechnen;
+	// der VPN-Anteil ist schon enthalten und wird nur als „davon SmartDNS“ ausgewiesen.
+	smart := map[string]int64{}
+	for k, since := range map[string]int64{"today": day, "month": month} {
+		pu, pd, _ := a.St.SmartTrafficSum(store.SmartProxy, since)
+		vu, vd, _ := a.St.SmartTrafficSum(store.SmartVPN, since)
+		smart[k] = pu + pd + vu + vd
+		smart[k+"_proxy"] = pu + pd
+		if k == "today" {
+			tu, td = tu+pu, td+pd
+		} else {
+			mu, md = mu+pu, md+pd
+		}
+	}
 
 	counts := map[string]int{}
 	var totalUp, totalDown int64
@@ -280,6 +294,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		"counts":  counts,
 		"today":   map[string]int64{"up": tu, "down": td},
 		"month":   map[string]int64{"up": mu, "down": md},
+		"smart":   smart, // SmartDNS-Anteil (heute/Monat), davon ohne VPN
 		"total":   map[string]int64{"up": totalUp, "down": totalDown},
 		"servers": orEmptyM(servers), "top": orEmptyT(tops), "alerts": orEmptyA(alerts),
 		"events": events, "errors": a.E.Errors(),
@@ -624,6 +639,23 @@ func (a *API) series(w http.ResponseWriter, r *http.Request, filter string, id i
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	if filter == "" { // Gesamtverlauf: SmartDNS als eigene Reihe (VPN-Anteil und ohne VPN)
+		if sm, err := a.St.SmartTrafficSeries(since, until, bucket); err == nil && len(sm) > 0 {
+			at := map[int64]int{}
+			for i, p := range s {
+				at[p.TS] = i
+			}
+			for ts, v := range sm {
+				i, ok := at[ts]
+				if !ok {
+					s = append(s, store.TrafficPoint{TS: ts})
+					i = len(s) - 1
+				}
+				s[i].SVU, s[i].SVD, s[i].SPU, s[i].SPD = v.VUp, v.VDown, v.PUp, v.PDown
+			}
+			sort.Slice(s, func(i, j int) bool { return s[i].TS < s[j].TS })
+		}
 	}
 	writeJSON(w, map[string]any{"bucket": bucket, "since": since, "until": until, "points": orEmptyT(s)})
 }
