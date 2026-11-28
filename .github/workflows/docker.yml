@@ -1,0 +1,71 @@
+# Docker-Image bei jedem Release: nimmt genau das Programm aus dem Release (vpnpanel-linux-amd64,
+# Prüfsumme gegen den GitHub-Digest geprüft) und veröffentlicht ghcr.io/<owner>/vpn-setup:<version> und :latest.
+# Nur das eingebaute GITHUB_TOKEN (packages: write), keine weiteren Geheimnisse; Actions auf Commit-Hashes festgelegt.
+name: Docker-Image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release-Tag (z. B. v0.37.0)"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    name: Image bauen und veröffentlichen
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Programm aus dem Release holen und prüfen
+        run: |
+          set -euo pipefail
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ungültiger Tag: $TAG"; exit 1; }
+          mkdir -p panel/dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p vpnpanel-linux-amd64 -D panel/dist --clobber
+          want=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+            -q '.assets[] | select(.name=="vpnpanel-linux-amd64") | .digest // ""' | sed 's/^sha256://')
+          [ -n "$want" ] || { echo "kein Digest für vpnpanel-linux-amd64"; exit 1; }
+          echo "$want  panel/dist/vpnpanel-linux-amd64" | sha256sum -c -
+          chmod 755 panel/dist/vpnpanel-linux-amd64
+          ./panel/dist/vpnpanel-linux-amd64 version
+
+      - name: Image bauen
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build --pull -f docker/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=${TAG#v}" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.description=VPN-Panel (WireGuard, VLESS, Hysteria2, OpenVPN) mit systemd" \
+            -t "$IMAGE:${TAG#v}" -t "$IMAGE:latest" .
+          docker run --rm --entrypoint /usr/local/bin/vpnpanel "$IMAGE:${TAG#v}" version
+
+      - name: Veröffentlichen
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:${TAG#v}"
+          # „latest“ nur für das neueste Release, nicht beim Nachbauen eines alten
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          if [ "$latest" = "$TAG" ]; then docker push "$IMAGE:latest"; fi
+          docker logout ghcr.io

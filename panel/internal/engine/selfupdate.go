@@ -198,15 +198,24 @@ func installCheck(latest *releaseInfo, current string) (canInstall bool, reason 
 	return true, "", setupChanged
 }
 
+// InDocker: läuft im Docker-Image (setzt docker/entrypoint.sh in panel.env). Dort ersetzt ein neues
+// Image das Update aus dem Panel – ein ausgetauschtes Programm ginge beim Neuerstellen verloren.
+func InDocker() bool { return os.Getenv("VPNPANEL_DOCKER") == "1" }
+
+const dockerUpdateHint = "Im Docker-Container: neues Image ziehen – docker compose pull && docker compose up -d"
+
 // UpdateStatus: alles für die Update-Karte.
 func (e *Engine) UpdateStatus(current string) map[string]any {
-	out := map[string]any{"info": e.updateOffer(current), "dry_run": e.Sys.DryRun()}
+	out := map[string]any{"info": e.updateOffer(current), "dry_run": e.Sys.DryRun(), "docker": InDocker()}
 	r := ReadUpdateRun(e.Cfg.DataDir)
 	if r != nil {
 		if !r.Terminal() && time.Since(time.Unix(r.Started, 0)) > updateStale {
 			r.State, r.Error = "failed", "keine Rückmeldung – Update abgebrochen"
 		}
 		out["run"] = r
+		if InDocker() {
+			return out
+		}
 		// Rücksprung: nach einem erfolgreichen Update, solange das alte Programm noch daliegt
 		if r.Mode == "update" && r.State == "ok" && strings.TrimPrefix(r.To, "v") == strings.TrimPrefix(current, "v") && r.Prev != "" {
 			if _, err := os.Stat(r.Prev); err == nil || e.Sys.DryRun() {
@@ -219,6 +228,9 @@ func (e *Engine) UpdateStatus(current string) map[string]any {
 
 // StartUpdate startet das Update auf das neueste Release im Hintergrund.
 func (e *Engine) StartUpdate(current, admin string) error {
+	if InDocker() {
+		return errors.New(dockerUpdateHint)
+	}
 	if !e.self.mu.TryLock() {
 		return errors.New("Ein Update läuft bereits")
 	}
@@ -347,6 +359,9 @@ func (e *Engine) runUpdate(r *UpdateRun, current string) error {
 
 // StartRollback: zurück zum Programm und Stand vor dem letzten Update.
 func (e *Engine) StartRollback(current, admin string) error {
+	if InDocker() {
+		return errors.New("Im Docker-Container: das vorherige Image starten (Tag in docker-compose.yml) und bei Bedarf einen Wiederherstellungspunkt einspielen")
+	}
 	if !e.self.mu.TryLock() {
 		return errors.New("Ein Update läuft gerade")
 	}

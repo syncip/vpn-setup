@@ -1,0 +1,16 @@
+[Unit]
+Description=VPN-Panel (WireGuard, VLESS, Webinterface)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/vpn/panel.env
+ExecStart=/usr/local/bin/vpnpanel serve
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+# sammelt beim Beenden noch einmal die Statistik ein
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

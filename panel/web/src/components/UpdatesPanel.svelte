@@ -45,7 +45,11 @@
   const debs = $derived((d?.items || []).filter((i) => i.kind === 'debian'));
   const shownDebs = $derived(showAll ? debs : debs.filter((i) => i.security || i.relevant).length ? debs.filter((i) => i.security || i.relevant) : debs.slice(0, 10));
   const pending = $derived(bins.filter((i) => i.available).length + debs.length);
-  const HOW = { panel: 'Oben „installieren“ (oder wie in der README beschrieben)', binary: 'bash vpn-setup.sh im Container', debian: 'apt full-upgrade im Container' };
+  const HOW = $derived(
+    meta.docker
+      ? { panel: 'neues Image: docker compose pull && docker compose up -d', binary: 'kommt mit dem nächsten Image', debian: 'kommt mit dem nächsten Image' }
+      : { panel: 'Oben „installieren“ (oder wie in der README beschrieben)', binary: 'bash vpn-setup.sh im Container', debian: 'apt full-upgrade im Container' }
+  );
 </script>
 
 <div class="card">
@@ -55,6 +59,7 @@
       {#if !compact}
         <Info title="Updates" wide>
           <p>Installiert wird nichts automatisch. Das Panel selbst lässt sich oben per Knopf aktualisieren, alles andere im Container.</p>
+          {#if meta.docker}<p><b>Docker:</b> Panel, Xray, Hysteria2 und Debian-Pakete kommen zusammen mit einem neuen Image (<span class="mono">docker compose pull && docker compose up -d</span>).</p>{/if}
           <ul>
             <li><b>Panel:</b> oben mit „installieren“ – mit Wiederherstellungspunkt und automatischem Rücksprung.</li>
             <li><b>Xray, Hysteria2:</b> <span class="mono">bash vpn-setup.sh</span> im Container ausführen (aktualisiert beide).</li>

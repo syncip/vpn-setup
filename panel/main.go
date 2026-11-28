@@ -79,6 +79,7 @@ func open(o *opts) (*engine.Engine, error) {
 	if err := os.MkdirAll(o.dataDir, 0o700); err != nil {
 		return nil, err
 	}
+	pointBeforeUpgrade(o) // vor den Migrationen – auch wenn zuerst ein CLI-Befehl die neue Version startet
 	st, err := store.Open(o.db)
 	if err != nil {
 		return nil, err
@@ -302,6 +303,42 @@ func serve(args []string) {
 		_ = e.St.Close()
 		os.Exit(3)
 	}
+}
+
+// pointBeforeUpgrade: Startet eine andere Version als beim letzten Mal (neues Docker-Image,
+// vpn-setup.sh, Update aus dem Panel), wird der Stand vor den Datenbank-Migrationen als
+// Wiederherstellungspunkt gesichert.
+func pointBeforeUpgrade(o *opts) {
+	vf := filepath.Join(o.dataDir, backup.VersionFile)
+	prev := ""
+	if b, err := os.ReadFile(vf); err == nil {
+		prev = strings.TrimSpace(string(b))
+	}
+	if prev == version {
+		return
+	}
+	if o.dev {
+		return
+	}
+	if _, err := os.Stat(o.db); err == nil && version != "dev" {
+		from := prev
+		if from == "" {
+			from = "unbekannt"
+		}
+		schema, err := store.SnapshotFile(o.db, "") // Stand vorab, das Manifest entsteht vor der Kopie
+		if err != nil {
+			log.Printf("Wiederherstellungspunkt vor dem Start von %s: %v", version, err)
+			return
+		}
+		p, err := backup.CreatePoint(o.dataDir, func(dst string) error { _, err := store.SnapshotFile(o.db, dst); return err },
+			backup.Manifest{Version: from, Schema: schema}, backup.KindUpdate, "vor Start von "+version+" (vorher "+from+")")
+		if err != nil {
+			log.Printf("Wiederherstellungspunkt vor dem Start von %s: %v", version, err)
+			return // Version nicht vermerken → beim nächsten Start erneut versuchen
+		}
+		log.Printf("Wiederherstellungspunkt %s angelegt (Stand von %s vor dem Start von %s)", p.ID, from, version)
+	}
+	_ = os.WriteFile(vf, []byte(version+"\n"), 0o600)
 }
 
 // restoredFrom: Ordner mit den Dateien vor dem Einspielen einer Sicherung (nur für die Meldung).

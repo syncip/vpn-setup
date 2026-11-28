@@ -22,7 +22,8 @@ import (
 const (
 	PointsDir       = "backups"
 	KeyFile         = "backup.key"
-	UpdateStateFile = "update.json" // Zustand eines laufenden Updates (siehe engine/selfupdate.go)
+	UpdateStateFile = "update.json"   // Zustand eines laufenden Updates (siehe engine/selfupdate.go)
+	VersionFile     = "panel-version" // zuletzt gestartete Version (Punkt vor dem Start einer neuen)
 )
 
 // Arten von Punkten

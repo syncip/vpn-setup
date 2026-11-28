@@ -72,7 +72,7 @@ var skipDirs = map[string]bool{"dryroot": true, "lists": true, "dnslists": true,
 func skipFile(name string) bool {
 	base := path.Base(name)
 	switch base {
-	case DBName, DBName + "-wal", DBName + "-shm", DBName + "-journal", "dnscache.json", "geo.gob", "panel-admin.txt", KeyFile, UpdateStateFile:
+	case DBName, DBName + "-wal", DBName + "-shm", DBName + "-journal", "dnscache.json", "geo.gob", "panel-admin.txt", KeyFile, UpdateStateFile, VersionFile:
 		return true
 	}
 	for _, suf := range []string{".exe", ".tmp", ".log", ".vpnbak"} {

@@ -1,7 +1,7 @@
 # vpn-setup
 
 WireGuard-Netze (Stern, Geräte mit Netzen dahinter), VLESS/Reality, Hysteria2 und OpenVPN mit Webinterface:
-Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13.
+Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13 oder als Docker-Image.
 
 ## Oberfläche
 
@@ -41,6 +41,7 @@ weitere einblenden (z. B. verbundene Geräte, Ausgänge live, DNS live, Schnella
 ## Installation
 
 Läuft auf jedem Server mit **Debian 13**: VPS, eigene Hardware oder Container (z. B. Proxmox-LXC).
+Alternativ als Docker-Container, siehe [Docker](#docker-seit-v0370).
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/syncip/vpn-setup/main/vpn-setup.sh
@@ -87,6 +88,102 @@ iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 9443 -j DNAT --to-destinat
 Genauso TCP 443, UDP 443 und UDP 51820. Dauerhaft z. B. als `post-up`/`post-down` in
 `/etc/network/interfaces`. Außerdem lädt der Host die Kernelmodule (WireGuard, Drosselung) und setzt
 größere UDP-Puffer für Hysteria2 – beides geht im unprivilegierten Container nicht.
+
+## Docker (seit v0.37.0)
+
+Statt `vpn-setup.sh` geht auch ein fertiges Image: `ghcr.io/syncip/vpn-setup` (Debian 13 mit Panel, Xray,
+Hysteria2, OpenVPN, nginx, Unbound, Tor). GitHub baut es bei jedem Release aus genau dem Programm des Releases.
+Das Panel steuert seine Dienste über systemd, deshalb läuft im Container systemd; der Container nutzt das
+**Netz des Hosts** (`network_mode: host`) – alle Ports liegen direkt auf dem Host, Portfreigaben entfallen.
+
+`docker-compose.yml` (liegt auch unter [`docker/docker-compose.yml`](docker/docker-compose.yml)):
+
+```yaml
+services:
+  vpnpanel:
+    image: ghcr.io/syncip/vpn-setup:latest   # oder fest: ghcr.io/syncip/vpn-setup:0.37.0
+    container_name: vpnpanel
+    hostname: vpn
+    network_mode: host        # alle Ports direkt auf dem Host, keine Portfreigaben nötig
+    privileged: true          # WireGuard, iptables/nftables, tc, TUN
+    cgroup: host              # systemd im Container
+    restart: unless-stopped
+    stop_signal: SIGRTMIN+3   # systemd sauber herunterfahren (Statistik wird gesichert)
+    stop_grace_period: 60s
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - ./data:/etc/vpn                      # Datenbank, Schlüssel, Zertifikate, Sicherungen
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - /lib/modules:/lib/modules:ro         # Kernelmodule laden (wireguard, ifb …)
+    environment:
+      SERVER_HOST: vpn.example.org           # Domain oder IP in allen Links und Configs
+      SUB_HOST: sub.example.org              # optional: Abo-Links über diese Domain (Port 443)
+      PANEL_HOST: panel.example.org          # optional: Webinterface über diese Domain (Port 443)
+      # OUT_IF: eth0                         # ausgehende Schnittstelle (Vorgabe: die mit der Standardroute)
+      # PANEL_DIRECT: 0.0.0.0:9443           # Webinterface direkt: https://<IP>:9443
+      # TLS_CERT: /etc/vpn/sub-cert.pem      # eigenes Zertifikat (Vorgabe: sub-cert.pem/sub-key.pem im Datenordner,
+      # TLS_KEY: /etc/vpn/sub-key.pem        #  sonst selbstsigniert)
+      TZ: Europe/Berlin
+```
+
+```bash
+docker compose up -d
+docker compose exec vpnpanel cat /etc/vpn/panel-admin.txt   # erste Anmeldung
+docker compose exec vpnpanel vpn help                       # Befehl vpn wie gewohnt
+docker compose exec vpnpanel journalctl -u vpnpanel -f      # Protokoll des Panels
+```
+
+Danach läuft das Webinterface auf **https://<IP>:9443**.
+
+**Umgebungsvariablen:** `SERVER_HOST`, `SUB_HOST`, `PANEL_HOST` und `OUT_IF` werden bei jedem Start übernommen,
+wenn sie gesetzt sind und vom Stand im Panel abweichen – leer lassen, wenn die Werte nur im Panel gepflegt werden
+sollen. `PANEL_DIRECT` und `PANEL_LISTEN` (Vorgabe `127.0.0.1:8480`) landen in `/etc/vpn/panel.env`.
+
+**Daten:** Alles Dauerhafte liegt im Ordner `./data` (`/etc/vpn` im Container): Datenbank, Schlüssel, Zertifikate,
+`secrets.env` (Cloudflare-Token, SMTP-Passwort), Wiederherstellungspunkte. Die Konfigurationen der Dienste
+(WireGuard, Xray, Hysteria2, OpenVPN, nginx) erzeugt das Panel bei jedem Start neu aus der Datenbank.
+Ein bestehendes Setup lässt sich übernehmen: im alten Panel eine Sicherung herunterladen und im Container unter
+**Einstellungen → Sicherung** einspielen – oder den Ordner `/etc/vpn` des alten Servers nach `./data` kopieren
+(dann den alten Dienst vorher stoppen).
+
+**Cloudflare:** Origin-Zertifikat als `./data/sub-cert.pem` und `./data/sub-key.pem` ablegen, dann
+`docker compose restart`. Ohne Zertifikat nutzt das Panel ein selbstsigniertes (`./data/panel-selfsigned.pem`).
+
+**Updates:** nicht aus dem Panel, sondern mit einem neuen Image – das bringt auch neue Xray-, Hysteria2- und
+Debian-Pakete mit:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Startet eine andere Version als zuletzt, legt das Panel **vor** den Datenbank-Änderungen automatisch einen
+Wiederherstellungspunkt an (Art „Update“). Zurück geht es mit dem vorherigen Tag in `image:`
+(z. B. `ghcr.io/syncip/vpn-setup:0.36.0`) und, falls nötig, dem Einspielen dieses Punktes.
+
+**Voraussetzungen auf dem Host:**
+
+- Linux mit **amd64**, Docker mit Compose v2 und cgroup v2 (Debian 12/13, Ubuntu 22.04+ u. a.).
+- Frei sein müssen die Ports, die das Panel nutzt: TCP 443 und 9443, UDP 443 und 51820, UDP 1194 (OpenVPN)
+  sowie Port 53, falls das Panel-DNS für Geräte ohne VPN genutzt wird – kein anderer Webserver auf 443.
+- Kernelmodul `wireguard` (in allen aktuellen Kerneln). Der Container lädt die Module selbst, wenn `/lib/modules`
+  eingebunden ist; sonst auf dem Host:
+  `printf '%s\n' wireguard ifb act_connmark act_mirred sch_htb sch_ingress cls_fw cls_u32 cls_matchall > /etc/modules-load.d/vpn.conf`.
+- `privileged` und das Host-Netz sind nötig, weil das Panel Schnittstellen, Routen, Firewall (nftables/iptables)
+  und Drosselung (tc) einrichtet – genau wie auf einem eigenen Server. Die Weiterleitung (`ip_forward`) und die
+  größeren UDP-Puffer gelten damit für den ganzen Host. Die Firewall-Regeln des Panels stehen vor denen von Docker.
+- In einem Proxmox-LXC braucht Docker selbst Verschachtelung (`nesting=1`); einfacher ist dort `vpn-setup.sh`.
+
+Das Image selbst bauen (Programm vorher bauen, siehe „Entwicklung“):
+
+```bash
+docker build -f docker/Dockerfile -t vpnpanel .
+```
+
+Einmalig nach dem ersten Image-Build: auf GitHub unter **Packages → vpn-setup → Package settings** die
+Sichtbarkeit auf **Public** stellen, damit `docker compose pull` ohne Anmeldung klappt.
 
 ## Hysteria2
 
@@ -741,6 +838,7 @@ der aktuelle Stand wird vorher gesichert). Der Zustand liegt in `/etc/vpn/update
 das Script, zeigt die Karte das an – dann wie bisher Programm und Script kopieren und `bash vpn-setup.sh`.
 Aus dem Panel aktualisieren lässt sich erst **ab** der Version mit dieser Funktion; das Update darauf läuft noch
 von Hand.
+Im **Docker-Container** ist der Knopf aus – dort kommt das Update als neues Image (siehe [Docker](#docker-seit-v0370)).
 
 ## Abo (Hiddify, v2rayN, NekoBox)
 
@@ -767,6 +865,9 @@ Nutzer sofort abgewiesen, und gedrosselte Nutzer werden über ihre Client-Adress
 - `panel/` – Go-Backend (`internal/…`) und Svelte-Oberfläche (`panel/web`)
 - Bauen: `bash panel/build.sh` → `panel/dist/vpnpanel-linux-amd64`
 - Lokal testen (Trockenlauf mit Demo-Daten): `go run . serve -dev -demo -data devdata`
+- Code-Karte (welche Datei wofür): [`panel/ARCHITEKTUR.md`](panel/ARCHITEKTUR.md)
+- Docker: `docker/` (Dockerfile, Start-Script, Compose-Beispiel); `.github/workflows/docker.yml` baut das Image
+  bei jedem Release und veröffentlicht es unter `ghcr.io/syncip/vpn-setup`
 - GitHub Actions (`.github/workflows/ci.yml`) prüft jeden Push: svelte-check, Build und `npm audit` der
   Oberfläche; `go vet`, Tests mit Race-Detektor und `govulncheck`; die Labortests (Netzwerk-Namespaces,
   WireGuard, nftables) laufen als root in einem eigenen Schritt, vorerst ohne den Lauf scheitern zu lassen.

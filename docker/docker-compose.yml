@@ -1,0 +1,29 @@
+# VPN-Panel – Beispiel für docker-compose.yml (Erklärung in der README, Abschnitt „Docker“)
+services:
+  vpnpanel:
+    image: ghcr.io/syncip/vpn-setup:latest   # oder fest: ghcr.io/syncip/vpn-setup:0.37.0
+    container_name: vpnpanel
+    hostname: vpn
+    network_mode: host        # alle Ports direkt auf dem Host, keine Portfreigaben nötig
+    privileged: true          # WireGuard, iptables/nftables, tc, TUN
+    cgroup: host              # systemd im Container
+    restart: unless-stopped
+    stop_signal: SIGRTMIN+3   # systemd sauber herunterfahren (Statistik wird gesichert)
+    stop_grace_period: 60s
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - ./data:/etc/vpn                      # Datenbank, Schlüssel, Zertifikate, Sicherungen
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - /lib/modules:/lib/modules:ro         # Kernelmodule laden (wireguard, ifb …)
+    environment:
+      SERVER_HOST: vpn.example.org           # Domain oder IP in allen Links und Configs
+      SUB_HOST: sub.example.org              # optional: Abo-Links über diese Domain (Port 443)
+      PANEL_HOST: panel.example.org          # optional: Webinterface über diese Domain (Port 443)
+      # OUT_IF: eth0                         # ausgehende Schnittstelle (Vorgabe: die mit der Standardroute)
+      # PANEL_DIRECT: 0.0.0.0:9443           # Webinterface direkt: https://<IP>:9443
+      # TLS_CERT: /etc/vpn/sub-cert.pem      # eigenes Zertifikat (Vorgabe: sub-cert.pem/sub-key.pem im Datenordner,
+      # TLS_KEY: /etc/vpn/sub-key.pem        #  sonst selbstsigniert)
+      TZ: Europe/Berlin

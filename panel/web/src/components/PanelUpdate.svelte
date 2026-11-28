@@ -102,14 +102,15 @@
         <div><div class="tiny muted">Neueste</div><div class="mono strong">{info.latest || '–'}</div></div>
         <span class="grow"></span>
         <button class="btn" onclick={check} disabled={!!busy || running}><Icon name="refresh" size={15} /> {busy === 'check' ? 'Prüfe …' : 'Jetzt prüfen'}</button>
-        {#if info.available}
+        {#if info.available && !st.docker}
           <button class="btn primary" onclick={() => open('install')} disabled={!!busy || running || !info.can_install} title={info.install_reason || ''}><Icon name="download" size={15} /> {info.latest} installieren</button>
         {/if}
       </div>
       {#if st.dry_run}<div class="notice warn small"><Icon name="alert" size={16} /><span>Testmodus – Beispiel-Release, der Ablauf wird nur gezeigt.</span></div>{/if}
       {#if info.disabled}<div class="notice small"><Icon name="info" size={16} /><span>Die Online-Prüfung ist ausgeschaltet (Einstellungen → Allgemein).</span></div>{/if}
       {#if info.error}<div class="notice bad small"><Icon name="alert" size={16} /><span>Prüfung: {info.error}</span></div>{/if}
-      {#if info.available && !info.can_install && info.install_reason}<div class="notice bad small"><Icon name="alert" size={16} /><span>Installieren nicht möglich: {info.install_reason}</span></div>{/if}
+      {#if st.docker}<div class="notice small"><Icon name="info" size={16} /><span>Läuft im Docker-Container: Updates kommen als neues Image – auf dem Host <code>docker compose pull &amp;&amp; docker compose up -d</code>. Vor dem Start einer neuen Version legt das Panel automatisch einen Wiederherstellungspunkt an.</span></div>{/if}
+      {#if info.available && !info.can_install && info.install_reason && !st.docker}<div class="notice bad small"><Icon name="alert" size={16} /><span>Installieren nicht möglich: {info.install_reason}</span></div>{/if}
       {#if info.available && info.setup_changed}
         <div class="notice warn small">
           <Icon name="alert" size={16} />

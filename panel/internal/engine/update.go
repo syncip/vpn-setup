@@ -109,6 +109,9 @@ func (e *Engine) CheckUpdate(current string) UpdateInfo {
 			if newerVersion(info.Latest, current) {
 				rel := &releaseInfo{Tag: info.Latest, Assets: r.Assets}
 				info.CanInstall, info.InstallReason, info.SetupChanged = installCheck(rel, current)
+				if InDocker() {
+					info.CanInstall, info.InstallReason, info.SetupChanged = false, dockerUpdateHint, false
+				}
 				if a := rel.asset(binaryAssetName()); a != nil {
 					info.Size = a.Size
 				}
