@@ -3,7 +3,7 @@
   // Stunde/Tag/Woche/Monat, Zeitraum frei wählbar über PeriodPicker). Beim Hineinzoomen in den Verlauf werden
   // feinere Daten (bis 1 Stunde) vom Server nachgeladen.
   //   start: Vorgabe – Live-Fenster ('2m' | '10m' | '30m') oder Verlauf ('24h', '7d', '30d', 'month', 'year' …)
-  //   url:  Verlauf (/traffic bzw. /users/<id>/traffic), user: Nutzer für die Live-Daten
+  //   url:  Verlauf (/traffic, /users/<id>/traffic, /servers/<id>/traffic), user bzw. server: Filter der Live-Daten
   //   kpis: Kennzahlen über der Grafik (nur Live)
   import { untrack } from 'svelte';
   import Chart from './Chart.svelte';
@@ -13,7 +13,7 @@
   import PeriodPicker from './PeriodPicker.svelte';
   import { resolve, query, GRAIN_WORD } from '../lib/period.js';
 
-  let { id = 'traffic', title = 'Verkehr', url = '/traffic', user = 0, height = 200, refresh = 0, kpis = false, live = true, start = '' } = $props();
+  let { id = 'traffic', title = 'Verkehr', url = '/traffic', user = 0, server = 0, height = 200, refresh = 0, kpis = false, live = true, start = '' } = $props();
 
   const LIVE = [
     ['2m', '2 Min.', 120],
@@ -34,7 +34,7 @@
   ];
   // Gesamtansicht: SmartDNS als eigene Reihe. Der VPN-Anteil steckt im Verkehr der Zugänge und wird dort
   // abgezogen, Geräte ohne VPN (Proxy) kommen dazu – gestapelt ergibt das wieder den ganzen Verkehr.
-  const overall = $derived(url === '/traffic' && !user);
+  const overall = $derived(url === '/traffic' && !user && !server);
   const SMART = { key: 'smart', label: 'SmartDNS', color: 'var(--ok)' };
   const withSmart = (p) => ({
     ts: p.ts,
@@ -45,7 +45,7 @@
 
   // ---------- Live ----------
   const lv = liveFeed(
-    () => user,
+    () => (server ? `server:${server}` : user),
     () => isLive,
   );
   const now = $derived(lv.at || Date.now());
@@ -53,7 +53,7 @@
   const cur = $derived.by(() => {
     const d = lv.d;
     if (!d) return { up: 0, down: 0 };
-    if (user) {
+    if (user || server) {
       const h = hist[hist.length - 1];
       return { up: h?.up || 0, down: h?.down || 0 };
     }
@@ -115,7 +115,10 @@
         <div class="kpis">
           <div><div class="muted tiny">Download</div><div class="kpi down">{speed(cur.down)}</div></div>
           <div><div class="muted tiny">Upload</div><div class="kpi up">{speed(cur.up)}</div></div>
-          {#if !user && lv.d}
+          {#if server && lv.d}
+            {@const sv = (lv.d.servers || []).find((x) => x.id === server)}
+            {#if sv}<div><div class="muted tiny">Zugänge online</div><div class="kpi">{fmtNum(sv.online)}<span class="muted"> / {fmtNum(sv.total)}</span></div></div>{/if}
+          {:else if !user && lv.d}
             <div><div class="muted tiny">Nutzer online</div><div class="kpi">{fmtNum(lv.d.total.users_online)}<span class="muted"> / {fmtNum(lv.d.total.users)}</span></div></div>
             <div><div class="muted tiny">Geräte verbunden</div><div class="kpi">{fmtNum(lv.d.total.peers_online)}<span class="muted"> / {fmtNum(lv.d.total.peers)}</span></div></div>
           {/if}

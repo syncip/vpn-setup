@@ -1,12 +1,13 @@
 <script>
-  // Ausgänge im Vergleich: Verbrauch heute, Woche, Monat, Jahr und 30 Tage je Ausgang, sortierbar.
-  // Klick auf eine Zeile wählt den Ausgang für die Detailansicht (onpick).
+  // Vergleich (Ausgänge, Server): Verbrauch heute, Woche, Monat, Jahr und 30 Tage je Eintrag, sortierbar, mit Summe.
+  // Klick auf eine Zeile wählt den Eintrag für die Detailansicht (onpick).
+  //   items: [{ id, name, enabled, badge?: { tone, label, icon, detail }, sub? }]
+  //   totals: { totals: { day|week|month|year|30d: { <id>: { up, down } } } } (GET /exits/totals bzw. /servers/totals)
   import Icon from './Icon.svelte';
   import StateBadge from './StateBadge.svelte';
   import { bytes } from '../lib/format.js';
-  import { exitState } from '../lib/exitstate.js';
 
-  let { exits = [], totals = null, sel = 0, onpick = null } = $props();
+  let { items = [], totals = null, sel = 0, onpick = null, title = 'Im Vergleich', head = 'Name', empty = 'Noch keine Einträge.' } = $props();
 
   const COLS = [
     ['day', 'Heute'],
@@ -22,12 +23,12 @@
     return t ? t.up + t.down : 0;
   };
   const rows = $derived(
-    [...exits].sort((a, b) => {
+    [...items].sort((a, b) => {
       const d = sortBy === 'name' ? a.name.localeCompare(b.name, 'de') : val(sortBy, a.id) - val(sortBy, b.id);
       return desc ? -d : d;
     }),
   );
-  const sum = (k) => exits.reduce((a, e) => a + val(k, e.id), 0);
+  const sum = (k) => items.reduce((a, e) => a + val(k, e.id), 0);
   function sortOn(k) {
     if (sortBy === k) desc = !desc;
     else {
@@ -38,27 +39,32 @@
 </script>
 
 <div class="card">
-  <div class="card-head"><h3><Icon name="stats" size={16} /> Ausgänge im Vergleich</h3><span class="muted small">Datenmenge (↓ + ↑), Kalender</span></div>
+  <div class="card-head"><h3><Icon name="stats" size={16} /> {title}</h3><span class="muted small">Datenmenge (↓ + ↑), Kalender</span></div>
   <div class="tbl-wrap">
     <table class="tbl">
       <thead>
         <tr>
-          <th><button class="th" onclick={() => sortOn('name')}>Ausgang{#if sortBy === 'name'} {desc ? '↓' : '↑'}{/if}</button></th>
+          <th><button class="th" onclick={() => sortOn('name')}>{head}{#if sortBy === 'name'} {desc ? '↓' : '↑'}{/if}</button></th>
           {#each COLS as [k, l]}<th class="num"><button class="th" onclick={() => sortOn(k)}>{l}{#if sortBy === k} {desc ? '↓' : '↑'}{/if}</button></th>{/each}
         </tr>
       </thead>
       <tbody>
         {#each rows as e (e.id)}
-          {@const st = exitState(e)}
-          <tr class:sel={sel === e.id} class:off={!e.enabled} onclick={() => onpick?.(e.id)} title="Statistik dieses Ausgangs zeigen">
-            <td><span class="nm"><span class="strong small ellipsis">{e.name}</span><StateBadge small tone={st.tone} label={st.label} icon={st.icon} title={st.detail} /></span></td>
+          <tr class:sel={sel === e.id} class:off={!e.enabled} onclick={() => onpick?.(e.id)} title="Statistik dazu zeigen">
+            <td>
+              <span class="nm">
+                <span class="strong small ellipsis">{e.name}</span>
+                {#if e.sub}<span class="tiny muted">{e.sub}</span>{/if}
+                {#if e.badge}<StateBadge small tone={e.badge.tone} label={e.badge.label} icon={e.badge.icon} title={e.badge.detail} />{/if}
+              </span>
+            </td>
             {#each COLS as [k]}<td class="num small">{totals ? bytes(val(k, e.id)) : '–'}</td>{/each}
           </tr>
         {:else}
-          <tr><td colspan={COLS.length + 1} class="muted small">Noch keine Ausgänge.</td></tr>
+          <tr><td colspan={COLS.length + 1} class="muted small">{empty}</td></tr>
         {/each}
       </tbody>
-      {#if exits.length > 1 && totals}
+      {#if items.length > 1 && totals}
         <tfoot>
           <tr><td class="small strong">Summe</td>{#each COLS as [k]}<td class="num small strong">{bytes(sum(k))}</td>{/each}</tr>
         </tfoot>

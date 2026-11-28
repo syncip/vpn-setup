@@ -52,7 +52,7 @@ Einstieg für Änderungen: **erst hier nachsehen, dann nur die betroffene Datei 
 - `effective.go` + `effective_kinds.go` („Was gilt?“) · `topology.go` (Netzwerkkarte) · `live.go` · `status.go` · `search.go` · `layout.go`
 - `alarms.go` · `points.go` (Update installieren/Rücksprung, Wiederherstellungspunkte) · `sub.go` (Abo-Auslieferung)
 - `period.go` **Zeitraum/Gliederung aller Verläufe** (`?from&to&grain&tz`, stündlich gespeichert → Tag/Woche/Monat hier gebildet),
-  `calStarts` (heute/Woche/Monat/Jahr); Verkehr: `users.go` (`series`, `trafficTotals`), Ausgänge: `exitstats.go` (`exitLive`, `exitTraffic`, `exitTotals`)
+  `calStarts` (heute/Woche/Monat/Jahr); Verkehr: `users.go` (`series`, `trafficTotals`), Server: `servers.go` (`serverTotals`), Ausgänge: `exitstats.go` (`exitLive`, `exitTraffic`, `exitTotals`)
 
 ### `proto` – Protokolltreiber (`proto.Driver`)
 - `proto.go` Schnittstelle, Registry, Felder · `routes.go` Domain-/Netz-Abgleich für Ziel-Regeln · `conflicts.go` Netze/Ports prüfen
@@ -80,7 +80,7 @@ Einstieg für Änderungen: **erst hier nachsehen, dann nur die betroffene Datei 
   - `Settings.svelte`: Allgemein, Sicherheit, Benachrichtigungen, Sicherung, Administratoren
 - **Bausteine:** `Chart` (alle Grafiken, `grain` = Kalender-Balken) · `PeriodPicker` (Zeitraum-Wahl, gespeichert als layout `period:<id>`) · `TrafficChart` · `Board` (anordenbare Fenster) · `Modal`, `Confirm`, `Info`, `Fold`, `Picker`
   · `TopologyMap`, `BuildMap` (Netzwerkkarten) · `RouteRules`, `PeerRoutes` · `DNSExternal`, `DNSLive`, `DNSListBrowser`
-  · `SmartLive`, `SmartStats` · `ExitLive`, `ExitTraffic` (beide mit `exit` = ein Ausgang), `ExitDetail`, `ExitTable` (Statistik → Ausgänge) · `PanelUpdate`, `UpdatesPanel`, `RestorePoints` · `AlarmsPanel` · `NetAccess`
+  · `SmartLive`, `SmartStats` · `ExitLive`, `ExitTraffic` (beide mit `exit` = ein Ausgang), `ExitDetail`, `ServerDetail`, `CompareTable` (Vergleich heute/Woche/Monat/Jahr; Statistik → Server/Ausgänge) · `PanelUpdate`, `UpdatesPanel`, `RestorePoints` · `AlarmsPanel` · `NetAccess`
 
 ## Bauen, Testen, Ausführen
 

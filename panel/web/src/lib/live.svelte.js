@@ -1,6 +1,7 @@
 // Gemeinsame Live-Daten (GET /api/live, alle 2 s, nur solange die Seite sichtbar ist).
 // Mehrere Fenster derselben Seite (Grafik, Geräteliste, Kennzahlen) teilen sich eine Abfrage:
 //   const lv = liveFeed(() => userId, () => aktiv)   – im <script> einer Komponente aufrufen
+//   statt der Nutzer-ID geht auch 'server:<ID>' (Verlauf nur der Zugänge dieses Servers)
 //   lv.d    – letzte Antwort ({total, history, peers, errors}) oder null
 //   lv.err  – Fehlertext der letzten Abfrage, lv.at – Zeitpunkt der letzten Antwort (ms)
 // Abgefragt wird nur, solange mindestens ein Fenster aktiv ist.
@@ -21,7 +22,7 @@ function feed(key) {
 function poll(key, f) {
   if (f.busy || document.hidden) return;
   f.busy = true;
-  get(key ? `/live?user=${key}` : '/live')
+  get(!key ? '/live' : key.startsWith('server:') ? `/live?server=${key.slice(7)}` : `/live?user=${key}`)
     .then((d) => {
       f.state.d = d;
       f.state.at = Date.now();

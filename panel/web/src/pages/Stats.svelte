@@ -10,19 +10,23 @@
   import ExitLive from '../components/ExitLive.svelte';
   import ExitTraffic from '../components/ExitTraffic.svelte';
   import ExitDetail from '../components/ExitDetail.svelte';
-  import ExitTable from '../components/ExitTable.svelte';
+  import CompareTable from '../components/CompareTable.svelte';
+  import ServerDetail from '../components/ServerDetail.svelte';
+  import { exitState } from '../lib/exitstate.js';
   import { TZ } from '../lib/period.js';
   import DNSLive from '../components/DNSLive.svelte';
   import SmartLive from '../components/SmartLive.svelte';
   import { get } from '../lib/api.js';
   import { bytes, fmtNum, speed } from '../lib/format.js';
-  import { go } from '../lib/state.svelte.js';
+  import { go, protocol } from '../lib/state.svelte.js';
+  import { untrack } from 'svelte';
   import { liveFeed } from '../lib/live.svelte.js';
 
-  let { tab = 'traffic' } = $props();
+  let { tab = 'traffic', id = 0 } = $props();
   const TABS = [
     ['traffic', 'Verkehr', 'stats'],
     ['live', 'Live', 'activity'],
+    ['servers', 'Server', 'server'],
     ['exits', 'Ausgänge', 'route'],
     ['dns', 'DNS', 'globe'],
     ['smart', 'SmartDNS', 'route'],
@@ -35,20 +39,47 @@
   let ov = $state(null);
   let ex = $state(null);
   let tt = $state(null); // Verkehr gesamt heute/Woche/Monat/Jahr
+  let sv = $state(null); // Server (GET /servers)
+  let st = $state(null); // Verkehr je Server heute/Woche/Monat/Jahr
   let et = $state(null); // dasselbe je Ausgang
   const tzq = TZ ? `?tz=${encodeURIComponent(TZ)}` : '';
   $effect(() => {
     if (tab === 'traffic' && !ov) get('/overview').then((d) => (ov = d)).catch(() => {});
     if (tab === 'exits' && !ex) get('/exits').then((d) => (ex = d)).catch(() => {});
+    if (tab === 'servers' && !sv) get('/servers').then((d) => (sv = d)).catch(() => {});
   });
   // Summen jede Minute auffrischen, solange der Reiter offen ist
   $effect(() => {
     const t = tab;
-    if (t !== 'traffic' && t !== 'exits') return;
-    const load = () => (t === 'traffic' ? get('/traffic/totals' + tzq).then((d) => (tt = d)) : get('/exits/totals' + tzq).then((d) => (et = d))).catch(() => {});
+    if (t !== 'traffic' && t !== 'exits' && t !== 'servers') return;
+    const load = () =>
+      (t === 'traffic'
+        ? get('/traffic/totals' + tzq).then((d) => (tt = d))
+        : t === 'servers'
+          ? get('/servers/totals' + tzq).then((d) => (st = d))
+          : get('/exits/totals' + tzq).then((d) => (et = d))
+      ).catch(() => {});
     load();
     const iv = setInterval(load, 60000);
     return () => clearInterval(iv);
+  });
+  // gewählter Server: aus der Adresse (#/stats/servers/<ID>, Knopf auf der Server-Karte), sonst zuletzt gewählter
+  const remembered = (k) => {
+    try {
+      return +(localStorage.getItem(k) || 0);
+    } catch {
+      return 0;
+    }
+  };
+  let serverSel = $state(0);
+  $effect(() => {
+    serverSel = id || untrack(() => serverSel) || remembered('stats:server');
+  });
+  $effect(() => {
+    const v = serverSel;
+    try {
+      if (v) localStorage.setItem('stats:server', String(v));
+    } catch {}
   });
   // gewählter Ausgang der Detailansicht (nur in diesem Browser)
   let exitSel = $state(+(() => {
@@ -153,10 +184,50 @@
       { id: 'devices', title: 'Verbundene Geräte', w: 12, body: w_devices },
     ]}
   />
+{:else if tab === 'servers'}
+  {#if sv}
+    {#snippet w_stable()}
+      <CompareTable
+        title="Server im Vergleich"
+        head="Server"
+        empty="Noch keine Server."
+        items={sv.map((s) => ({
+          id: s.id,
+          name: s.name,
+          enabled: s.enabled,
+          sub: protocol(s.protocol)?.label || s.protocol,
+          badge: !s.enabled ? { tone: 'muted', label: 'aus' } : s.status?.running ? { tone: 'ok', label: 'läuft' } : { tone: 'bad', label: 'Fehler', detail: s.error || s.status?.detail },
+        }))}
+        totals={st}
+        sel={serverSel}
+        onpick={(i) => (serverSel = i)}
+      />
+    {/snippet}
+    {#snippet w_sdetail()}<div><ServerDetail servers={sv} totals={st} bind:sel={serverSel} /></div>{/snippet}
+    <Board
+      id="stats-servers"
+      widgets={[
+        { id: 'table', title: 'Server im Vergleich', w: 12, body: w_stable },
+        { id: 'detail', title: 'Server im Detail', w: 12, body: w_sdetail },
+      ]}
+    />
+  {:else}
+    <div class="card card-pad muted small">Lädt …</div>
+  {/if}
 {:else if tab === 'exits'}
   {#if ex}
     {#snippet w_detail()}<div><ExitDetail exits={ex.exits} groups={ex.groups} totals={et} bind:sel={exitSel} /></div>{/snippet}
-    {#snippet w_table()}<ExitTable exits={ex.exits} totals={et} sel={exitSel} onpick={(id) => (exitSel = id)} />{/snippet}
+    {#snippet w_table()}
+      <CompareTable
+        title="Ausgänge im Vergleich"
+        head="Ausgang"
+        empty="Noch keine Ausgänge."
+        items={ex.exits.map((e) => ({ id: e.id, name: e.name, enabled: e.enabled, badge: exitState(e) }))}
+        totals={et}
+        sel={exitSel}
+        onpick={(id) => (exitSel = id)}
+      />
+    {/snippet}
     {#snippet w_live()}<ExitLive exits={ex.exits} groups={ex.groups} />{/snippet}
     {#snippet w_traffic()}<ExitTraffic exits={ex.exits} />{/snippet}
     <Board

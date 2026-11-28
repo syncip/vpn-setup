@@ -115,6 +115,7 @@
       subs: [
         ['/stats', 'Verkehr'],
         ['/stats/live', 'Live'],
+        ['/stats/servers', 'Server'],
         ['/stats/exits', 'Ausgänge'],
         ['/stats/dns', 'DNS'],
         ['/stats/smart', 'SmartDNS'],
@@ -326,7 +327,7 @@
       {:else if section === '/dns'}
         <DNS tab={parts[1] || 'overview'} />
       {:else if section === '/stats'}
-        <Stats tab={parts[1] || 'traffic'} />
+        <Stats tab={parts[1] || 'traffic'} id={Number(parts[2]) || 0} />
       {:else if section === '/system' && parts[1] === 'settings'}
         <Settings tab={parts[2] || 'general'} />
       {:else if section === '/system' && parts[1] === 'effective'}

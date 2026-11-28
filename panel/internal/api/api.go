@@ -100,6 +100,7 @@ func (a *API) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/servers/{id}", a.auth(a.deleteServer))
 	api.HandleFunc("GET /api/servers/{id}/network", a.auth(a.network))
 	api.HandleFunc("GET /api/servers/{id}/traffic", a.auth(a.serverTraffic))
+	api.HandleFunc("GET /api/servers/totals", a.auth(a.serverTotals))
 
 	api.HandleFunc("GET /api/plans", a.auth(a.listPlans))
 	api.HandleFunc("POST /api/plans", a.auth(a.createPlan))

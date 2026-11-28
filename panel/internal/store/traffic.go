@@ -53,6 +53,25 @@ func (s *Store) TrafficSum(since int64) (up, down int64, err error) {
 	return
 }
 
+// TrafficByServer liefert die Summe pro Server seit since (Verkehr aller Zugänge des Servers).
+func (s *Store) TrafficByServer(since int64) (map[int64]ExitTotals, error) {
+	rows, err := s.db.Query(`SELECT server_id, SUM(up), SUM(down) FROM traffic WHERE hour >= ? GROUP BY server_id`, since-since%3600)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := map[int64]ExitTotals{}
+	for rows.Next() {
+		var id int64
+		var t ExitTotals
+		if err := rows.Scan(&id, &t.Up, &t.Down); err != nil {
+			return nil, err
+		}
+		m[id] = t
+	}
+	return m, rows.Err()
+}
+
 // TrafficByUser liefert die Summe pro Nutzer seit since.
 func (s *Store) TrafficByUser(since int64) (map[int64][2]int64, error) {
 	rows, err := s.db.Query(`SELECT user_id, SUM(up), SUM(down) FROM traffic WHERE hour >= ? GROUP BY user_id`, since)

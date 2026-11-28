@@ -10,10 +10,18 @@
   import { get, post, put, del, run } from '../lib/api.js';
   import { bytes, copy, clone } from '../lib/format.js';
   import { meta, protocol, toast, intent, go } from '../lib/state.svelte.js';
+  import { TZ } from '../lib/period.js';
 
   let servers = $state([]);
   let loaded = $state(false);
+  let totals = $state(null); // Verkehr je Server heute/Woche/Monat/Jahr (Kalender im Browser)
+  const loadTotals = () => get('/servers/totals' + (TZ ? `?tz=${encodeURIComponent(TZ)}` : '')).then((d) => (totals = d)).catch(() => {});
+  const tot = (k, id) => {
+    const t = totals?.totals?.[k]?.[id];
+    return t ? t.up + t.down : 0;
+  };
   async function load() {
+    loadTotals();
     servers = await get('/servers');
     loaded = true;
     if (intent.create === 'server') {
@@ -115,7 +123,11 @@
         <dl class="kv">
           <dt>Status</dt><dd>{s.status?.detail}</dd>
           <dt>Zugänge</dt><dd>{s.online} online / {s.peers}</dd>
-          <dt>Traffic</dt><dd>{bytes(s.up + s.down)}</dd>
+          <dt>Traffic</dt>
+          <dd>
+            {bytes(s.up + s.down)}
+            {#if totals}<span class="muted small"> · heute {bytes(tot('day', s.id))} · Monat {bytes(tot('month', s.id))} · Jahr {bytes(tot('year', s.id))}</span>{/if}
+          </dd>
           {#if s.protocol === 'wireguard'}
             <dt>Tunnelnetz</dt><dd class="mono">{s.settings.net4}{s.settings.net6 ? ` · ${s.settings.net6}` : ''}</dd>
             <dt>Internet</dt><dd>{s.settings.internet ? 'über diesen Server' : 'nein (nur Netzwerk)'}</dd>
@@ -137,6 +149,7 @@
       </div>
       <div class="actions">
         {#if p?.mesh}<a class="btn sm" href="#/servers/wg/{s.id}"><Icon name="network" size={15} /> Netzwerk</a>{/if}
+        <a class="btn sm" href="#/stats/servers/{s.id}" title="Verkehr dieses Servers: live, Verlauf, heute/Woche/Monat/Jahr"><Icon name="stats" size={15} /> Statistik</a>
         <button class="btn sm" onclick={() => openEdit(s)}><Icon name="edit" size={15} /> Bearbeiten</button>
         <button class="btn sm" onclick={() => toggle(s)}><Icon name="power" size={15} /> {s.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
         <span class="grow"></span>

@@ -14,7 +14,7 @@ Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13 oder 
 | **Server** | Server, WireGuard-Netze (Geräte, Sternkarte, Zugriffsmatrix), Zugriff zwischen Netzen |
 | **Routing** | Übersicht, Karte (Aufbau/Live), Ausgänge, Gruppen, Ziel-Regeln, IP-Listen, Proxy-Server |
 | **DNS** | Übersicht, Protokoll, Filterprofile, Blocklisten, SmartDNS, Ohne VPN, Einstellungen |
-| **Statistik** | Verkehr (heute, Woche, Monat, Jahr), Live, Ausgänge (Vergleich, je Ausgang live und Verlauf), DNS, SmartDNS |
+| **Statistik** | Verkehr (heute, Woche, Monat, Jahr), Live, Server und Ausgänge (Vergleich, je Server/Ausgang live und Verlauf), DNS, SmartDNS |
 | **System** | Zustand, Was gilt?, Updates, Ereignisse, Einstellungen, Mein Konto |
 
 - Die Seitenleiste lässt sich einklappen (Knopf oben); eingeklappt öffnen die Symbole die Unterseiten als
@@ -46,6 +46,15 @@ weitere einblenden (z. B. verbundene Geräte, Ausgänge live, DNS live, Schnella
   und ausblenden, als **CSV** herunterladen, Einstellungen zurücksetzen.
 - Ein Klick auf einen Eintrag der Legende blendet die Reihe aus.
 - Die Einstellungen jeder Grafik werden je Admin gespeichert.
+
+**Statistik je Server** (seit v0.39.0): Jede Server-Karte zeigt den Verkehr heute, im Monat und im Jahr; der Knopf
+**Statistik** öffnet **Statistik → Server** mit diesem Server:
+
+- **Server im Vergleich:** Datenmenge je Server heute, diese Woche, diesen Monat, dieses Jahr und 30 Tage,
+  sortierbar, mit Summe. Klick auf eine Zeile öffnet den Server darunter.
+- **Server im Detail:** Zustand, Zugänge online, Verbrauch heute/Woche/Monat/Jahr (↓/↑) und eine Grafik mit
+  **Geschwindigkeit live** (2–30 Minuten, Summe der Zugänge des Servers) und **Verlauf** mit freiem Zeitraum und
+  Gliederung (siehe „Grafiken“).
 
 ## Installation
 

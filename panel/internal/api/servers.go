@@ -242,3 +242,17 @@ func (a *API) network(w http.ResponseWriter, r *http.Request) {
 	}
 	fail(w, store.ErrNotFound)
 }
+
+// serverTotals: Verkehr je Server heute, diese Woche, diesen Monat, dieses Jahr (Kalender in ?tz=) und 30 Tage.
+func (a *API) serverTotals(w http.ResponseWriter, r *http.Request) {
+	out := map[string]map[int64]store.ExitTotals{}
+	for k, since := range calStarts(r) {
+		t, err := a.St.TrafficByServer(since)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		out[k] = t
+	}
+	writeJSON(w, map[string]any{"totals": out})
+}
