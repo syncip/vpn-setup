@@ -149,7 +149,7 @@ func (e *Engine) Run(stop <-chan struct{}) {
 			}
 			_ = e.Apply()
 		case <-prune.C:
-			days := atoi(e.Setting("traffic_retention"), 180)
+			days := atoi(e.Setting("traffic_retention"), 400)
 			_ = e.St.PruneTraffic(time.Now().AddDate(0, 0, -days).Unix())
 			e.St.PruneSessions()
 		}

@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
 
 	"vpnpanel/internal/engine"
 	"vpnpanel/internal/store"
@@ -216,33 +214,6 @@ func (a *API) deleteIPList(w http.ResponseWriter, r *http.Request) {
 	a.E.Log("warn", "IP-Liste „"+o.Name+"“ gelöscht")
 	a.E.RequestApply()
 	writeJSON(w, map[string]bool{"ok": true})
-}
-
-// exitLive: aktueller Durchsatz je Ausgang und Gruppe (Byte/s), für die Live-Anzeige.
-func (a *API) exitLive(w http.ResponseWriter, r *http.Request) {
-	ex, gr, act := a.E.ExitLive()
-	writeJSON(w, map[string]any{"ts": time.Now().UnixMilli(), "exits": ex, "groups": gr, "active": act})
-}
-
-// exitTraffic: Verkehr je Ausgang als Zeitreihe (?days=1|7|30|90).
-func (a *API) exitTraffic(w http.ResponseWriter, r *http.Request) {
-	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
-	if days < 1 || days > 365 {
-		days = 7
-	}
-	bucket := int64(3600)
-	switch {
-	case days > 30:
-		bucket = 86400
-	case days > 2:
-		bucket = 6 * 3600
-	}
-	series, err := a.St.ExitTrafficSeries(time.Now().AddDate(0, 0, -days).Unix(), bucket)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"bucket": bucket, "series": series, "days": days})
 }
 
 func strOf(v any) string { s, _ := v.(string); return s }

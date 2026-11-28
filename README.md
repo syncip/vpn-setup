@@ -14,7 +14,7 @@ Nutzer, Tarife, Datenvolumen, Drosselung und Login mit 2FA. Für Debian 13 oder 
 | **Server** | Server, WireGuard-Netze (Geräte, Sternkarte, Zugriffsmatrix), Zugriff zwischen Netzen |
 | **Routing** | Übersicht, Karte (Aufbau/Live), Ausgänge, Gruppen, Ziel-Regeln, IP-Listen, Proxy-Server |
 | **DNS** | Übersicht, Protokoll, Filterprofile, Blocklisten, SmartDNS, Ohne VPN, Einstellungen |
-| **Statistik** | Verkehr, Live, Ausgänge, DNS, SmartDNS |
+| **Statistik** | Verkehr (heute, Woche, Monat, Jahr), Live, Ausgänge (Vergleich, je Ausgang live und Verlauf), DNS, SmartDNS |
 | **System** | Zustand, Was gilt?, Updates, Ereignisse, Einstellungen, Mein Konto |
 
 - Die Seitenleiste lässt sich einklappen (Knopf oben); eingeklappt öffnen die Symbole die Unterseiten als
@@ -29,7 +29,16 @@ weitere einblenden (z. B. verbundene Geräte, Ausgänge live, DNS live, Schnella
 
 **Grafiken** (Verkehr, Live, Ausgänge, DNS) sind überall gleich aufgebaut und bedienbar:
 
-- **Zeitraum** über die Knöpfe oben (live: 2–30 Minuten, Verlauf: 24 Stunden bis 90 Tage).
+- **Zeitraum** über die Knöpfe oben (live: 2–30 Minuten) bzw. **Verlauf** mit freier Zeitraum-Wahl (seit v0.38.0):
+  - *Die letzten …* 24 Stunden, 7, 30 oder 90 Tage, 12 Monate,
+  - *Kalender:* Tag, Woche (Montag–Sonntag, mit Kalenderwoche), Monat, Jahr,
+  - *Frei:* von – bis per Kalender.
+
+  Mit **◀ ▶** wird geblättert (gestern, letzte Woche, März …), **Jetzt** springt zurück. Die **Gliederung**
+  („je …“) ist frei wählbar: Stunden (bis ~3 Monate), Tage, Wochen oder Monate; *Automatisch* passt sie
+  an die Länge an. Tage, Wochen und Monate beginnen um Mitternacht in der Zeitzone des Browsers. Die Wahl wird je
+  Grafik und Admin gespeichert. Den Verkehr bewahrt das Panel stündlich **400 Tage** auf (Einstellungen → Allgemein,
+  „Verlauf aufbewahren“; wer die alte Vorgabe 180 hatte, bekommt einmalig 400).
 - **Zoom:** Bereich mit der Maus aufziehen, Strg+Mausrad, Knöpfe +/−; Umschalt+Ziehen verschiebt,
   Doppelklick setzt zurück. Beim Verlauf lädt der Zoom feinere Daten nach.
 - **Anhalten** friert die Live-Anzeige ein, **Vergrößern** zeigt die Grafik groß.
@@ -241,7 +250,13 @@ iptables -t nat -A PREROUTING -i vmbr0 -p udp --dport 1194 -j DNAT --to-destinat
 
 Der Bereich **Routing** hat die Unterseiten **Übersicht** (Ziel-Regeln → Gruppen → Ausgänge mit Zahlen,
 Störungen und dem aktiven Ausgang je Gruppe), **Karte**, **Ausgänge**, **Gruppen**, **Ziel-Regeln**, **IP-Listen** und
-**Proxy-Server**. Den Verkehr je Ausgang (Summe oder gestapelt je Ausgang) zeigt **Statistik → Ausgänge**.
+**Proxy-Server**. Den Verkehr je Ausgang zeigt **Statistik → Ausgänge** (seit v0.38.0):
+
+- **Ausgänge im Vergleich:** Datenmenge je Ausgang heute, diese Woche, diesen Monat, dieses Jahr und 30 Tage,
+  sortierbar per Klick auf die Spalte, mit Summe. Klick auf eine Zeile öffnet den Ausgang darunter.
+- **Ausgang im Detail:** Ausgang wählen → Zustand, Gruppen, Verbrauch heute/Woche/Monat/Jahr (↓/↑),
+  **Geschwindigkeit live** (2–30 Minuten) und **Verkehr** mit freiem Zeitraum und Gliederung (siehe „Grafiken“).
+- Dazu wie bisher alle Ausgänge live und der Verkehr aller Ausgänge (Summe oder gestapelt je Ausgang).
 
 **Routing → Proxy-Server**: SOCKS5- und HTTP-Proxy mit Benutzername und Passwort, z. B. für Fernseher und Apps.
 Der Verkehr läuft direkt über den Server oder über eine **Ausgangsgruppe** – also über externe
@@ -315,7 +330,8 @@ VPN-Verbindungen, deren WireGuard- oder OpenVPN-Konfiguration (z. B. vom VPN-Anb
   *Bereitschaft*, *Wird geprüft*, *Abgeschaltet* (Limit), *Deaktiviert*, dazu *gedrosselt*; darunter
   der Grund. Gruppen zeigen ihre Mitglieder genauso.
 - **Live-Anzeige** (Routing-Übersicht, Ausgänge, Statistik → Live): Durchsatz je Ausgang und Gruppe alle 2 Sekunden,
-  Diagramm der letzten 2–30 Minuten (gesammelt, solange die Seite offen ist); Zeile anklicken = nur
+  Diagramm der letzten 2–30 Minuten (sammelt das Panel, solange eine Live-Anzeige offen ist – bleibt beim
+  Neuladen erhalten); Zeile anklicken = nur
   dieser Ausgang bzw. diese Gruppe.
 - **Gruppen:** mehrere Ausgänge in fester Reihenfolge. Alle 30 Sekunden prüft der Server jeden Ausgang
   (Ping, HTTPS-Abruf über den Tunnel → öffentliche IP und Land; auf Wunsch ein Geschwindigkeitstest mit

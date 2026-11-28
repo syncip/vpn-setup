@@ -79,7 +79,7 @@ var settingDefaults = map[string]string{
 	"collect_interval":    "60",
 	"profile_title":       "VPN",
 	"sub_update_interval": "12",
-	"traffic_retention":   "180",
+	"traffic_retention":   "400",
 	"public_port":         "443",
 	"trust_cloudflare":    "1",
 	"session_hours":       "168",

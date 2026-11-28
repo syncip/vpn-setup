@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -300,51 +299,16 @@ func (a *API) newToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"sub_url": a.subURL(r, u)})
 }
 
-// rangeParams: feste Zeiträume (range=24h|7d|30d|90d) oder ein Ausschnitt (from/to, Unix-Zeit)
-// zum Hineinzoomen. Die Auflösung richtet sich nach der Länge (feinste Stufe: 1 Stunde).
-func rangeParams(r *http.Request) (since, until, bucket int64) {
-	now := time.Now()
-	q := r.URL.Query()
-	if f, err := strconv.ParseInt(q.Get("from"), 10, 64); err == nil && f > 0 {
-		t, err := strconv.ParseInt(q.Get("to"), 10, 64)
-		if err != nil || t <= f || t > now.Unix()+3600 {
-			t = now.Unix()
-		}
-		if f < now.AddDate(-2, 0, 0).Unix() {
-			f = now.AddDate(-2, 0, 0).Unix()
-		}
-		span := t - f
-		switch {
-		case span <= 4*86400:
-			bucket = 3600
-		case span <= 21*86400:
-			bucket = 6 * 3600
-		default:
-			bucket = 86400
-		}
-		return f, t, bucket
-	}
-	until = now.Unix() + 3600
-	switch q.Get("range") {
-	case "7d":
-		return now.AddDate(0, 0, -7).Unix(), until, 6 * 3600
-	case "30d":
-		return now.AddDate(0, 0, -30).Unix(), until, 86400
-	case "90d":
-		return now.AddDate(0, 0, -90).Unix(), until, 86400
-	}
-	return now.Add(-24 * time.Hour).Unix(), until, 3600
-}
-
+// series: Verkehrsverlauf mit Zeitraum und Gliederung (siehe period.go).
 func (a *API) series(w http.ResponseWriter, r *http.Request, filter string, id int64) {
-	since, until, bucket := rangeParams(r)
-	s, err := a.St.TrafficSeries(since, until, bucket, filter, id)
+	p := parsePeriod(r)
+	s, err := a.St.TrafficSeries(p.since, p.until, 3600, filter, id)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	if filter == "" { // Gesamtverlauf: SmartDNS als eigene Reihe (VPN-Anteil und ohne VPN)
-		if sm, err := a.St.SmartTrafficSeries(since, until, bucket); err == nil && len(sm) > 0 {
+		if sm, err := a.St.SmartTrafficSeries(p.since, p.until, 3600); err == nil && len(sm) > 0 {
 			at := map[int64]int{}
 			for i, p := range s {
 				at[p.TS] = i
@@ -357,10 +321,27 @@ func (a *API) series(w http.ResponseWriter, r *http.Request, filter string, id i
 				}
 				s[i].SVU, s[i].SVD, s[i].SPU, s[i].SPD = v.VUp, v.VDown, v.PUp, v.PDown
 			}
-			sort.Slice(s, func(i, j int) bool { return s[i].TS < s[j].TS })
 		}
 	}
-	writeJSON(w, map[string]any{"bucket": bucket, "since": since, "until": until, "points": orEmptyT(s)})
+	// stündlich gespeichert → in Abschnitte der gewählten Gliederung zusammenfassen
+	by := map[int64]*store.TrafficPoint{}
+	for _, x := range s {
+		k := p.key(x.TS)
+		g := by[k]
+		if g == nil {
+			g = &store.TrafficPoint{TS: k}
+			by[k] = g
+		}
+		g.Up, g.Down, g.SVU, g.SVD, g.SPU, g.SPD = g.Up+x.Up, g.Down+x.Down, g.SVU+x.SVU, g.SVD+x.SVD, g.SPU+x.SPU, g.SPD+x.SPD
+	}
+	out := make([]store.TrafficPoint, 0, len(by))
+	for _, g := range by {
+		out = append(out, *g)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
+	m := p.meta()
+	m["points"] = out
+	writeJSON(w, m)
 }
 
 func (a *API) userTraffic(w http.ResponseWriter, r *http.Request) { a.series(w, r, "user", pathID(r)) }
@@ -369,3 +350,26 @@ func (a *API) serverTraffic(w http.ResponseWriter, r *http.Request) {
 	a.series(w, r, "server", pathID(r))
 }
 func (a *API) traffic(w http.ResponseWriter, r *http.Request) { a.series(w, r, "", 0) }
+
+// trafficTotals: Verkehr aller Zugänge heute, diese Woche, diesen Monat, dieses Jahr, 30 Tage (Kalender in ?tz=);
+// SmartDNS ohne VPN (Proxy) kommt dazu, der VPN-Anteil steckt schon im Verkehr der Zugänge.
+func (a *API) trafficTotals(w http.ResponseWriter, r *http.Request) {
+	out := map[string]map[string]int64{}
+	for k, since := range calStarts(r) {
+		up, down, err := a.St.TrafficSum(since - since%3600)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		m := map[string]int64{"up": up, "down": down}
+		if sm, err := a.St.SmartTrafficSeries(since, time.Now().Unix()+3600, 3600); err == nil {
+			for _, v := range sm {
+				m["up"] += v.PUp
+				m["down"] += v.PDown
+				m["smart"] += v.VUp + v.VDown + v.PUp + v.PDown
+			}
+		}
+		out[k] = m
+	}
+	writeJSON(w, out)
+}

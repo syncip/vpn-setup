@@ -390,5 +390,6 @@ func (e *Engine) ExitLive() (map[int64]ExitRate, map[int64]ExitRate, map[int64]i
 		}
 		groups[gid] = r
 	}
+	exitHist.record(time.Now(), rates, groups)
 	return rates, groups, active
 }

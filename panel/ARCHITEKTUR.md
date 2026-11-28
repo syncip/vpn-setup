@@ -41,16 +41,18 @@ Einstieg für Änderungen: **erst hier nachsehen, dann nur die betroffene Datei 
   · `unbound.go` (Selbstprüfung) · `unbound_groups.go` (Unbound je Gruppe)
 - **SmartDNS:** `smartdns.go` (Profile, Zuordnung, nft) · `smartproxy.go` (SNI-Proxy für Geräte ohne VPN) · `smartstats.go` (Statistik, nft-Zähler)
 - **Betrieb:** `notify.go` (Mail) · `alarms.go` · `attention.go` („Braucht Aufmerksamkeit“) · `hoststats.go` · `portcheck.go`
-  · `update.go` (Update-Prüfung) · `selfupdate.go` (**Update aus dem Panel**, Wächter) · `points.go` (Wiederherstellungspunkte)
+  · `exithist.go` (Live-Verlauf der Ausgänge, 30 Min.) · `update.go` (Update-Prüfung) · `selfupdate.go` (**Update aus dem Panel**, Wächter) · `points.go` (Wiederherstellungspunkte)
   · `pkgupdate.go` (Paket-Updates) · `legacy.go` (Übernahme Bash-Setup) · `singbox.go` · `connlimit.go` · `lock_*.go`, `disk_*.go`
 
 ### `api` – HTTP
 - `api.go` **alle Routen**, Middleware, Sicherheitsheader · `auth.go` Anmeldung, Sitzungen, 2FA · `loginlock.go` · `account.go` Konto, Mail, Sicherung
 - `handlers.go` Meta, Übersicht, gemeinsame Hilfen · `users.go` · `peers.go` · `servers.go` · `settings.go` (Tarife, Einstellungen, System)
-- `objects.go` Ausgänge und Gruppen · `iplists.go` · `routes.go` Ziel-Regeln · `chains.go` Kaskade über Ziel-Regeln · `netaccess.go`
+- `objects.go` Ausgänge und Gruppen · `exitstats.go` Statistik der Ausgänge · `iplists.go` · `routes.go` Ziel-Regeln · `chains.go` Kaskade über Ziel-Regeln · `netaccess.go`
 - `dns.go` (Einstellungen, Filterprofile) · `dns_lists.go` (Blocklisten, Protokoll) · `dnsext.go` · `smartdns.go` · `smartstats.go`
 - `effective.go` + `effective_kinds.go` („Was gilt?“) · `topology.go` (Netzwerkkarte) · `live.go` · `status.go` · `search.go` · `layout.go`
 - `alarms.go` · `points.go` (Update installieren/Rücksprung, Wiederherstellungspunkte) · `sub.go` (Abo-Auslieferung)
+- `period.go` **Zeitraum/Gliederung aller Verläufe** (`?from&to&grain&tz`, stündlich gespeichert → Tag/Woche/Monat hier gebildet),
+  `calStarts` (heute/Woche/Monat/Jahr); Verkehr: `users.go` (`series`, `trafficTotals`), Ausgänge: `exitstats.go` (`exitLive`, `exitTraffic`, `exitTotals`)
 
 ### `proto` – Protokolltreiber (`proto.Driver`)
 - `proto.go` Schnittstelle, Registry, Felder · `routes.go` Domain-/Netz-Abgleich für Ziel-Regeln · `conflicts.go` Netze/Ports prüfen
@@ -69,16 +71,16 @@ Einstieg für Änderungen: **erst hier nachsehen, dann nur die betroffene Datei 
 ## Oberfläche (`web/src`, Svelte 5)
 
 - `App.svelte` Rahmen, Menü (`NAV`), Routen · `lib/state.svelte.js` Anmeldung, Meta, Route, `MOVED` · `lib/api.js` `get/post/put/del/run/postFile/upload`
-- `lib/format.js` (bytes, speed, date, ago …) · `lib/live.svelte.js` (`/api/live` alle 2 s) · `lib/layout.svelte.js` · `lib/pick.js` · `lib/exitstate.js`
+- `lib/period.js` (Zeitraum-Wahl, Kalender-Abschnitte; Gegenstück zu `api/period.go`) · `lib/format.js` (bytes, speed, date, ago …) · `lib/live.svelte.js` (`/api/live` alle 2 s) · `lib/layout.svelte.js` · `lib/pick.js` · `lib/exitstate.js`
 - **Seiten:** `Overview` · `Users`, `UserDetail` · `Servers` · `Network` (Übersicht/Aufbau/Zugriff) · `Proxy` (Ausgänge, Limits, Gruppen, Proxy-Server)
   · `IPLists` · `DNS` · `Stats` · `Health` (Zustand, Updates, Ereignisse) · `Effective` · `Settings` · `Account` · `Plans` · `Login`
 - **Große Seiten** haben Abschnittsmarken `// ---------- … ----------` im Skript und `{#if tab === '…'}` im Markup:
   - `DNS.svelte`: Übersicht, Protokoll, Filterprofile, SmartDNS, SmartDNS-Statistik, Blocklisten, Blocklisten durchsuchen, Einstellungen
   - `Proxy.svelte`: Übersicht, Prüfen, Ausgang Ping/Speedtest, Ausgänge, Limits, Gruppen, Proxy-Server
   - `Settings.svelte`: Allgemein, Sicherheit, Benachrichtigungen, Sicherung, Administratoren
-- **Bausteine:** `Chart` (alle Grafiken) · `TrafficChart` · `Board` (anordenbare Fenster) · `Modal`, `Confirm`, `Info`, `Fold`, `Picker`
+- **Bausteine:** `Chart` (alle Grafiken, `grain` = Kalender-Balken) · `PeriodPicker` (Zeitraum-Wahl, gespeichert als layout `period:<id>`) · `TrafficChart` · `Board` (anordenbare Fenster) · `Modal`, `Confirm`, `Info`, `Fold`, `Picker`
   · `TopologyMap`, `BuildMap` (Netzwerkkarten) · `RouteRules`, `PeerRoutes` · `DNSExternal`, `DNSLive`, `DNSListBrowser`
-  · `SmartLive`, `SmartStats` · `ExitLive`, `ExitTraffic` · `PanelUpdate`, `UpdatesPanel`, `RestorePoints` · `AlarmsPanel` · `NetAccess`
+  · `SmartLive`, `SmartStats` · `ExitLive`, `ExitTraffic` (beide mit `exit` = ein Ausgang), `ExitDetail`, `ExitTable` (Statistik → Ausgänge) · `PanelUpdate`, `UpdatesPanel`, `RestorePoints` · `AlarmsPanel` · `NetAccess`
 
 ## Bauen, Testen, Ausführen
 

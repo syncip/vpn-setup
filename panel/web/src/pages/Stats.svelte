@@ -9,6 +9,9 @@
   import LiveDevices from '../components/LiveDevices.svelte';
   import ExitLive from '../components/ExitLive.svelte';
   import ExitTraffic from '../components/ExitTraffic.svelte';
+  import ExitDetail from '../components/ExitDetail.svelte';
+  import ExitTable from '../components/ExitTable.svelte';
+  import { TZ } from '../lib/period.js';
   import DNSLive from '../components/DNSLive.svelte';
   import SmartLive from '../components/SmartLive.svelte';
   import { get } from '../lib/api.js';
@@ -31,9 +34,35 @@
 
   let ov = $state(null);
   let ex = $state(null);
+  let tt = $state(null); // Verkehr gesamt heute/Woche/Monat/Jahr
+  let et = $state(null); // dasselbe je Ausgang
+  const tzq = TZ ? `?tz=${encodeURIComponent(TZ)}` : '';
   $effect(() => {
     if (tab === 'traffic' && !ov) get('/overview').then((d) => (ov = d)).catch(() => {});
     if (tab === 'exits' && !ex) get('/exits').then((d) => (ex = d)).catch(() => {});
+  });
+  // Summen jede Minute auffrischen, solange der Reiter offen ist
+  $effect(() => {
+    const t = tab;
+    if (t !== 'traffic' && t !== 'exits') return;
+    const load = () => (t === 'traffic' ? get('/traffic/totals' + tzq).then((d) => (tt = d)) : get('/exits/totals' + tzq).then((d) => (et = d))).catch(() => {});
+    load();
+    const iv = setInterval(load, 60000);
+    return () => clearInterval(iv);
+  });
+  // gewählter Ausgang der Detailansicht (nur in diesem Browser)
+  let exitSel = $state(+(() => {
+    try {
+      return localStorage.getItem('stats:exit') || 0;
+    } catch {
+      return 0;
+    }
+  })());
+  $effect(() => {
+    const v = exitSel;
+    try {
+      localStorage.setItem('stats:exit', String(v));
+    } catch {}
   });
   const topMax = $derived(Math.max(1, ...(ov?.top || []).map((t) => t.up + t.down)));
   const lv = liveFeed(0, () => tab === 'live');
@@ -53,12 +82,14 @@
 </div>
 
 {#if tab === 'traffic'}
-  {#snippet w_today()}
-    <div class="card card-pad kpi"><div class="muted small">Heute</div><div class="big">{ov ? bytes(ov.today.up + ov.today.down) : '–'}</div>{#if ov}<div class="tiny muted">↓ {bytes(ov.today.down)} · ↑ {bytes(ov.today.up)}</div>{#if ov.smart?.today}<div class="tiny muted">davon SmartDNS {bytes(ov.smart.today)}</div>{/if}{/if}</div>
+  {#snippet kpiTot(k, l)}
+    {@const t = tt?.[k]}
+    <div class="card card-pad kpi"><div class="muted small">{l}</div><div class="big">{t ? bytes(t.up + t.down) : '–'}</div>{#if t}<div class="tiny muted">↓ {bytes(t.down)} · ↑ {bytes(t.up)}</div>{#if t.smart}<div class="tiny muted">davon SmartDNS {bytes(t.smart)}</div>{/if}{/if}</div>
   {/snippet}
-  {#snippet w_month()}
-    <div class="card card-pad kpi"><div class="muted small">Dieser Monat</div><div class="big">{ov ? bytes(ov.month.up + ov.month.down) : '–'}</div>{#if ov}<div class="tiny muted">↓ {bytes(ov.month.down)} · ↑ {bytes(ov.month.up)}</div>{#if ov.smart?.month}<div class="tiny muted">davon SmartDNS {bytes(ov.smart.month)}</div>{/if}{/if}</div>
-  {/snippet}
+  {#snippet w_today()}{@render kpiTot('day', 'Heute')}{/snippet}
+  {#snippet w_week()}{@render kpiTot('week', 'Diese Woche')}{/snippet}
+  {#snippet w_month()}{@render kpiTot('month', 'Dieser Monat')}{/snippet}
+  {#snippet w_year()}{@render kpiTot('year', 'Dieses Jahr')}{/snippet}
   {#snippet w_users()}
     <div class="card card-pad kpi"><div class="muted small">Nutzer</div><div class="big">{ov ? fmtNum(ov.counts.users || 0) : '–'}</div>{#if ov}<div class="tiny muted">{fmtNum(ov.counts.peers || 0)} Zugänge</div>{/if}</div>
   {/snippet}
@@ -87,11 +118,13 @@
     id="stats-traffic"
     widgets={[
       { id: 'today', title: 'Verkehr heute', w: 3, body: w_today },
+      { id: 'week', title: 'Verkehr diese Woche', w: 3, body: w_week },
       { id: 'month', title: 'Verkehr diesen Monat', w: 3, body: w_month },
-      { id: 'users', title: 'Nutzer', w: 3, body: w_users },
-      { id: 'servers', title: 'Server', w: 3, body: w_servers },
+      { id: 'year', title: 'Verkehr dieses Jahr', w: 3, body: w_year },
       { id: 'chart', title: 'Verkehr gesamt', w: 8, body: w_chart },
       { id: 'top', title: 'Top-Nutzer', w: 4, body: w_top },
+      { id: 'users', title: 'Nutzer', w: 3, body: w_users },
+      { id: 'servers', title: 'Server', w: 3, body: w_servers },
     ]}
   />
 {:else if tab === 'live'}
@@ -122,13 +155,17 @@
   />
 {:else if tab === 'exits'}
   {#if ex}
+    {#snippet w_detail()}<div><ExitDetail exits={ex.exits} groups={ex.groups} totals={et} bind:sel={exitSel} /></div>{/snippet}
+    {#snippet w_table()}<ExitTable exits={ex.exits} totals={et} sel={exitSel} onpick={(id) => (exitSel = id)} />{/snippet}
     {#snippet w_live()}<ExitLive exits={ex.exits} groups={ex.groups} />{/snippet}
     {#snippet w_traffic()}<ExitTraffic exits={ex.exits} />{/snippet}
     <Board
       id="stats-exits"
       widgets={[
-        { id: 'live', title: 'Ausgänge live', w: 12, body: w_live },
-        { id: 'traffic', title: 'Verkehr über die Ausgänge', w: 12, body: w_traffic },
+        { id: 'table', title: 'Ausgänge im Vergleich', w: 12, body: w_table },
+        { id: 'detail', title: 'Ausgang im Detail', w: 12, body: w_detail },
+        { id: 'live', title: 'Ausgänge live (alle)', w: 12, body: w_live },
+        { id: 'traffic', title: 'Verkehr über die Ausgänge (alle)', w: 12, body: w_traffic },
       ]}
     />
   {:else}

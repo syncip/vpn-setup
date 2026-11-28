@@ -1,7 +1,8 @@
 <script>
-  // Verkehr in einer Grafik: Live (2/10/30 Min., Geschwindigkeit alle 2 s) und Verlauf
-  // (24 Std. bis 90 Tage, Datenmenge je Zeitfenster). Beim Hineinzoomen in den Verlauf werden
+  // Verkehr in einer Grafik: Live (2/10/30 Min., Geschwindigkeit alle 2 s) und Verlauf (Datenmenge je
+  // Stunde/Tag/Woche/Monat, Zeitraum frei wählbar über PeriodPicker). Beim Hineinzoomen in den Verlauf werden
   // feinere Daten (bis 1 Stunde) vom Server nachgeladen.
+  //   start: Vorgabe – Live-Fenster ('2m' | '10m' | '30m') oder Verlauf ('24h', '7d', '30d', 'month', 'year' …)
   //   url:  Verlauf (/traffic bzw. /users/<id>/traffic), user: Nutzer für die Live-Daten
   //   kpis: Kennzahlen über der Grafik (nur Live)
   import { untrack } from 'svelte';
@@ -9,6 +10,8 @@
   import { get } from '../lib/api.js';
   import { liveFeed } from '../lib/live.svelte.js';
   import { speed, fmtNum } from '../lib/format.js';
+  import PeriodPicker from './PeriodPicker.svelte';
+  import { resolve, query, GRAIN_WORD } from '../lib/period.js';
 
   let { id = 'traffic', title = 'Verkehr', url = '/traffic', user = 0, height = 200, refresh = 0, kpis = false, live = true, start = '' } = $props();
 
@@ -17,14 +20,11 @@
     ['10m', '10 Min.', 600],
     ['30m', '30 Min.', 1800],
   ];
-  const HIST = [
-    ['24h', '24 Std.'],
-    ['7d', '7 Tage'],
-    ['30d', '30 Tage'],
-    ['90d', '90 Tage'],
-  ];
-  const ranges = $derived(live ? [...LIVE.map(([k, l]) => [k, l]), ['|'], ...HIST] : HIST);
-  let range = $state(untrack(() => start || (live ? '10m' : '24h')));
+  const ranges = $derived(live ? [...LIVE.map(([k, l]) => [k, l]), ['|'], ['hist', 'Verlauf']] : []);
+  const startLive = untrack(() => LIVE.some(([k]) => k === start));
+  let range = $state(untrack(() => (live && (startLive || !start) ? start || '10m' : 'hist')));
+  let period = $state(null);
+  const per = $derived(resolve(period || { mode: !startLive && start ? start : '24h' }));
   const isLive = $derived(LIVE.some(([k]) => k === range));
   const win = $derived((LIVE.find(([k]) => k === range) || [0, 0, 600])[2] * 1000);
 
@@ -67,20 +67,23 @@
   let seq = 0;
   const conv = (t) => ({
     bucket: t.bucket * 1000,
+    grain: t.grain || '',
     from: t.since * 1000,
     to: Math.min(t.until * 1000, Date.now() + 60000),
     points: (t.points || []).map((p) => (overall ? withSmart({ ...p, ts: p.ts * 1000 }) : { ts: p.ts * 1000, up: p.up, down: p.down })),
   });
   $effect(() => {
     if (isLive) return;
-    const r = range;
+    const q = query(per);
+    const f = per.from,
+      t = per.to;
     url;
     refresh;
     untrack(() => {
       zoomed = null;
       const my = ++seq;
-      get(`${url}?range=${r}`)
-        .then((t) => my === seq && ((base = conv(t)), (err = '')))
+      get(`${url}?${q}`)
+        .then((res) => my === seq && ((base = { ...conv(res), from: f, to: t }), (err = '')))
         .catch((e) => (err = e.message));
     });
   });
@@ -92,7 +95,7 @@
     }
     const my = ++seq;
     try {
-      const c = conv(await get(`${url}?from=${Math.floor(f / 1000)}&to=${Math.ceil(t / 1000)}`));
+      const c = conv(await get(`${url}?${query({ from: f, to: t, grain: 'auto' }).replace('grain=auto', '')}`));
       if (my === seq && base) zoomed = { ...c, from: base.from, to: base.to }; // gleiche Achse, feinere Balken
     } catch {}
   }
@@ -101,7 +104,7 @@
   const hasSmart = $derived(overall && (isLive ? hist : data?.points || []).some((p) => p.smart > 0));
   const SERIES = $derived(hasSmart ? [...BASE, SMART] : BASE);
   const sub = $derived(
-    [isLive ? '' : data ? `Datenmenge je ${data.bucket >= 86400000 ? 'Tag' : 'Stunde'}` : '', hasSmart ? 'SmartDNS als eigene Reihe' : ''].filter(Boolean).join(' · '),
+    [isLive ? '' : data ? `Datenmenge je ${GRAIN_WORD[data.grain] || 'Stunde'}` : '', hasSmart ? 'SmartDNS als eigene Reihe' : ''].filter(Boolean).join(' · '),
   );
 </script>
 
@@ -131,15 +134,19 @@
     unit="bytes"
     kinds={['bars', 'area', 'line']}
     bucket={data?.bucket || 3600000}
-    from={data?.from || Date.now() - 86400000}
-    to={data?.to || Date.now()}
+    grain={data?.grain || ''}
+    from={data?.from || per.from}
+    to={data?.to || per.to}
     {height}
     {ranges}
     bind:range
     onzoom={zoom}
     legend="sum"
   >
-    {#snippet children()}{#if err}<div class="notice bad small">{err}</div>{/if}{/snippet}
+    {#snippet children()}
+      <PeriodPicker id={id} bind:value={period} start={!startLive && start ? start : '24h'} />
+      {#if err}<div class="notice bad small">{err}</div>{/if}
+    {/snippet}
   </Chart>
 {/if}
 

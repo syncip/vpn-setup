@@ -8,12 +8,14 @@
   //   kinds: erlaubte Darstellungen ('line' | 'area' | 'bars'), kind: Vorgabe (sonst kinds[0])
   //   unit: 'rate' (Byte/s, umschaltbar bit/s ↔ Byte/s) | 'bytes' | 'count'; format: eigene Anzeige (überstimmt unit)
   //   bucket: Balkenbreite in ms (Verlauf mit festen Zeitfenstern), gap: Lücken > gap ms nicht verbinden
+  //   grain: 'day' | 'week' | 'month' = Kalender-Abschnitte (unterschiedlich lang, Ortszeit; lib/period.js)
   //   stack: Reihen stapeln (Balken immer), legend: 'now' (letzter Wert) | 'sum' | 'peak'
   //   children: Kennzahlen über der Grafik, tools: eigene Bedienelemente im Kopf, footer: Inhalt unter der Grafik
   import Icon from './Icon.svelte';
   import { untrack } from 'svelte';
   import { layout, loadLayout, saveLayout } from '../lib/layout.svelte.js';
   import { speed, bytes, fmtNum, download } from '../lib/format.js';
+  import { slotStart, slotNext, slotLabel } from '../lib/period.js';
 
   let {
     id = '',
@@ -26,6 +28,7 @@
     unit = 'count',
     format = null,
     bucket = 0,
+    grain = '',
     from = 0,
     to = 0,
     gap = 0,
@@ -120,7 +123,15 @@
   const TX = (x) => vf + ((x - PL) / iw) * (vt - vf);
 
   // Zeilen im Ausschnitt: feste Zeitfenster (bucket) werden lückenlos aufgefüllt
+  const cal = $derived(grain === 'day' || grain === 'week' || grain === 'month');
+  const slotEnd = (t) => (cal ? slotNext(t, grain) : t + bucket);
   const rows = $derived.by(() => {
+    if (cal) {
+      const map = new Map(P.map((p) => [p.ts, p]));
+      const out = [];
+      for (let t = slotStart(vf, grain), n = 0; t < vt && n < 3000; t = slotNext(t, grain), n++) out.push(map.get(t) || { ts: t });
+      return out;
+    }
     if (bucket) {
       const map = new Map(P.map((p) => [p.ts, p]));
       const out = [];
@@ -224,7 +235,8 @@
         return { color: s.color, y: y2, h: Math.max(0, y1 - y2) };
       });
       const x = bucket ? X(p.ts) : X(p.ts) - w0 / 2;
-      return { ts: p.ts, x, w: Math.max(1, w0 - pad), parts };
+      const w = cal ? X(slotEnd(p.ts)) - X(p.ts) : w0;
+      return { ts: p.ts, x, w: Math.max(1, w - (w > 6 ? 2 : pad)), parts };
     });
   });
 
@@ -232,12 +244,14 @@
   const span = $derived(vt - vf);
   function tlabel(t) {
     const d = new Date(t);
+    if (cal && span > 120 * 86400000) return d.toLocaleDateString('de-DE', { month: 'short', year: '2-digit' });
     if (span <= 15 * 60000) return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     if (span <= 2 * 86400000) return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     if (span <= 10 * 86400000 && bucket && bucket < 86400000) return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit' });
     return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
   }
   function longLabel(t) {
+    if (cal || bucket === 3600000) return slotLabel(t, cal ? grain : 'hour');
     const d = new Date(t);
     if (bucket >= 86400000) return d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
     const o = { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' };
@@ -248,6 +262,17 @@
   }
   const xticks = $derived.by(() => {
     const n = Math.max(2, Math.floor(iw / 110));
+    if (span > 45 * 86400000) {
+      // lange Zeiträume: Monatsanfänge (jeder k-te Monat)
+      const months = span / (30.4 * 86400000);
+      const k = [1, 2, 3, 6, 12, 24].find((m) => months / m <= n) || 24;
+      const out = [];
+      const d = new Date(vf);
+      let t = new Date(d.getFullYear(), d.getMonth() + (d.getDate() > 1 || d.getHours() ? 1 : 0), 1);
+      while (t.getMonth() % k) t = new Date(t.getFullYear(), t.getMonth() + 1, 1);
+      for (; t.getTime() <= vt && out.length < 40; t = new Date(t.getFullYear(), t.getMonth() + k, 1)) out.push(t.getTime());
+      return out;
+    }
     const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800].map((s) => s * 1000);
     const st = steps.find((s) => span / s <= n) || span / n;
     const out = [];
@@ -284,7 +309,7 @@
     return Math.max(PL, Math.min(PL + iw, ((e.clientX - r.left) / r.width) * width));
   }
   function setView(f, t) {
-    const minSpan = bucket ? bucket * 2 : 10000;
+    const minSpan = cal ? 2 * 86400000 : bucket ? bucket * 2 : 10000;
     if (t - f < minSpan) {
       const c = (f + t) / 2;
       f = c - minSpan / 2;
@@ -324,7 +349,7 @@
     const t = TX(x);
     let best = null;
     for (const p of rows) {
-      const c = bucket ? p.ts + bucket / 2 : p.ts;
+      const c = cal || bucket ? (p.ts + slotEnd(p.ts)) / 2 : p.ts;
       if (!best || Math.abs(c - t) < Math.abs(best.c - t)) best = { c, p };
     }
     hover = best ? { x: X(best.c), p: best.p } : null;
@@ -373,7 +398,7 @@
   function csv() {
     const head = ['Zeit', ...series.map((s) => s.label + (unit === 'rate' ? ' (Byte/s)' : unit === 'bytes' ? ' (Byte)' : ''))];
     const lines = [head.join(';')];
-    for (const p of bucket ? rows.filter((r) => series.some((s) => r[s.key] != null)) : rows) lines.push([new Date(p.ts).toISOString(), ...series.map((s) => val(p, s.key))].join(';'));
+    for (const p of bucket || cal ? rows.filter((r) => series.some((s) => r[s.key] != null)) : rows) lines.push([new Date(p.ts).toISOString(), ...series.map((s) => val(p, s.key))].join(';'));
     download(`${id || 'grafik'}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`, lines.join('\n'));
     menu = false;
   }

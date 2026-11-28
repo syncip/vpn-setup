@@ -10,7 +10,8 @@ import (
 
 // Anordnung der Fenster (Karten) je Seite, pro Administrator gespeichert: Reihenfolge, Breite
 // (1–12 Spalten), ausgeblendete und hinzugefügte Fenster. Unter „chart:<id>“ liegen die Einstellungen
-// einer Grafik (Darstellung je Einheit, Einheit, Höhe, Zeitraum, ausgeblendete Reihen in Hidden). Liegt in der Tabelle settings unter
+// einer Grafik (Darstellung je Einheit, Einheit, Höhe, Zeitraum, ausgeblendete Reihen in Hidden), unter
+// „period:<id>“ die Zeitraum-Wahl eines Verlaufs (web/src/lib/period.js). Liegt in der Tabelle settings unter
 // „state:layout:<AdminID>“ (state:-Schlüssel tauchen in den Einstellungen nicht auf).
 
 type boardLayout struct {
@@ -25,11 +26,18 @@ type boardLayout struct {
 	Unit      string `json:"unit,omitempty"`  // bits | bytes
 	Size      string `json:"size,omitempty"`  // s | m | l
 	Range     string `json:"range,omitempty"` // z. B. 10m, 24h, 7
+	// Zeitraum-Wahl („period:<id>“)
+	Mode   string `json:"mode,omitempty"`  // 24h | 7d | … | day | week | month | year | custom
+	Grain  string `json:"grain,omitempty"` // auto | hour | day | week | month
+	From   string `json:"from,omitempty"`  // JJJJ-MM-TT (custom)
+	To     string `json:"to,omitempty"`
+	Offset int    `json:"offset,omitempty"` // 0 = aktueller Zeitraum, -1 = davor …
 }
 
 var (
 	layoutID   = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,47}$`)
-	layoutPage = regexp.MustCompile(`^(chart:)?[a-z0-9][a-z0-9_.-]{0,47}$`)
+	layoutPage = regexp.MustCompile(`^(chart:|period:)?[a-z0-9][a-z0-9_.-]{0,47}$`)
+	layoutDay  = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2})?$`)
 	layoutOpt  = regexp.MustCompile(`^[a-z0-9]{0,8}$`)
 )
 
@@ -62,6 +70,11 @@ func validLayout(m map[string]boardLayout) error {
 		}
 		if !oneOf(b.Unit, "", "bits", "bytes") || !oneOf(b.Size, "", "s", "m", "l") || !layoutOpt.MatchString(b.Range) {
 			return errors.New("ungültige Einstellung der Grafik")
+		}
+		if !oneOf(b.Mode, "", "24h", "7d", "30d", "90d", "365d", "day", "week", "month", "year", "custom") ||
+			!oneOf(b.Grain, "", "auto", "hour", "day", "week", "month") ||
+			!layoutDay.MatchString(b.From) || !layoutDay.MatchString(b.To) || b.Offset > 0 || b.Offset < -5000 {
+			return errors.New("ungültiger Zeitraum")
 		}
 		for _, id := range append(append(append([]string{}, b.Order...), b.Hidden...), b.Shown...) {
 			if !layoutID.MatchString(id) {

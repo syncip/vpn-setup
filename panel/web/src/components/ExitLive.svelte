@@ -1,6 +1,7 @@
 <script>
-  // Live-Anzeige der Ausgänge und Gruppen: aktueller Durchsatz alle 2 s, Verlauf der letzten Minuten
-  // (wird im Browser gesammelt, solange die Seite offen ist).
+  // Live-Anzeige der Ausgänge und Gruppen: aktueller Durchsatz alle 2 s, Verlauf der letzten 30 Minuten
+  // (sammelt das Panel, solange eine Live-Anzeige offen ist; beim Öffnen wird er einmal geholt).
+  //   exit: fest auf diesen Ausgang (Detailansicht, ohne Liste) · id: Speicherort der Grafik-Einstellungen
   import Icon from './Icon.svelte';
   import Info from './Info.svelte';
   import Chart from './Chart.svelte';
@@ -9,11 +10,12 @@
   import { speed } from '../lib/format.js';
   import { exitState } from '../lib/exitstate.js';
 
-  let { exits = [], groups = [] } = $props();
+  let { exits = [], groups = [], exit = 0, id = 'exits-live', title = 'Ausgänge live', height = 170 } = $props();
 
   const KEEP = 30 * 60 * 1000;
   let win = $state('5'); // Minuten
-  let sel = $state('all'); // all | e<id> | g<id>
+  let selPick = $state('all'); // all | e<id> | g<id>
+  const sel = $derived(exit ? 'e' + exit : selPick);
   let cur = $state(null); // letzte Antwort
   let hist = $state({}); // Schlüssel → [{ts, up, down}]
 
@@ -23,10 +25,17 @@
     while (list.length && list[0].ts < ts - KEEP) list.shift();
     hist[key] = list;
   }
+  let first = true;
   async function poll() {
     if (document.hidden) return;
     try {
-      const r = await get('/exits/live');
+      const r = await get(first ? '/exits/live?hist=1' : '/exits/live');
+      if (first && r.history) {
+        const h = {};
+        for (const [k, l] of Object.entries(r.history)) h[k] = l.filter((p) => p.ts < r.ts - 500).map((p) => ({ ts: p.ts, up: p.up || 0, down: p.down || 0 }));
+        hist = h;
+      }
+      first = false;
       cur = r;
       let up = 0,
         down = 0;
@@ -55,7 +64,7 @@
   const peak = $derived(Math.max(1, ...exits.map((e) => rateOf('e' + e.id).down + rateOf('e' + e.id).up), ...groups.map((g) => rateOf('g' + g.id).down + rateOf('g' + g.id).up)));
   const exitName = (id) => exits.find((e) => e.id === id)?.name || '–';
   const selName = $derived(sel === 'all' ? 'Alle Ausgänge' : sel[0] === 'e' ? exitName(+sel.slice(1)) : 'Gruppe ' + (groups.find((g) => g.id === +sel.slice(1))?.name || ''));
-  const toggle = (k) => (sel = sel === k ? 'all' : k);
+  const toggle = (k) => (selPick = selPick === k ? 'all' : k);
   const SERIES = [
     { key: 'down', label: 'Download', color: 'var(--down)' },
     { key: 'up', label: 'Upload', color: 'var(--up)' },
@@ -63,9 +72,9 @@
 </script>
 
 <Chart
-  id="exits-live"
-  title="Ausgänge live"
-  sub={selName}
+  {id}
+  {title}
+  sub={exit ? '' : selName}
   series={SERIES}
   {points}
   unit="rate"
@@ -73,20 +82,21 @@
   from={now - +win * 60000}
   to={now}
   gap={8000}
-  height={170}
+  {height}
   ranges={[['2', '2 Min.'], ['5', '5 Min.'], ['15', '15 Min.'], ['30', '30 Min.']]}
   bind:range={win}
   live
 >
-  {#snippet tools()}<Info title="Live" text="Durchsatz der Ausgänge, alle 2 Sekunden gemessen an den Schnittstellen ex<ID>. Eine Gruppe zeigt den Durchsatz ihres aktiven Ausgangs. Der Verlauf wird gesammelt, solange die Seite offen ist. Zeile anklicken = nur diesen Ausgang bzw. diese Gruppe im Diagramm." />{/snippet}
+  {#snippet tools()}<Info title="Live" text="Durchsatz der Ausgänge, alle 2 Sekunden gemessen an den Schnittstellen ex<ID>. Eine Gruppe zeigt den Durchsatz ihres aktiven Ausgangs. Den Verlauf der letzten 30 Minuten sammelt das Panel, solange eine Live-Anzeige offen ist – er bleibt beim Neuladen erhalten. Zeile anklicken = nur diesen Ausgang bzw. diese Gruppe im Diagramm." />{/snippet}
   {#snippet children()}
     <div class="kpis">
       <div><div class="muted tiny">Download</div><div class="kpi">{speed(last.down)}</div></div>
       <div><div class="muted tiny">Upload</div><div class="kpi up">{speed(last.up)}</div></div>
-      <div><div class="muted tiny">Ausgänge verbunden</div><div class="kpi other">{exits.filter((e) => exitState(e).tone === 'ok').length}<span class="muted"> / {exits.filter((e) => e.enabled).length}</span></div></div>
+      {#if !exit}<div><div class="muted tiny">Ausgänge verbunden</div><div class="kpi other">{exits.filter((e) => exitState(e).tone === 'ok').length}<span class="muted"> / {exits.filter((e) => e.enabled).length}</span></div></div>{/if}
     </div>
   {/snippet}
   {#snippet footer()}
+  {#if !exit}
   <div class="rows">
     {#if groups.length}<div class="sect tiny muted">Gruppen</div>{/if}
     {#each groups as g (g.id)}
@@ -113,6 +123,7 @@
       <div class="small muted" style="padding:8px 12px">Noch keine Ausgänge.</div>
     {/each}
   </div>
+  {/if}
   {/snippet}
 </Chart>
 

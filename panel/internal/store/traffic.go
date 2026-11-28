@@ -125,13 +125,9 @@ func (s *Store) ExitTraffic(since int64) (map[int64]ExitTotals, error) {
 	return out, rows.Err()
 }
 
-// ExitTrafficSeries: [Zeitfenster, Ausgang, hoch, runter] ab since, zusammengefasst je bucket Sekunden.
-func (s *Store) ExitTrafficSeries(since, bucket int64) ([][4]int64, error) {
-	if bucket < 3600 {
-		bucket = 3600
-	}
-	rows, err := s.db.Query(`SELECT (hour/?)*? AS b, exit_id, SUM(up), SUM(down) FROM exit_traffic WHERE hour >= ? GROUP BY b, exit_id ORDER BY b`,
-		bucket, bucket, since-since%3600)
+// ExitTrafficRange: stündliche Werte [Stunde, Ausgang, hoch, runter] in [since, until).
+func (s *Store) ExitTrafficRange(since, until int64) ([][4]int64, error) {
+	rows, err := s.db.Query(`SELECT hour, exit_id, up, down FROM exit_traffic WHERE hour >= ? AND hour < ? ORDER BY hour`, since-since%3600, until)
 	if err != nil {
 		return nil, err
 	}

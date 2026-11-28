@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // Zeitzonen für Tages-/Wochen-/Monatsstatistik, auch ohne Paket tzdata
 
 	proxyproto "github.com/pires/go-proxyproto"
 
@@ -94,6 +95,7 @@ func open(o *opts) (*engine.Engine, error) {
 	e.PinOldDefaults()
 	e.MigrateSmartDNS()
 	e.MigrateExactDomains()
+	e.MigrateRetention()
 	return e, nil
 }
 
